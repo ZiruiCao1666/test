@@ -1,0 +1,113 @@
+// server/index.js
+
+import 'dotenv/config'
+import express from 'express'
+import cors from 'cors'
+import { Pool } from 'pg'
+
+// 关键：用默认导出 clerk，以及 named export sessions / decodeJwt
+import clerk, { sessions, decodeJwt } from '@clerk/clerk-sdk-node'
+
+const app = express()
+app.use(cors())
+app.use(express.json())
+
+// 让 node-postgres 用 DATABASE_URL 连接 Neon
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+})
+
+// 兼容你已经在 .env 里写的 CLERK_SECRET_KEY
+// clerk-sdk-node 默认是用 CLERK_API_KEY，但我们这里手动把 apiKey 设为你的 secret key
+if (process.env.CLERK_SECRET_KEY) {
+  clerk.apiKey = process.env.CLERK_SECRET_KEY
+}
+
+// 简单健康检查
+app.get('/health', (_req, res) => res.json({ ok: true }))
+
+// 前端登录成功后调用的同步接口
+app.post('/users/sync', async (req, res) => {
+  try {
+    // 从 Authorization: Bearer xxx 里取出 token
+    const auth = req.headers.authorization || ''
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null
+    if (!token) {
+      return res.status(401).json({ error: 'Missing bearer token' })
+    }
+
+    // 1) 先用 decodeJwt 把 JWT 解码，拿到 session id
+    const decoded = decodeJwt(token)
+    const sessionId = decoded?.payload?.sid
+    if (!sessionId) {
+      return res.status(401).json({ error: 'Invalid session token (no sid)' })
+    }
+
+    // 2) 再通过 Clerk 后端 SDK 真正验证这个 session
+    const session = await sessions.verifySession(sessionId, token)
+    if (!session || session.status !== 'active') {
+      return res.status(401).json({ error: 'Invalid or inactive session' })
+    }
+
+    const userId = session.userId
+
+    // 3) 用后端 clerk 实例拿到当前用户详细信息
+    const user = await clerk.users.getUser(userId)
+
+    const email =
+      user?.emailAddresses?.[0]?.emailAddress ||
+      user?.primaryEmailAddress?.emailAddress ||
+      ''
+    const fullName =
+      [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+      user?.username ||
+      ''
+
+    const client = await pool.connect()
+
+    try {
+      await client.query('BEGIN')
+
+      // 确保表存在
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS app_users (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          full_name TEXT,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          last_sign_in_at TIMESTAMPTZ DEFAULT now()
+        );
+      `)
+
+      // 插入或更新用户
+      await client.query(
+        `
+        INSERT INTO app_users (id, email, full_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO UPDATE
+          SET email = EXCLUDED.email,
+              full_name = EXCLUDED.full_name,
+              last_sign_in_at = now()
+        `,
+        [userId, email, fullName],
+      )
+
+      await client.query('COMMIT')
+    } catch (e) {
+      await client.query('ROLLBACK')
+      throw e
+    } finally {
+      client.release()
+    }
+
+    return res.json({ ok: true, userId })
+  } catch (e) {
+    console.error('[BE] /users/sync error:', e)
+    return res.status(500).json({ error: 'sync failed' })
+  }
+})
+
+const port = process.env.PORT || 4000
+app.listen(port, () => {
+  console.log(`API listening on :${port}`)
+})
