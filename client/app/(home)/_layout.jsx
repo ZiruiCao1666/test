@@ -20,7 +20,7 @@ export default function HomeLayout() {
 
   return (
     <Tabs screenOptions={{ headerShown: false }}>
-      <Tabs.Screen name="index" options={{ title: '' }} />
+      <Tabs.Screen name="index" options={{ title: 'home' }} />
       <Tabs.Screen name="calendar" options={{ title: 'calendar' }} />
       <Tabs.Screen name="rewards" options={{ title: 'rewards' }} />
       <Tabs.Screen name="my-profile" options={{ title: 'my profile' }} />

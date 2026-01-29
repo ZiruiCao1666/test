@@ -13,8 +13,7 @@ import { Link, useRouter } from 'expo-router';
 import { useAuth, useSignUp, useSSO } from '@clerk/clerk-expo';
 import * as Linking from 'expo-linking';
 
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export default function SignUpScreen() {
   const router = useRouter();

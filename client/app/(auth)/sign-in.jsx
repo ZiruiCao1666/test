@@ -18,8 +18,8 @@ import * as Linking from 'expo-linking';
 
 
 
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+
 
 export default function SignInScreen() {
   const router = useRouter();
@@ -40,6 +40,9 @@ export default function SignInScreen() {
 //https://react.dev/learn/managing-state
   const syncUserToBackend = async () => {
     try {
+      if (!API_BASE_URL) {
+        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
+      }
       const token = await getToken();
       if (!token) return;
       await fetch(`${API_BASE_URL}/users/sync`, {
