@@ -7,7 +7,7 @@ import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express'
 const { Pool } = pg
 
 const app = express()
-const port = process.env.PORT || 4000
+const port = Number(process.env.PORT) || 10000
 
 // 让前端能带 Authorization: Bearer <token>
 app.use(
@@ -23,8 +23,15 @@ app.use(express.json())
 app.use(clerkMiddleware())
 
 // Neon：云上建议启用 SSL（更稳）
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  console.error('[DB] Missing DATABASE_URL. Set it to your Neon connection string.')
+} else if (!databaseUrl.includes('sslmode=')) {
+  console.warn('[DB] DATABASE_URL missing sslmode=require. Neon requires SSL.')
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
   ssl: { rejectUnauthorized: false },
 })
 
