@@ -36,6 +36,32 @@ const pool = new Pool({
 })
 
 const CHECKIN_POINTS = 10
+const TRIPLE_REWARD_STREAK = 7
+const TRIPLE_REWARD_MULTIPLIER = 3
+
+async function getStreakDays(db, userId, today) {
+  const r = await db.query(
+    `
+    WITH ordered AS (
+      SELECT checkin_date,
+             ROW_NUMBER() OVER (ORDER BY checkin_date DESC) AS rn
+      FROM app_checkins
+      WHERE clerk_user_id = $1 AND checkin_date <= $2
+    ),
+    grouped AS (
+      SELECT checkin_date,
+             (checkin_date + rn * INTERVAL '1 day')::date AS grp
+      FROM ordered
+    )
+    SELECT COUNT(*)::int AS streak
+    FROM grouped
+    WHERE grp = (SELECT grp FROM grouped ORDER BY checkin_date DESC LIMIT 1)
+    `,
+    [userId, today],
+  )
+
+  return r.rows[0]?.streak ?? 0
+}
 
 async function initDb() {
   // 1) 用户表：新增 points 字段
@@ -169,6 +195,7 @@ app.get('/checkins/status', async (req, res) => {
       today,
       checkedInToday: Boolean(exists.rows[0].checked_in_today),
       totalDays: total.rows[0].total_days,
+      streakDays: await getStreakDays(pool, userId, today),
       points: points.rows[0]?.points ?? 0,
     })
   } catch (e) {
@@ -206,12 +233,22 @@ app.post('/checkins/today', async (req, res) => {
 
     const didInsert = ins.rowCount === 1
 
+    let streakDays = 0
+    let gainedPoints = 0
+
     // 只有今天第一次签到才加分
     if (didInsert) {
+      streakDays = await getStreakDays(client, userId, today)
+      const multiplier =
+        streakDays === TRIPLE_REWARD_STREAK ? TRIPLE_REWARD_MULTIPLIER : 1
+      gainedPoints = CHECKIN_POINTS * multiplier
+
       await client.query(
         `UPDATE app_users SET points = points + $2, last_seen_at = NOW() WHERE clerk_user_id = $1`,
-        [userId, CHECKIN_POINTS],
+        [userId, gainedPoints],
       )
+    } else {
+      streakDays = await getStreakDays(client, userId, today)
     }
 
     const total = await client.query(
@@ -230,8 +267,9 @@ app.post('/checkins/today', async (req, res) => {
       ok: true,
       today,
       checkedInToday: true,
-      gainedPoints: didInsert ? CHECKIN_POINTS : 0,
+      gainedPoints: didInsert ? gainedPoints : 0,
       totalDays: total.rows[0].total_days,
+      streakDays,
       points: points.rows[0]?.points ?? 0,
     })
   } catch (e) {

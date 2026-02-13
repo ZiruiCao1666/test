@@ -27,6 +27,7 @@ export default function HomeScreen() {
   const avatarUrl = user?.imageUrl || null;
 
   const [totalSignedDays, setTotalSignedDays] = React.useState(0);
+  const [streakDays, setStreakDays] = React.useState(0);
   const [checkedInToday, setCheckedInToday] = React.useState(false);
   const [points, setPoints] = React.useState(0);
 
@@ -77,6 +78,11 @@ export default function HomeScreen() {
 
       // 对齐后端返回字段
       setTotalSignedDays(Number(data.totalDays) || 0);
+      if (data?.streakDays !== undefined) {
+        setStreakDays(Number(data.streakDays) || 0);
+      } else {
+        setStreakDays(Number(data.totalDays) || 0);
+      }
       setCheckedInToday(Boolean(data.checkedInToday));
       setPoints(Number(data.points) || 0);
     } catch (e) {
@@ -126,6 +132,11 @@ export default function HomeScreen() {
       if (data?.totalDays !== undefined) {
         setTotalSignedDays(Number(data.totalDays) || 0);
       }
+      if (data?.streakDays !== undefined) {
+        setStreakDays(Number(data.streakDays) || 0);
+      } else if (data?.totalDays !== undefined) {
+        setStreakDays(Number(data.totalDays) || 0);
+      }
       if (data?.points !== undefined) {
         setPoints(Number(data.points) || 0);
       }
@@ -140,13 +151,13 @@ export default function HomeScreen() {
     }
   };
 
-  // 现在先把 lastingDays 简化为 totalSignedDays（你后续如果要“连续天数 streak”，我们再加）
-  const lastingDays = totalSignedDays;
+  // 连续天数优先使用后端 streakDays，否则回退到 totalSignedDays
+  const lastingDays = streakDays || totalSignedDays;
 
   const todoItems = [
-    { id: '1', daysLeft: 3, title: 'Finish weekly study plan' },
-    { id: '2', daysLeft: 5, title: 'Review notes and summarize' },
-    { id: '3', daysLeft: 7, title: 'Prepare assignment draft' },
+    { id: '1', daysLeft: 3, title: 'No tasks have been synchronized or added yet.' },
+    { id: '2', daysLeft: 5, title: 'No tasks have been synchronized or added yet.' },
+    { id: '3', daysLeft: 7, title: 'No tasks have been synchronized or added yet.' },
   ];
 
   return (
