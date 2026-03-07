@@ -16,10 +16,10 @@ import { useUser, useAuth } from '@clerk/clerk-expo';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const FALLBACK_CATALOG = [
-  { id: 1, title: 'Coffee Coupon', pointsCost: 120, category: 'drinks', imageUrl: '', isActive: true },
-  { id: 2, title: 'Latte Coupon', pointsCost: 160, category: 'drinks', imageUrl: '', isActive: true },
-  { id: 3, title: 'Discount Coupon', pointsCost: 200, category: 'coupon', imageUrl: '', isActive: true },
-  { id: 4, title: 'Big Discount Coupon', pointsCost: 260, category: 'coupon', imageUrl: '', isActive: true },
+  { id: 1, title: 'Coffee Coupon', pointsCost: 120, category: 'drinks', isActive: true },
+  { id: 2, title: 'Latte Coupon', pointsCost: 160, category: 'drinks', isActive: true },
+  { id: 3, title: 'Discount Coupon', pointsCost: 200, category: 'coupon', isActive: true },
+  { id: 4, title: 'Big Discount Coupon', pointsCost: 260, category: 'coupon', isActive: true },
 ];
 
 const CATEGORY_LABELS = {
@@ -37,7 +37,6 @@ function normalizeCatalog(items) {
         title: String(raw?.title ?? 'reward'),
         pointsCost: Number.isFinite(pointsCost) ? pointsCost : 0,
         category: String(raw?.category ?? 'coupon'),
-        imageUrl: String(raw?.imageUrl ?? raw?.image_url ?? ''),
         isActive: raw?.isActive ?? raw?.is_active ?? true,
       };
     })
@@ -180,7 +179,6 @@ export default function RewardsScreen() {
       }
 
       Alert.alert('Redeemed', `${item.title} redeemed successfully.`);
-      loadRewards();
     } catch (e) {
       Alert.alert('Error', e?.name === 'AbortError' ? 'Request timeout, please retry.' : (e?.message || 'Redeem failed'));
     } finally {
@@ -258,11 +256,7 @@ export default function RewardsScreen() {
                 return (
                   <View key={String(item.id)} style={styles.card}>
                     <View style={styles.cardImageSlot}>
-                      {item.imageUrl ? (
-                        <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />
-                      ) : (
-                        <Text style={styles.cardImageHint}>image</Text>
-                      )}
+                      <Text style={styles.cardImageHint}>image</Text>
                     </View>
                     <Text style={styles.cardTitle}>{item.title}</Text>
                     <Text style={styles.cardPoints}>{item.pointsCost} points</Text>
@@ -416,11 +410,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
-    overflow: 'hidden',
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
   },
   cardImageHint: {
     fontSize: 11,

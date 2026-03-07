@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -10,23 +10,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as Linking from 'expo-linking';
-import * as SecureStore from 'expo-secure-store';
-import { useUser } from '@clerk/clerk-expo';
 
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const STORAGE_PREFIX = 'canvas_credentials_v2';
-
-const sanitizeStorageSegment = (value) =>
-  String(value || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-
-const buildScopedStorageKeys = (accountScopeId) => {
-  const scope = sanitizeStorageSegment(accountScopeId);
-  return {
-    school: `${STORAGE_PREFIX}:${scope}:school`,
-    token: `${STORAGE_PREFIX}:${scope}:token`,
-  };
-};
 
 const normalizeBaseUrl = (value) => {
   const trimmed = value.trim();
@@ -152,14 +138,9 @@ const pickLatestSubmissions = (submissions) => {
   }, {});
 };
 
-const buildAssignmentDetailKey = (courseId, assignmentId) =>
-  `${String(courseId)}:${String(assignmentId)}`;
-
 export default function CalendarScreen() {
-  const { user, isLoaded: isUserLoaded } = useUser();
   const [schoolInput, setSchoolInput] = useState('');
   const [tokenInput, setTokenInput] = useState('');
-  const [credentialsHydrated, setCredentialsHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -170,99 +151,10 @@ export default function CalendarScreen() {
   const [expandedAssignmentsByCourse, setExpandedAssignmentsByCourse] = useState({});
   const [enrollmentsByCourse, setEnrollmentsByCourse] = useState({});
   const [submissionsByCourse, setSubmissionsByCourse] = useState({});
-  const [submissionDetailsByAssignment, setSubmissionDetailsByAssignment] = useState({});
   const [lastSyncAt, setLastSyncAt] = useState(null);
 
   const baseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
-  const accountScopeId = useMemo(() => {
-    if (!isUserLoaded) return 'loading';
-    const email =
-      user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || '';
-    const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (user?.id && normalizedEmail) {
-      return `clerk:${user.id}:${normalizedEmail}`;
-    }
-    if (user?.id) {
-      return `clerk:${user.id}`;
-    }
-    if (normalizedEmail) {
-      return `clerk-email:${normalizedEmail}`;
-    }
-    return 'device-local';
-  }, [
-    isUserLoaded,
-    user?.id,
-    user?.primaryEmailAddress?.emailAddress,
-    user?.emailAddresses?.[0]?.emailAddress,
-  ]);
-  const scopedStorageKeys = useMemo(() => buildScopedStorageKeys(accountScopeId), [accountScopeId]);
-
-  useEffect(() => {
-    if (!isUserLoaded) {
-      setCredentialsHydrated(false);
-      setSchoolInput('');
-      setTokenInput('');
-      return undefined;
-    }
-    let mounted = true;
-    setCredentialsHydrated(false);
-    (async () => {
-      try {
-        const [savedSchool, savedToken] = await Promise.all([
-          SecureStore.getItemAsync(scopedStorageKeys.school),
-          SecureStore.getItemAsync(scopedStorageKeys.token),
-        ]);
-        if (!mounted) return;
-        setSchoolInput(String(savedSchool || ''));
-        setTokenInput(String(savedToken || ''));
-        setError('');
-      } catch (loadError) {
-        if (mounted) {
-          setError(
-            loadError instanceof Error
-              ? `Failed to load saved token from local storage: ${loadError.message}`
-              : 'Failed to load saved token from local storage.'
-          );
-        }
-      } finally {
-        if (mounted) setCredentialsHydrated(true);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [isUserLoaded, scopedStorageKeys]);
-
-  useEffect(() => {
-    if (!isUserLoaded || !credentialsHydrated) return;
-    (async () => {
-      try {
-        if (schoolInput.trim()) {
-          await SecureStore.setItemAsync(scopedStorageKeys.school, schoolInput.trim());
-        } else {
-          await SecureStore.deleteItemAsync(scopedStorageKeys.school);
-        }
-      } catch {
-        // Ignore local save errors to keep typing responsive.
-      }
-    })();
-  }, [isUserLoaded, credentialsHydrated, schoolInput, scopedStorageKeys]);
-
-  useEffect(() => {
-    if (!isUserLoaded || !credentialsHydrated) return;
-    (async () => {
-      try {
-        if (tokenInput.trim()) {
-          await SecureStore.setItemAsync(scopedStorageKeys.token, tokenInput.trim());
-        } else {
-          await SecureStore.deleteItemAsync(scopedStorageKeys.token);
-        }
-      } catch {
-        // Ignore local save errors to keep typing responsive.
-      }
-    })();
-  }, [isUserLoaded, credentialsHydrated, tokenInput, scopedStorageKeys]);
 
   const buildCanvasUrl = (pathOrUrl) => {
     if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -330,7 +222,7 @@ export default function CalendarScreen() {
     }
   };
 
-  const handleClear = async () => {
+  const handleClear = () => {
     setProfile(null);
     setCourses([]);
     setEvents([]);
@@ -338,95 +230,8 @@ export default function CalendarScreen() {
     setExpandedAssignmentsByCourse({});
     setEnrollmentsByCourse({});
     setSubmissionsByCourse({});
-    setSubmissionDetailsByAssignment({});
     setError('');
-    setSchoolInput('');
-    setTokenInput('');
     setLastSyncAt(null);
-    try {
-      await Promise.all([
-        SecureStore.deleteItemAsync(scopedStorageKeys.school),
-        SecureStore.deleteItemAsync(scopedStorageKeys.token),
-      ]);
-    } catch (clearError) {
-      setError(
-        clearError instanceof Error
-          ? `Failed to clear saved local token: ${clearError.message}`
-          : 'Failed to clear saved local token.'
-      );
-    }
-  };
-
-  const fetchSingleSubmissionDetail = async (courseId, assignmentId) => {
-    const params = new URLSearchParams();
-    params.append('include[]', 'submission_comments');
-    params.append('include[]', 'submission_history');
-    return fetchCanvasObject(
-      `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/self?${params.toString()}`
-    );
-  };
-
-  const handleToggleSubmissionDetail = async (courseId, assignmentId) => {
-    const detailKey = buildAssignmentDetailKey(courseId, assignmentId);
-    const current = submissionDetailsByAssignment[detailKey] || {};
-
-    if (current.expanded) {
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...current,
-          expanded: false,
-        },
-      }));
-      return;
-    }
-
-    if (current.data && !current.error) {
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...current,
-          expanded: true,
-        },
-      }));
-      return;
-    }
-
-    setSubmissionDetailsByAssignment((prev) => ({
-      ...prev,
-      [detailKey]: {
-        ...current,
-        expanded: true,
-        loading: true,
-        error: '',
-      },
-    }));
-
-    try {
-      const detail = await fetchSingleSubmissionDetail(courseId, assignmentId);
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          expanded: true,
-          loading: false,
-          error: '',
-          data: detail,
-        },
-      }));
-    } catch (detailError) {
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...prev[detailKey],
-          expanded: true,
-          loading: false,
-          error:
-            detailError instanceof Error
-              ? detailError.message
-              : 'Failed to load submission detail.',
-        },
-      }));
-    }
   };
 
   const handleConnect = async () => {
@@ -542,7 +347,6 @@ export default function CalendarScreen() {
       setExpandedAssignmentsByCourse({});
       setEnrollmentsByCourse(enrollmentsMap);
       setSubmissionsByCourse(submissionsMap);
-      setSubmissionDetailsByAssignment({});
       setLastSyncAt(new Date());
     } catch (err) {
       setError(
@@ -625,9 +429,7 @@ export default function CalendarScreen() {
           </View>
 
           <Text style={styles.helper}>
-            Token is saved in secure local device storage for this account. It stays until you tap
-            {' '}
-            Clear.
+            Token is used only in this runtime session and is not persisted.
           </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {lastSyncAt ? (
@@ -670,7 +472,7 @@ export default function CalendarScreen() {
             <Text style={styles.empty}>No courses synced.</Text>
           ) : (
             <View style={styles.events}>
-              {courses.map((course, courseIndex) => {
+              {courses.map((course) => {
                 const courseId = String(course.id);
                 const enrollment = enrollmentsByCourse[courseId];
                 const grades = enrollment?.grades || {};
@@ -680,7 +482,7 @@ export default function CalendarScreen() {
                 const onTimeText = formatPercent(submissionSummary?.onTimeRate);
 
                 return (
-                  <View key={`${courseId}-grade-${courseIndex}`} style={styles.gradeCard}>
+                  <View key={courseId} style={styles.gradeCard}>
                     <Text style={styles.gradeCourseName}>
                       {course.name || course.course_code || 'Untitled course'}
                     </Text>
@@ -711,9 +513,9 @@ export default function CalendarScreen() {
             <Text style={styles.empty}>No upcoming events.</Text>
           ) : (
             <View style={styles.events}>
-              {events.map((event, eventIndex) => (
+              {events.map((event) => (
                 <Pressable
-                  key={`${String(event.id)}-event-${eventIndex}`}
+                  key={event.id}
                   onPress={() => openUrl(event.htmlUrl)}
                   style={({ pressed }) => [
                     styles.eventItem,
@@ -741,7 +543,7 @@ export default function CalendarScreen() {
           {courses.length === 0 ? (
             <Text style={styles.empty}>No assignment data yet.</Text>
           ) : (
-            courses.map((course, courseIndex) => {
+            courses.map((course) => {
               const courseId = String(course.id);
               const assignmentEntry = assignmentsByCourse[courseId];
               const assignments = assignmentEntry?.items || [];
@@ -754,7 +556,7 @@ export default function CalendarScreen() {
                 : visibleItems;
 
               return (
-                <View key={`${courseId}-assignment-group-${courseIndex}`} style={styles.assignmentGroup}>
+                <View key={courseId} style={styles.assignmentGroup}>
                   <Text style={styles.assignmentCourseName}>
                     {course.name || course.course_code || 'Untitled course'}
                   </Text>
@@ -767,38 +569,21 @@ export default function CalendarScreen() {
                           No assignments in current window. Expand to see all.
                         </Text>
                       ) : null}
-                      {displayItems.map((assignment, assignmentIndex) => {
+                      {displayItems.map((assignment) => {
                         const submission =
                           submissionLookup[String(assignment.id)] || null;
                         const scoreText = formatScoreValue(
                           submission?.score,
                           assignment?.points_possible
                         );
-                        const detailKey = buildAssignmentDetailKey(courseId, assignment.id);
-                        const detailState = submissionDetailsByAssignment[detailKey] || {};
-                        const detailData = detailState.data || null;
-                        const detailComments = Array.isArray(detailData?.submission_comments)
-                          ? detailData.submission_comments
-                          : [];
-                        const currentUserId =
-                          profile?.id === null || profile?.id === undefined
-                            ? ''
-                            : String(profile.id);
-                        const teacherComments = detailComments.filter(
-                          (comment) =>
-                            !currentUserId ||
-                            String(comment?.author_id === undefined ? '' : comment.author_id) !==
-                              currentUserId
-                        );
-                        const detailHistory = Array.isArray(detailData?.submission_history)
-                          ? detailData.submission_history
-                          : [];
                         return (
-                          <View
-                            key={`${courseId}-assignment-${String(assignment.id)}-${assignmentIndex}`}
-                            style={[
+                          <Pressable
+                            key={String(assignment.id)}
+                            onPress={() => openUrl(assignment?.html_url)}
+                            style={({ pressed }) => [
                               styles.assignmentItem,
                               assignment?.html_url ? styles.eventClickable : null,
+                              pressed ? { opacity: 0.7 } : null,
                             ]}
                           >
                             <Text style={styles.assignmentTitle}>
@@ -818,109 +603,10 @@ export default function CalendarScreen() {
                               {submission?.submitted_at ? 'Submitted' : 'Not submitted'}
                               {submission?.late ? ' (Late)' : ''}
                             </Text>
-                            <Pressable
-                              onPress={() =>
-                                handleToggleSubmissionDetail(courseId, assignment.id)
-                              }
-                              style={({ pressed }) => [
-                                styles.detailBtn,
-                                pressed ? { opacity: 0.7 } : null,
-                              ]}
-                            >
-                              <Text style={styles.detailBtnText}>
-                                {detailState.loading
-                                  ? 'Loading detail...'
-                                  : detailState.expanded
-                                    ? 'Hide submission detail'
-                                    : 'View submission detail'}
-                              </Text>
-                            </Pressable>
-                            {detailState.expanded ? (
-                              <View style={styles.detailPanel}>
-                                {detailState.error ? (
-                                  <Text style={styles.detailError}>
-                                    Failed to load detail: {detailState.error}
-                                  </Text>
-                                ) : null}
-                                {detailData ? (
-                                  <>
-                                    <Text style={styles.detailMeta}>
-                                      Late: {detailData?.late ? 'Yes' : 'No'}
-                                    </Text>
-                                    <Text style={styles.detailMeta}>
-                                      Submitted at: {formatDateTime(detailData?.submitted_at)}
-                                    </Text>
-                                    <Text style={styles.detailHeading}>Teacher comments</Text>
-                                    {teacherComments.length === 0 ? (
-                                      <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                                    ) : (
-                                      teacherComments.map((comment, index) => (
-                                        <View
-                                          key={`${courseId}-assignment-${String(assignment.id)}-comment-${String(comment?.id || 'x')}-${index}`}
-                                          style={styles.detailRow}
-                                        >
-                                          <Text style={styles.detailMeta}>
-                                            {comment?.author_name || 'Instructor'}
-                                            {' | '}
-                                            {formatDateTime(comment?.created_at)}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            {comment?.comment || '-'}
-                                          </Text>
-                                        </View>
-                                      ))
-                                    )}
-                                    <Text style={styles.detailHeading}>Attempt history</Text>
-                                    {detailHistory.length === 0 ? (
-                                      <Text style={styles.detailMuted}>No attempt history.</Text>
-                                    ) : (
-                                      detailHistory.map((attempt, index) => (
-                                        <View
-                                          key={`${courseId}-assignment-${String(assignment.id)}-attempt-${String(attempt?.id || attempt?.attempt || 'x')}-${index}`}
-                                          style={styles.detailRow}
-                                        >
-                                          <Text style={styles.detailMeta}>
-                                            Attempt {attempt?.attempt ?? index + 1}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Submitted: {formatDateTime(attempt?.submitted_at)}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Late: {attempt?.late ? 'Yes' : 'No'}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Score:
-                                            {' '}
-                                            {formatScoreValue(
-                                              attempt?.score,
-                                              attempt?.points_possible ?? assignment?.points_possible
-                                            )}
-                                          </Text>
-                                        </View>
-                                      ))
-                                    )}
-                                  </>
-                                ) : (
-                                  <Text style={styles.detailMuted}>
-                                    {detailState.loading
-                                      ? 'Loading detail...'
-                                      : 'No detail loaded yet.'}
-                                  </Text>
-                                )}
-                              </View>
-                            ) : null}
                             {assignment?.html_url ? (
-                              <Pressable
-                                onPress={() => openUrl(assignment?.html_url)}
-                                style={({ pressed }) => [
-                                  styles.inlineLinkBtn,
-                                  pressed ? { opacity: 0.7 } : null,
-                                ]}
-                              >
-                                <Text style={styles.inlineLinkText}>Open assignment</Text>
-                              </Pressable>
+                              <Text style={styles.eventLink}>Open assignment</Text>
                             ) : null}
-                          </View>
+                          </Pressable>
                         );
                       })}
                       {collapsedItems.length > 0 ? (
@@ -938,8 +624,8 @@ export default function CalendarScreen() {
                         >
                           <Text style={styles.collapseBtnText}>
                             {isExpanded
-                              ? 'Collapse old or no-due assignments'
-                              : `Show ${collapsedItems.length} old or no-due assignments`}
+                              ? 'Collapse old/no-due assignments'
+                              : `Show ${collapsedItems.length} old/no-due assignments`}
                           </Text>
                         </Pressable>
                       ) : null}
@@ -1110,38 +796,6 @@ const styles = StyleSheet.create({
   },
   assignmentTitle: { fontSize: 12, fontWeight: '700', color: '#111827' },
   assignmentMeta: { marginTop: 4, fontSize: 11, color: '#374151' },
-  detailBtn: {
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    backgroundColor: '#fff',
-  },
-  detailBtnText: { fontSize: 11, fontWeight: '700', color: '#111827' },
-  detailPanel: {
-    marginTop: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    padding: 8,
-    gap: 6,
-  },
-  detailHeading: { fontSize: 11, fontWeight: '700', color: '#111827', marginTop: 2 },
-  detailRow: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
-    padding: 6,
-    backgroundColor: '#f9fafb',
-  },
-  detailMeta: { fontSize: 10, color: '#4b5563' },
-  detailText: { marginTop: 3, fontSize: 11, color: '#111827' },
-  detailMuted: { fontSize: 11, color: '#6b7280' },
-  detailError: { fontSize: 11, color: '#ef4444' },
   assignmentHint: { fontSize: 11, color: '#6b7280' },
   collapseBtn: {
     marginTop: 6,

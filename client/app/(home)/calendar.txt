@@ -176,37 +176,33 @@ export default function CalendarScreen() {
   const baseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
   const accountScopeId = useMemo(() => {
-    if (!isUserLoaded) return 'loading';
+    if (!isUserLoaded || !user?.id) return '';
     const email =
       user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || '';
-    const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (user?.id && normalizedEmail) {
-      return `clerk:${user.id}:${normalizedEmail}`;
-    }
-    if (user?.id) {
-      return `clerk:${user.id}`;
-    }
-    if (normalizedEmail) {
-      return `clerk-email:${normalizedEmail}`;
-    }
-    return 'device-local';
+    return `${user.id}:${String(email || '').toLowerCase()}`;
   }, [
     isUserLoaded,
     user?.id,
     user?.primaryEmailAddress?.emailAddress,
     user?.emailAddresses?.[0]?.emailAddress,
   ]);
-  const scopedStorageKeys = useMemo(() => buildScopedStorageKeys(accountScopeId), [accountScopeId]);
+  const scopedStorageKeys = useMemo(
+    () => (accountScopeId ? buildScopedStorageKeys(accountScopeId) : null),
+    [accountScopeId]
+  );
 
   useEffect(() => {
-    if (!isUserLoaded) {
-      setCredentialsHydrated(false);
-      setSchoolInput('');
-      setTokenInput('');
-      return undefined;
-    }
     let mounted = true;
     setCredentialsHydrated(false);
+    // Reset local values on account switch to avoid any cross-account flash.
+    setSchoolInput('');
+    setTokenInput('');
+    if (!isUserLoaded || !scopedStorageKeys) {
+      setCredentialsHydrated(true);
+      return () => {
+        mounted = false;
+      };
+    }
     (async () => {
       try {
         const [savedSchool, savedToken] = await Promise.all([
@@ -214,16 +210,11 @@ export default function CalendarScreen() {
           SecureStore.getItemAsync(scopedStorageKeys.token),
         ]);
         if (!mounted) return;
-        setSchoolInput(String(savedSchool || ''));
-        setTokenInput(String(savedToken || ''));
-        setError('');
-      } catch (loadError) {
+        setSchoolInput(savedSchool || '');
+        setTokenInput(savedToken || '');
+      } catch {
         if (mounted) {
-          setError(
-            loadError instanceof Error
-              ? `Failed to load saved token from local storage: ${loadError.message}`
-              : 'Failed to load saved token from local storage.'
-          );
+          setError('Failed to load saved school/token from device storage.');
         }
       } finally {
         if (mounted) setCredentialsHydrated(true);
@@ -235,34 +226,34 @@ export default function CalendarScreen() {
   }, [isUserLoaded, scopedStorageKeys]);
 
   useEffect(() => {
-    if (!isUserLoaded || !credentialsHydrated) return;
+    if (!credentialsHydrated || !scopedStorageKeys) return;
     (async () => {
       try {
-        if (schoolInput.trim()) {
-          await SecureStore.setItemAsync(scopedStorageKeys.school, schoolInput.trim());
+        if (schoolInput) {
+          await SecureStore.setItemAsync(scopedStorageKeys.school, schoolInput);
         } else {
           await SecureStore.deleteItemAsync(scopedStorageKeys.school);
         }
       } catch {
-        // Ignore local save errors to keep typing responsive.
+        // Keep UI responsive even if local persistence fails.
       }
     })();
-  }, [isUserLoaded, credentialsHydrated, schoolInput, scopedStorageKeys]);
+  }, [credentialsHydrated, schoolInput, scopedStorageKeys]);
 
   useEffect(() => {
-    if (!isUserLoaded || !credentialsHydrated) return;
+    if (!credentialsHydrated || !scopedStorageKeys) return;
     (async () => {
       try {
-        if (tokenInput.trim()) {
-          await SecureStore.setItemAsync(scopedStorageKeys.token, tokenInput.trim());
+        if (tokenInput) {
+          await SecureStore.setItemAsync(scopedStorageKeys.token, tokenInput);
         } else {
           await SecureStore.deleteItemAsync(scopedStorageKeys.token);
         }
       } catch {
-        // Ignore local save errors to keep typing responsive.
+        // Keep UI responsive even if local persistence fails.
       }
     })();
-  }, [isUserLoaded, credentialsHydrated, tokenInput, scopedStorageKeys]);
+  }, [credentialsHydrated, tokenInput, scopedStorageKeys]);
 
   const buildCanvasUrl = (pathOrUrl) => {
     if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -344,16 +335,14 @@ export default function CalendarScreen() {
     setTokenInput('');
     setLastSyncAt(null);
     try {
-      await Promise.all([
-        SecureStore.deleteItemAsync(scopedStorageKeys.school),
-        SecureStore.deleteItemAsync(scopedStorageKeys.token),
-      ]);
-    } catch (clearError) {
-      setError(
-        clearError instanceof Error
-          ? `Failed to clear saved local token: ${clearError.message}`
-          : 'Failed to clear saved local token.'
-      );
+      if (scopedStorageKeys) {
+        await Promise.all([
+          SecureStore.deleteItemAsync(scopedStorageKeys.school),
+          SecureStore.deleteItemAsync(scopedStorageKeys.token),
+        ]);
+      }
+    } catch {
+      setError('Failed to clear saved school/token from device storage.');
     }
   };
 
@@ -625,9 +614,7 @@ export default function CalendarScreen() {
           </View>
 
           <Text style={styles.helper}>
-            Token is saved in secure local device storage for this account. It stays until you tap
-            {' '}
-            Clear.
+            Token is used only in this runtime session and is not persisted.
           </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {lastSyncAt ? (

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -40,7 +40,7 @@ export default function HomeScreen() {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 10000) => {
+  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 20000) => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -86,6 +86,10 @@ export default function HomeScreen() {
       setCheckedInToday(Boolean(data.checkedInToday));
       setPoints(Number(data.points) || 0);
     } catch (e) {
+      if (e?.name === 'AbortError') {
+        setSummaryError('Request timeout. Please retry in a moment.');
+        return;
+      }
       setSummaryError(e?.message || 'Failed to load summary');
       console.log('[Home] loadSummary error:', e?.message || e);
       console.log('[Home] API_BASE_URL =', API_BASE_URL);

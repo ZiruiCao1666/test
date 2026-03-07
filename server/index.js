@@ -2,6 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import pg from 'pg'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express'
 
 const { Pool } = pg
@@ -38,6 +39,55 @@ const pool = new Pool({
 const CHECKIN_POINTS = 10
 const TRIPLE_REWARD_STREAK = 7
 const TRIPLE_REWARD_MULTIPLIER = 3
+const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
+const CANVAS_IV_BYTES = 12
+const CANVAS_TOKEN_SECRET = process.env.CANVAS_TOKEN_SECRET || ''
+
+function mapRewardRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    pointsCost: row.points_cost,
+    category: row.category,
+    imageUrl: row.image_url || '',
+    isActive: row.is_active,
+  }
+}
+
+function getCanvasSecretKey() {
+  if (!CANVAS_TOKEN_SECRET) {
+    throw new Error('Missing CANVAS_TOKEN_SECRET')
+  }
+  return createHash('sha256').update(CANVAS_TOKEN_SECRET).digest()
+}
+
+function encryptCanvasToken(token) {
+  const key = getCanvasSecretKey()
+  const iv = randomBytes(CANVAS_IV_BYTES)
+  const cipher = createCipheriv(CANVAS_ENCRYPTION_ALGO, key, iv)
+  const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()])
+  const authTag = cipher.getAuthTag()
+  return {
+    cipherText: encrypted.toString('base64'),
+    iv: iv.toString('base64'),
+    authTag: authTag.toString('base64'),
+  }
+}
+
+function decryptCanvasToken(cipherText, iv, authTag) {
+  const key = getCanvasSecretKey()
+  const decipher = createDecipheriv(
+    CANVAS_ENCRYPTION_ALGO,
+    key,
+    Buffer.from(iv, 'base64'),
+  )
+  decipher.setAuthTag(Buffer.from(authTag, 'base64'))
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(cipherText, 'base64')),
+    decipher.final(),
+  ])
+  return decrypted.toString('utf8')
+}
 
 async function getStreakDays(db, userId, today) {
   const r = await db.query(
@@ -86,7 +136,53 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (clerk_user_id, checkin_date)
     );
+
+    CREATE TABLE IF NOT EXISTS app_canvas_credentials (
+      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      canvas_school TEXT NOT NULL DEFAULT '',
+      canvas_token_ciphertext TEXT,
+      canvas_token_iv TEXT,
+      canvas_token_tag TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS app_rewards (
+      id BIGSERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      points_cost INT NOT NULL CHECK (points_cost > 0),
+      category TEXT NOT NULL DEFAULT 'coupon',
+      image_url TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_rewards_title_unique
+      ON app_rewards (title);
+
+    CREATE TABLE IF NOT EXISTS app_reward_orders (
+      id BIGSERIAL PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      reward_id BIGINT NOT NULL REFERENCES app_rewards (id),
+      points_cost INT NOT NULL CHECK (points_cost > 0),
+      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_reward_orders_user_created_at
+      ON app_reward_orders (clerk_user_id, created_at DESC);
   `)
+
+  await pool.query(
+    `
+    INSERT INTO app_rewards (title, points_cost, category, image_url, is_active)
+    VALUES
+      ('Coffee Coupon', 120, 'drinks', '', TRUE),
+      ('Latte Coupon', 160, 'drinks', '', TRUE),
+      ('Discount Coupon', 200, 'coupon', '', TRUE),
+      ('Big Discount Coupon', 260, 'coupon', '', TRUE)
+    ON CONFLICT (title) DO NOTHING;
+    `,
+  )
 }
 
 initDb().catch((e) => {
@@ -160,6 +256,132 @@ app.post('/users/sync', async (req, res) => {
 })
 
 /**
+ * GET /canvas/credentials
+ * Return the current user's saved Canvas school+token.
+ */
+app.get('/canvas/credentials', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const result = await pool.query(
+      `
+      SELECT canvas_school, canvas_token_ciphertext, canvas_token_iv, canvas_token_tag
+      FROM app_canvas_credentials
+      WHERE clerk_user_id = $1
+      `,
+      [userId],
+    )
+
+    if (result.rowCount === 0) {
+      return res.json({ ok: true, school: '', token: '' })
+    }
+
+    const row = result.rows[0]
+    let token = ''
+    if (row.canvas_token_ciphertext && row.canvas_token_iv && row.canvas_token_tag) {
+      try {
+        token = decryptCanvasToken(
+          row.canvas_token_ciphertext,
+          row.canvas_token_iv,
+          row.canvas_token_tag,
+        )
+      } catch (decryptError) {
+        console.error('[BE] /canvas/credentials decrypt error:', decryptError)
+        token = ''
+      }
+    }
+
+    return res.json({
+      ok: true,
+      school: row.canvas_school || '',
+      token,
+    })
+  } catch (e) {
+    console.error('[BE] /canvas/credentials error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * PUT /canvas/credentials
+ * Save/update the current user's Canvas school+token.
+ */
+app.put('/canvas/credentials', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+    if (!CANVAS_TOKEN_SECRET) {
+      return res.status(500).json({ error: 'Missing CANVAS_TOKEN_SECRET on server' })
+    }
+
+    await ensureUserRow(userId)
+
+    const schoolRaw = req.body?.school
+    const tokenRaw = req.body?.token
+    const school = String(schoolRaw ?? '').trim()
+    const token = String(tokenRaw ?? '').trim()
+
+    if (school.length > 255) {
+      return res.status(400).json({ error: 'School is too long' })
+    }
+    if (token.length > 8192) {
+      return res.status(400).json({ error: 'Token is too long' })
+    }
+
+    const encrypted = encryptCanvasToken(token)
+    await pool.query(
+      `
+      INSERT INTO app_canvas_credentials (
+        clerk_user_id,
+        canvas_school,
+        canvas_token_ciphertext,
+        canvas_token_iv,
+        canvas_token_tag,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (clerk_user_id)
+      DO UPDATE SET
+        canvas_school = EXCLUDED.canvas_school,
+        canvas_token_ciphertext = EXCLUDED.canvas_token_ciphertext,
+        canvas_token_iv = EXCLUDED.canvas_token_iv,
+        canvas_token_tag = EXCLUDED.canvas_token_tag,
+        updated_at = NOW()
+      `,
+      [userId, school, encrypted.cipherText, encrypted.iv, encrypted.authTag],
+    )
+
+    return res.json({ ok: true })
+  } catch (e) {
+    console.error('[BE] /canvas/credentials PUT error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * DELETE /canvas/credentials
+ * Remove saved Canvas school+token for the current user.
+ */
+app.delete('/canvas/credentials', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await pool.query(
+      `DELETE FROM app_canvas_credentials WHERE clerk_user_id = $1`,
+      [userId],
+    )
+
+    return res.json({ ok: true })
+  } catch (e) {
+    console.error('[BE] /canvas/credentials DELETE error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /checkins/status
  * 返回：points、totalDays、checkedInToday
  */
@@ -200,6 +422,195 @@ app.get('/checkins/status', async (req, res) => {
     })
   } catch (e) {
     console.error('[BE] /checkins/status error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /rewards/catalog
+ * Return all active rewards.
+ */
+app.get('/rewards/catalog', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const rewards = await pool.query(
+      `
+      SELECT id, title, points_cost, category, image_url, is_active
+      FROM app_rewards
+      WHERE is_active = TRUE
+      ORDER BY points_cost ASC, id ASC
+      `,
+    )
+
+    return res.json({
+      ok: true,
+      items: rewards.rows.map(mapRewardRow),
+    })
+  } catch (e) {
+    console.error('[BE] /rewards/catalog error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * POST /rewards/redeem
+ * Redeem one reward and deduct points in a DB transaction.
+ */
+app.post('/rewards/redeem', async (req, res) => {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const rewardId = Number(req.body?.rewardId)
+    if (!Number.isInteger(rewardId) || rewardId <= 0) {
+      return res.status(400).json({ error: 'Invalid rewardId' })
+    }
+
+    await client.query('BEGIN')
+
+    const rewardResult = await client.query(
+      `
+      SELECT id, title, points_cost, category, image_url, is_active
+      FROM app_rewards
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [rewardId],
+    )
+
+    if (rewardResult.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Reward not found' })
+    }
+
+    const reward = mapRewardRow(rewardResult.rows[0])
+    if (!reward.isActive) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Reward is not active' })
+    }
+
+    const pointsResult = await client.query(
+      `
+      SELECT points
+      FROM app_users
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+    const currentPoints = Number(pointsResult.rows[0]?.points) || 0
+
+    if (currentPoints < reward.pointsCost) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({
+        error: 'INSUFFICIENT_POINTS',
+        currentPoints,
+        requiredPoints: reward.pointsCost,
+      })
+    }
+
+    const updatedUser = await client.query(
+      `
+      UPDATE app_users
+      SET points = points - $2, last_seen_at = NOW()
+      WHERE clerk_user_id = $1
+      RETURNING points
+      `,
+      [userId, reward.pointsCost],
+    )
+
+    const orderResult = await client.query(
+      `
+      INSERT INTO app_reward_orders (clerk_user_id, reward_id, points_cost, status, created_at)
+      VALUES ($1, $2, $3, 'completed', NOW())
+      RETURNING id, status, created_at
+      `,
+      [userId, reward.id, reward.pointsCost],
+    )
+
+    await client.query('COMMIT')
+
+    const order = orderResult.rows[0]
+    return res.json({
+      ok: true,
+      remainingPoints: Number(updatedUser.rows[0]?.points) || 0,
+      order: {
+        id: order.id,
+        rewardId: reward.id,
+        title: reward.title,
+        category: reward.category,
+        imageUrl: reward.imageUrl,
+        pointsCost: reward.pointsCost,
+        status: order.status,
+        createdAt: order.created_at,
+      },
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_) {
+      // no-op
+    }
+    console.error('[BE] /rewards/redeem error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
+ * GET /rewards/orders
+ * Return current user's redemption orders.
+ */
+app.get('/rewards/orders', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const orders = await pool.query(
+      `
+      SELECT
+        o.id,
+        o.reward_id,
+        o.points_cost,
+        o.status,
+        o.created_at,
+        r.title,
+        r.category,
+        r.image_url
+      FROM app_reward_orders o
+      JOIN app_rewards r ON r.id = o.reward_id
+      WHERE o.clerk_user_id = $1
+      ORDER BY o.created_at DESC
+      LIMIT 200
+      `,
+      [userId],
+    )
+
+    return res.json({
+      ok: true,
+      items: orders.rows.map((row) => ({
+        id: row.id,
+        rewardId: row.reward_id,
+        title: row.title,
+        category: row.category,
+        imageUrl: row.image_url || '',
+        pointsCost: row.points_cost,
+        status: row.status,
+        createdAt: row.created_at,
+      })),
+    })
+  } catch (e) {
+    console.error('[BE] /rewards/orders error:', e)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })

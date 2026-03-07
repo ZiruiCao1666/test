@@ -12,13 +12,13 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { "d
 
 // server/index.js
 // 一个最简版的 Express + Clerk 后端，只做两件事：
-// 1) 提供 /health 用来测试后端有没有跑起来
-// 2) 提供 /users/sync，用 Clerk 验证 Authorization 里的 token
+// 提供 /health 用来测试后端有没有跑起来
+// 提供 /users/sync，用 Clerk 验证 Authorization 里的 token
 var app = (0, _express["default"])();
 var port = process.env.PORT || 4000; // 允许前端（Expo）访问
 
 app.use((0, _cors["default"])());
-app.use(_express["default"].json()); // 健康检查：浏览器打开 http://localhost:4000/health 看看
+app.use(_express["default"].json()); 
 
 app.get('/health', function (req, res) {
   res.json({
