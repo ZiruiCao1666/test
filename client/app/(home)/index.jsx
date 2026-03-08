@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
+import { useFocusEffect } from '@react-navigation/native';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -31,16 +32,17 @@ export default function HomeScreen() {
   const [checkedInToday, setCheckedInToday] = React.useState(false);
   const [points, setPoints] = React.useState(0);
 
-  const [loadingSummary, setLoadingSummary] = React.useState(true);
+  const [loadingSummary, setLoadingSummary] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
+  const summaryRetryRef = React.useRef(0);
 
   const getTokenRef = React.useRef(getToken);
   React.useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 20000) => {
+  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 12000) => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -85,12 +87,19 @@ export default function HomeScreen() {
       }
       setCheckedInToday(Boolean(data.checkedInToday));
       setPoints(Number(data.points) || 0);
+      summaryRetryRef.current = 0;
     } catch (e) {
       if (e?.name === 'AbortError') {
         setSummaryError('Request timeout. Please retry in a moment.');
-        return;
+      } else {
+        setSummaryError(e?.message || 'Failed to load summary');
       }
-      setSummaryError(e?.message || 'Failed to load summary');
+      if (summaryRetryRef.current < 2) {
+        summaryRetryRef.current += 1;
+        setTimeout(() => {
+          loadSummary({ silent: true });
+        }, 1500);
+      }
       console.log('[Home] loadSummary error:', e?.message || e);
       console.log('[Home] API_BASE_URL =', API_BASE_URL);
       console.log('[Home] URL =', `${API_BASE_URL}/checkins/status`);
@@ -101,10 +110,12 @@ export default function HomeScreen() {
     }
   }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, user?.id]);
 
-  React.useEffect(() => {
-    if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return;
-    loadSummary();
-  }, [loadSummary, authLoaded, isSignedIn, userLoaded, user?.id]);
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return;
+      loadSummary();
+    }, [loadSummary, authLoaded, isSignedIn, userLoaded, user?.id]),
+  );
 
   const onCheckIn = async () => {
     if (checkingIn) return;
@@ -190,28 +201,28 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Lasting days</Text>
             <View style={{ height: 6 }} />
-            {loadingSummary ? (
-              <ActivityIndicator />
-            ) : (
-              <Text style={styles.cardBig}>
-                {summaryError ? '--' : lastingDays}
-                <Text style={styles.cardBigUnit}> days</Text>
-              </Text>
-            )}
+            <Text style={styles.cardBig}>
+              {lastingDays}
+              <Text style={styles.cardBigUnit}> days</Text>
+            </Text>
+            {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
             <Text style={styles.cardHint}>Continuous sign-in builds habits</Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardLabel}>points</Text>
             <View style={{ height: 6 }} />
-            {loadingSummary ? (
-              <ActivityIndicator />
-            ) : (
-              <Text style={styles.cardBig}>{summaryError ? '--' : points}</Text>
-            )}
+            <Text style={styles.cardBig}>{points}</Text>
+            {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
             <Text style={styles.cardHint}>Earn points by daily check-in</Text>
           </View>
         </View>
+
+        {summaryError ? (
+          <Text style={{ marginBottom: 10, fontSize: 12, color: '#b91c1c' }}>
+            {summaryError}
+          </Text>
+        ) : null}
 
         <View style={styles.centerBlock}>
           <Pressable
@@ -236,7 +247,7 @@ export default function HomeScreen() {
             <Text style={styles.star}>☆</Text>
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>
-                Signed in for a total of {loadingSummary ? '...' : (summaryError ? '--' : totalSignedDays)} days
+                Signed in for a total of {loadingSummary ? '...' : totalSignedDays} days
               </Text>
               <Text style={styles.infoSub}>
                 {summaryError ? 'summary failed to load' : (checkedInToday ? 'today: checked' : 'today: not yet')}

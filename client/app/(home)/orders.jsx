@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@clerk/clerk-expo';
+import { useFocusEffect } from '@react-navigation/native';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -74,9 +75,11 @@ export default function OrdersScreen() {
     }
   }, [authLoaded, isSignedIn, fetchWithTimeout]);
 
-  React.useEffect(() => {
-    loadOrders();
-  }, [loadOrders]);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadOrders();
+    }, [loadOrders]),
+  );
 
   return (
     <SafeAreaView style={styles.safe}>

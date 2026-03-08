@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
+import { useFocusEffect } from '@react-navigation/native';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -130,9 +131,11 @@ export default function RewardsScreen() {
     }
   }, [authLoaded, isSignedIn, fetchWithTimeout]);
 
-  React.useEffect(() => {
-    loadRewards();
-  }, [loadRewards]);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadRewards();
+    }, [loadRewards]),
+  );
 
   const onRedeem = async (item) => {
     if (redeemingId) return;
