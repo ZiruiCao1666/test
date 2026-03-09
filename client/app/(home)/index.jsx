@@ -12,8 +12,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import * as SecureStore from 'expo-secure-store';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 
 export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
@@ -35,14 +37,17 @@ export default function HomeScreen() {
   const [loadingSummary, setLoadingSummary] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
-  const summaryRetryRef = React.useRef(0);
+  const [hasCachedSummary, setHasCachedSummary] = React.useState(false);
+  const [summaryReady, setSummaryReady] = React.useState(false);
 
+  const summaryRetryRef = React.useRef(0);
   const getTokenRef = React.useRef(getToken);
+
   React.useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 12000) => {
+  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 25000) => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -53,8 +58,66 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const summaryCacheKey = React.useMemo(() => {
+    if (!user?.id) return null;
+    return `${SUMMARY_CACHE_PREFIX}:${user.id}`;
+  }, [user?.id]);
+
+  const applySummaryData = React.useCallback((data = {}) => {
+    const nextTotal = Number(data?.totalDays) || 0;
+    const nextStreak = data?.streakDays !== undefined
+      ? Number(data?.streakDays) || 0
+      : nextTotal;
+
+    setTotalSignedDays(nextTotal);
+    setStreakDays(nextStreak);
+    setCheckedInToday(Boolean(data?.checkedInToday));
+    setPoints(Number(data?.points) || 0);
+    setSummaryReady(true);
+  }, []);
+
+  const persistSummaryToCache = React.useCallback(async (data = {}) => {
+    if (!summaryCacheKey) return;
+
+    try {
+      const payload = {
+        totalDays: Number(data?.totalDays) || 0,
+        streakDays: data?.streakDays !== undefined ? Number(data?.streakDays) || 0 : undefined,
+        checkedInToday: Boolean(data?.checkedInToday),
+        points: Number(data?.points) || 0,
+        updatedAt: Date.now(),
+      };
+
+      await SecureStore.setItemAsync(summaryCacheKey, JSON.stringify(payload));
+      setHasCachedSummary(true);
+    } catch (_e) {
+      // Ignore cache write errors.
+    }
+  }, [summaryCacheKey]);
+
+  const hydrateSummaryFromCache = React.useCallback(async () => {
+    if (!summaryCacheKey) return false;
+
+    try {
+      const raw = await SecureStore.getItemAsync(summaryCacheKey);
+      if (!raw) {
+        setHasCachedSummary(false);
+        return false;
+      }
+
+      const cached = JSON.parse(raw);
+      applySummaryData(cached);
+      setHasCachedSummary(true);
+      return true;
+    } catch (_e) {
+      setHasCachedSummary(false);
+      return false;
+    }
+  }, [summaryCacheKey, applySummaryData]);
+
   const loadSummary = React.useCallback(async (options = {}) => {
-    const { silent = false } = options;
+    const { silent = false, timeoutMs = 25000 } = options;
+
     try {
       if (!silent) {
         setLoadingSummary(true);
@@ -70,36 +133,30 @@ export default function HomeScreen() {
       const token = await getTokenRef.current?.();
       if (!token) return;
 
-      // 从 /me/summary 改成 /checkins/status
       const res = await fetchWithTimeout(`${API_BASE_URL}/checkins/status`, {
         headers: { Authorization: `Bearer ${token}` },
-      });
+      }, timeoutMs);
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Failed to load summary');
 
-      // 对齐后端返回字段
-      setTotalSignedDays(Number(data.totalDays) || 0);
-      if (data?.streakDays !== undefined) {
-        setStreakDays(Number(data.streakDays) || 0);
-      } else {
-        setStreakDays(Number(data.totalDays) || 0);
-      }
-      setCheckedInToday(Boolean(data.checkedInToday));
-      setPoints(Number(data.points) || 0);
+      applySummaryData(data);
+      persistSummaryToCache(data);
       summaryRetryRef.current = 0;
     } catch (e) {
       if (e?.name === 'AbortError') {
-        setSummaryError('Request timeout. Please retry in a moment.');
+        setSummaryError('Network is slow. Retrying in background...');
       } else {
         setSummaryError(e?.message || 'Failed to load summary');
       }
+
       if (summaryRetryRef.current < 2) {
         summaryRetryRef.current += 1;
         setTimeout(() => {
-          loadSummary({ silent: true });
+          loadSummary({ silent: true, timeoutMs: 25000 });
         }, 1500);
       }
+
       console.log('[Home] loadSummary error:', e?.message || e);
       console.log('[Home] API_BASE_URL =', API_BASE_URL);
       console.log('[Home] URL =', `${API_BASE_URL}/checkins/status`);
@@ -108,13 +165,24 @@ export default function HomeScreen() {
         setLoadingSummary(false);
       }
     }
-  }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, user?.id]);
+  }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, user?.id, applySummaryData, persistSummaryToCache]);
 
   useFocusEffect(
     React.useCallback(() => {
-      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return;
-      loadSummary();
-    }, [loadSummary, authLoaded, isSignedIn, userLoaded, user?.id]),
+      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return undefined;
+
+      let alive = true;
+
+      (async () => {
+        const hasCache = await hydrateSummaryFromCache();
+        if (!alive) return;
+        await loadSummary({ silent: hasCache, timeoutMs: 25000 });
+      })();
+
+      return () => {
+        alive = false;
+      };
+    }, [authLoaded, isSignedIn, userLoaded, user?.id, hydrateSummaryFromCache, loadSummary]),
   );
 
   const onCheckIn = async () => {
@@ -143,20 +211,9 @@ export default function HomeScreen() {
       if (!res.ok) throw new Error(data?.error || 'Check-in failed');
 
       setSummaryError(null);
-      setCheckedInToday(true);
-      if (data?.totalDays !== undefined) {
-        setTotalSignedDays(Number(data.totalDays) || 0);
-      }
-      if (data?.streakDays !== undefined) {
-        setStreakDays(Number(data.streakDays) || 0);
-      } else if (data?.totalDays !== undefined) {
-        setStreakDays(Number(data.totalDays) || 0);
-      }
-      if (data?.points !== undefined) {
-        setPoints(Number(data.points) || 0);
-      }
+      applySummaryData(data);
+      persistSummaryToCache(data);
 
-      // 对齐后端返回 gainedPoints
       const gained = Number(data.gainedPoints) || 0;
       Alert.alert('Check-in', gained > 0 ? `Checked in for today (+${gained} points)` : 'Already checked in today');
     } catch (e) {
@@ -166,7 +223,6 @@ export default function HomeScreen() {
     }
   };
 
-  // 连续天数优先使用后端 streakDays，否则回退到 totalSignedDays
   const lastingDays = streakDays || totalSignedDays;
 
   const todoItems = [
@@ -201,19 +257,31 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Lasting days</Text>
             <View style={{ height: 6 }} />
-            <Text style={styles.cardBig}>
-              {lastingDays}
-              <Text style={styles.cardBigUnit}> days</Text>
-            </Text>
-            {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+            {!summaryReady ? (
+              <ActivityIndicator />
+            ) : (
+              <>
+                <Text style={styles.cardBig}>
+                  {lastingDays}
+                  <Text style={styles.cardBigUnit}> days</Text>
+                </Text>
+                {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+              </>
+            )}
             <Text style={styles.cardHint}>Continuous sign-in builds habits</Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardLabel}>points</Text>
             <View style={{ height: 6 }} />
-            <Text style={styles.cardBig}>{points}</Text>
-            {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+            {!summaryReady ? (
+              <ActivityIndicator />
+            ) : (
+              <>
+                <Text style={styles.cardBig}>{points}</Text>
+                {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+              </>
+            )}
             <Text style={styles.cardHint}>Earn points by daily check-in</Text>
           </View>
         </View>
@@ -244,13 +312,13 @@ export default function HomeScreen() {
           </Pressable>
 
           <View style={styles.infoRow}>
-            <Text style={styles.star}>☆</Text>
+            <Text style={styles.star}>*</Text>
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>
-                Signed in for a total of {loadingSummary ? '...' : totalSignedDays} days
+                Signed in for a total of {summaryReady ? totalSignedDays : '...'} days
               </Text>
               <Text style={styles.infoSub}>
-                {summaryError ? 'summary failed to load' : (checkedInToday ? 'today: checked' : 'today: not yet')}
+                {summaryError ? 'summary sync delayed' : (checkedInToday ? 'today: checked' : 'today: not yet')}
               </Text>
               <View style={styles.progressLine} />
             </View>

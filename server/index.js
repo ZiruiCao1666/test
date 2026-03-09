@@ -289,7 +289,10 @@ app.get('/canvas/credentials', async (req, res) => {
         )
       } catch (decryptError) {
         console.error('[BE] /canvas/credentials decrypt error:', decryptError)
-        token = ''
+        return res.status(500).json({
+          error:
+            'Saved Canvas token cannot be decrypted. Check CANVAS_TOKEN_SECRET is set and unchanged.',
+        })
       }
     }
 
