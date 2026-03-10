@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
-import { getProfileInitial, useUserProfile } from '../../providers/UserProfileProvider';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
