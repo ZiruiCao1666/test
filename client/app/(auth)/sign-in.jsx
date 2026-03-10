@@ -23,12 +23,13 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export default function SignInScreen() {
   const router = useRouter();
+  // 参考 Clerk useAuth：https://clerk.com/docs/reference/expo/use-auth
+  // 官网示例会在需要调用自家后端时通过 getToken() 取 session token。
   const { getToken } = useAuth();
-  //https://clerk.com/docs/expo/reference/hooks/use-auth
+  // 参考 Clerk sign-in 文档：https://clerk.com/docs/reference/expo/use-sign-in
   const { signIn, setActive, isLoaded } = useSignIn();
-  //https://clerk.com/docs/expo/reference/hooks/use-sign-in
+  // 参考 Clerk SSO 文档：https://clerk.com/docs/reference/expo/use-sso
   const { startSSOFlow } = useSSO();
-  //https://clerk.com/docs/reference/expo/use-sso
 
   const [emailAddress, setEmailAddress] = React.useState('');
   
@@ -79,12 +80,11 @@ export default function SignInScreen() {
         identifier: emailAddress.trim(),
         password,
       });
-      //https://clerk.com/docs/expo/getting-started/quickstart 
-      // signIn.create({ identifier, password })
+      // 参考 Clerk Quickstart：https://clerk.com/docs/expo/getting-started/quickstart
+      // 当前项目依赖还是 @clerk/clerk-expo；这里沿用该版本可用的 signIn.create(...) + setActive(...)。
 
       if (attempt.status === 'complete') {
         await setActive({ session: attempt.createdSessionId });
-        //https://clerk.com/docs/expo/reference/hooks/use-sign-in
         await goHome();
       } else {
         console.log('[sign-in] not complete:', JSON.stringify(attempt, null, 2));
@@ -106,8 +106,10 @@ export default function SignInScreen() {
   const onSSOPress = (strategy) => async () => {
     setLoadingSSO(strategy);
     try {
-      const redirectUrl = Linking.createURL('/sso-callback'); // Hop back route
-      //https://docs.expo.dev/router/basics/core-concepts
+      // 参考 Expo Linking：https://docs.expo.dev/versions/latest/sdk/linking/
+      // 参考 Clerk SSO：https://clerk.com/docs/reference/expo/use-sso
+      // 官方做法是用 Linking.createURL(...) 生成回跳地址，再传给 startSSOFlow。
+      const redirectUrl = Linking.createURL('/sso-callback');
       console.log('[SSO] redirectUrl =', redirectUrl);
 
       const result = await startSSOFlow({ strategy, redirectUrl });

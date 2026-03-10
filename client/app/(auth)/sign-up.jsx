@@ -17,8 +17,11 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export default function SignUpScreen() {
   const router = useRouter();
+  // 参考 Clerk useAuth：https://clerk.com/docs/reference/expo/use-auth
   const { getToken } = useAuth();
+  // 参考 Clerk sign-up 文档：https://clerk.com/docs/reference/expo/use-sign-up
   const { isLoaded, signUp, setActive } = useSignUp();
+  // 参考 Clerk SSO 文档：https://clerk.com/docs/reference/expo/use-sso
   const { startSSOFlow } = useSSO();
 
   const [emailAddress, setEmailAddress] = React.useState('');
@@ -33,6 +36,9 @@ export default function SignUpScreen() {
 
   const syncUserToBackend = async () => {
     try {
+      if (!API_BASE_URL) {
+        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
+      }
       const token = await getToken();
       if (!token) return;
       await fetch(`${API_BASE_URL}/users/sync`, {
@@ -63,6 +69,8 @@ export default function SignUpScreen() {
 
     setLoadingSubmit(true);
     try {
+      // 参考 Clerk Quickstart：https://clerk.com/docs/expo/getting-started/quickstart
+      // 官方邮箱注册流程是 create -> prepareEmailAddressVerification -> attemptEmailAddressVerification。
       await signUp.create({
         emailAddress: emailAddress.trim(),
         password,
@@ -115,6 +123,8 @@ export default function SignUpScreen() {
   const onSSOPress = (strategy) => async () => {
     setLoadingSSO(strategy);
     try {
+      // 参考 Expo Linking：https://docs.expo.dev/versions/latest/sdk/linking/
+      // 参考 Clerk SSO：https://clerk.com/docs/reference/expo/use-sso
       const redirectUrl = Linking.createURL('/sso-callback');
       console.log('[SSO] redirectUrl =', redirectUrl);
 

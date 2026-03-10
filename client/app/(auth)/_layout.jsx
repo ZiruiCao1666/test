@@ -3,21 +3,15 @@ import { Redirect, Stack } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { View, Text, ActivityIndicator } from "react-native";
 
-//https://clerk.com/docs/expo/getting-started/quickstart
-// Redirect + Stack 来做鉴权分流 Authorization Diversion via Redirect and Stack Mechanism
-
-//useAuth 读登录态
-
-
-//https://docs.expo.dev/router/basics/layouts 
-// 用目录和 layout 组织导航/权限控制”
-
+// 参考 Clerk Expo Quickstart：https://clerk.com/docs/expo/getting-started/quickstart
+// 参考 Expo Router Layout：https://docs.expo.dev/router/basics/layout/#root-layout
+// 这里按官网常见做法：未登录显示 auth 组，已登录就 Redirect 到首页。
 export default function AuthLayout() {
   const { isSignedIn, isLoaded } = useAuth();
-//isLoaded 避免 Clerk 未初始化时误判 signed-out 状态 
-// https://clerk.com/docs/expo/reference/hooks/use-auth
 
-if (!isLoaded) {
+  // 参考 Clerk useAuth：https://clerk.com/docs/reference/expo/use-auth
+  // isLoaded 为 false 时先不要判断登录态，避免 Clerk 还没初始化完成就误跳转。
+  if (!isLoaded) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator />
@@ -26,15 +20,9 @@ if (!isLoaded) {
     );
   }
 
-//如果已登录就把 auth 页面重定向到主页 
-// https://clerk.com/docs/expo/getting-started/quickstart
-
- if (isSignedIn) {
+  if (isSignedIn) {
     return <Redirect href="/" />;
   }
 
   return <Stack screenOptions={{ headerShown: false }} />;
 }
-
-//https://docs.expo.dev/router/advanced/stack/ 
-// Expo Router Stack

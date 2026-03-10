@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -10,23 +10,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as Linking from 'expo-linking';
-import * as SecureStore from 'expo-secure-store';
-import { useUser } from '@clerk/clerk-expo';
+import { useAuth } from '@clerk/clerk-expo';
 
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const STORAGE_PREFIX = 'canvas_credentials_v2';
-
-const sanitizeStorageSegment = (value) =>
-  String(value || '').replace(/[^a-zA-Z0-9._-]/g, '_');
-
-const buildScopedStorageKeys = (accountScopeId) => {
-  const scope = sanitizeStorageSegment(accountScopeId);
-  return {
-    school: `${STORAGE_PREFIX}:${scope}:school`,
-    token: `${STORAGE_PREFIX}:${scope}:token`,
-  };
-};
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+const SAVE_DEBOUNCE_MS = 450;
 
 const normalizeBaseUrl = (value) => {
   const trimmed = value.trim();
@@ -156,12 +145,15 @@ const buildAssignmentDetailKey = (courseId, assignmentId) =>
   `${String(courseId)}:${String(assignmentId)}`;
 
 export default function CalendarScreen() {
-  const { user, isLoaded: isUserLoaded } = useUser();
+  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const [schoolInput, setSchoolInput] = useState('');
   const [tokenInput, setTokenInput] = useState('');
   const [credentialsHydrated, setCredentialsHydrated] = useState(false);
+  const [credentialLoadReady, setCredentialLoadReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const lastPersistedRef = useRef({ school: '', token: '' });
+  const getTokenRef = useRef(getToken);
 
   const [profile, setProfile] = useState(null);
   const [courses, setCourses] = useState([]);
@@ -175,85 +167,136 @@ export default function CalendarScreen() {
 
   const baseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
-  const accountScopeId = useMemo(() => {
-    if (!isUserLoaded || !user?.id) return '';
-    const email =
-      user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || '';
-    return `${user.id}:${String(email || '').toLowerCase()}`;
-  }, [
-    isUserLoaded,
-    user?.id,
-    user?.primaryEmailAddress?.emailAddress,
-    user?.emailAddresses?.[0]?.emailAddress,
-  ]);
-  const scopedStorageKeys = useMemo(
-    () => (accountScopeId ? buildScopedStorageKeys(accountScopeId) : null),
-    [accountScopeId]
-  );
+  const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
+
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
+
+  const getSessionToken = async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const token = await getTokenRef.current?.();
+      if (token) return token;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return '';
+  };
+
+  const persistCredentialsToBackend = async (nextSchool, nextToken) => {
+    const sessionToken = await getSessionToken();
+    if (!sessionToken) {
+      throw new Error('No Clerk session token available');
+    }
+    const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        school: nextSchool,
+        token: nextToken,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || `Failed to save credentials (HTTP ${response.status})`);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
     setCredentialsHydrated(false);
-    // Reset local values on account switch to avoid any cross-account flash.
-    setSchoolInput('');
-    setTokenInput('');
-    if (!isUserLoaded || !scopedStorageKeys) {
+    setCredentialLoadReady(false);
+
+    if (!canPersistToBackend) {
       setCredentialsHydrated(true);
       return () => {
         mounted = false;
       };
     }
+
     (async () => {
       try {
-        const [savedSchool, savedToken] = await Promise.all([
-          SecureStore.getItemAsync(scopedStorageKeys.school),
-          SecureStore.getItemAsync(scopedStorageKeys.token),
-        ]);
+        const sessionToken = await getSessionToken();
+        if (!sessionToken) {
+          throw new Error('No Clerk session token available yet');
+        }
+        const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
+          headers: {
+            Authorization: `Bearer ${sessionToken}`,
+          },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.error || `Failed to load saved credentials (HTTP ${response.status})`);
+        }
         if (!mounted) return;
-        setSchoolInput(savedSchool || '');
-        setTokenInput(savedToken || '');
-      } catch {
+        const nextSchool = String(data?.school || '');
+        const nextToken = String(data?.token || '');
+        setSchoolInput(nextSchool);
+        setTokenInput(nextToken);
+        lastPersistedRef.current = {
+          school: nextSchool.trim(),
+          token: nextToken.trim(),
+        };
+        setError('');
+      } catch (loadError) {
         if (mounted) {
-          setError('Failed to load saved school/token from device storage.');
+          setError(
+            loadError instanceof Error
+              ? `Failed to load saved token from backend: ${loadError.message}`
+              : 'Failed to load saved token from backend.'
+          );
         }
       } finally {
-        if (mounted) setCredentialsHydrated(true);
+        if (mounted) {
+          setCredentialsHydrated(true);
+          setCredentialLoadReady(true);
+        }
       }
     })();
     return () => {
       mounted = false;
     };
-  }, [isUserLoaded, scopedStorageKeys]);
+  }, [canPersistToBackend]);
 
   useEffect(() => {
-    if (!credentialsHydrated || !scopedStorageKeys) return;
-    (async () => {
-      try {
-        if (schoolInput) {
-          await SecureStore.setItemAsync(scopedStorageKeys.school, schoolInput);
-        } else {
-          await SecureStore.deleteItemAsync(scopedStorageKeys.school);
+    if (!credentialsHydrated || !canPersistToBackend || !credentialLoadReady) return;
+    const nextSchool = schoolInput.trim();
+    const nextToken = tokenInput.trim();
+    if (
+      lastPersistedRef.current.school === nextSchool &&
+      lastPersistedRef.current.token === nextToken
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          await persistCredentialsToBackend(nextSchool, nextToken);
+          lastPersistedRef.current = {
+            school: nextSchool,
+            token: nextToken,
+          };
+          setError('');
+        } catch (saveError) {
+          setError(
+            saveError instanceof Error
+              ? `Failed to save token to backend: ${saveError.message}`
+              : 'Failed to save token to backend.'
+          );
         }
-      } catch {
-        // Keep UI responsive even if local persistence fails.
-      }
-    })();
-  }, [credentialsHydrated, schoolInput, scopedStorageKeys]);
-
-  useEffect(() => {
-    if (!credentialsHydrated || !scopedStorageKeys) return;
-    (async () => {
-      try {
-        if (tokenInput) {
-          await SecureStore.setItemAsync(scopedStorageKeys.token, tokenInput);
-        } else {
-          await SecureStore.deleteItemAsync(scopedStorageKeys.token);
-        }
-      } catch {
-        // Keep UI responsive even if local persistence fails.
-      }
-    })();
-  }, [credentialsHydrated, tokenInput, scopedStorageKeys]);
+      })();
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [
+    credentialsHydrated,
+    credentialLoadReady,
+    canPersistToBackend,
+    schoolInput,
+    tokenInput,
+  ]);
 
   const buildCanvasUrl = (pathOrUrl) => {
     if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -335,14 +378,25 @@ export default function CalendarScreen() {
     setTokenInput('');
     setLastSyncAt(null);
     try {
-      if (scopedStorageKeys) {
-        await Promise.all([
-          SecureStore.deleteItemAsync(scopedStorageKeys.school),
-          SecureStore.deleteItemAsync(scopedStorageKeys.token),
-        ]);
+      if (!canPersistToBackend) return;
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) return;
+      const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || `Failed to clear credentials (HTTP ${response.status})`);
       }
-    } catch {
-      setError('Failed to clear saved school/token from device storage.');
+    } catch (clearError) {
+      setError(
+        clearError instanceof Error
+          ? `Failed to clear saved token from backend: ${clearError.message}`
+          : 'Failed to clear saved token from backend.'
+      );
     }
   };
 
@@ -422,6 +476,23 @@ export default function CalendarScreen() {
     if (!baseUrl || !tokenInput.trim()) {
       setError('Please fill in school name and access token first.');
       return;
+    }
+
+    if (canPersistToBackend) {
+      try {
+        await persistCredentialsToBackend(schoolInput.trim(), tokenInput.trim());
+        lastPersistedRef.current = {
+          school: schoolInput.trim(),
+          token: tokenInput.trim(),
+        };
+      } catch (persistError) {
+        setError(
+          persistError instanceof Error
+            ? `Cannot save token before sync: ${persistError.message}`
+            : 'Cannot save token before sync.'
+        );
+        return;
+      }
     }
 
     setLoading(true);
@@ -614,7 +685,9 @@ export default function CalendarScreen() {
           </View>
 
           <Text style={styles.helper}>
-            Token is used only in this runtime session and is not persisted.
+            {canPersistToBackend
+              ? 'Token is saved to your backend account storage and auto-loaded when you open the app.'
+              : 'Backend token storage is unavailable. Set EXPO_PUBLIC_API_URL and sign in first.'}
           </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {lastSyncAt ? (

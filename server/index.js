@@ -1,14 +1,14 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
-import pg from 'pg'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express'
-
-const { Pool } = pg
+import { pool } from './db.js'
 
 const app = express()
 const port = Number(process.env.PORT) || 10000
+
+// 允许前端带 Authorization: Bearer <token> 调用后端。
 
 // 让前端能带 Authorization: Bearer <token>
 app.use(
@@ -20,6 +20,9 @@ app.use(
 )
 app.use(express.json())
 
+// 参考 Clerk Express 官方文档：https://clerk.com/docs/reference/express/clerk-middleware
+// 官网示例是先 app.use(clerkMiddleware())，之后再在路由里用 getAuth(req) 读取登录态。
+
 // Clerk 中间件：读取 headers/cookies，把 auth 状态挂到 request 上
 app.use(clerkMiddleware())
 
@@ -30,11 +33,6 @@ if (!databaseUrl) {
 } else if (!databaseUrl.includes('sslmode=')) {
   console.warn('[DB] DATABASE_URL missing sslmode=require. Neon requires SSL.')
 }
-
-const pool = new Pool({
-  connectionString: databaseUrl,
-  ssl: { rejectUnauthorized: false },
-})
 
 const CHECKIN_POINTS = 10
 const TRIPLE_REWARD_STREAK = 7
@@ -218,14 +216,19 @@ async function ensureUserRow(userId) {
 }
 
 // 前端登录成功后调用：验证 session token，并把用户写入 Neon
+// 参考 Clerk Express getAuth 官方文档：https://clerk.com/docs/reference/express/get-auth
+// 官方方式是在路由里调用 getAuth(req) 取出 userId/sessionId，再执行自己的业务逻辑。
 app.post('/users/sync', async (req, res) => {
   try {
     const { userId, sessionId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
+    // 参考 Clerk Backend Users 文档：https://clerk.com/docs/reference/backend/user/get-user
+    // 这里按官方后端模式通过 clerkClient.users.getUser(userId) 回填邮箱、姓名、头像。
     const user = await clerkClient.users.getUser(userId)
 
     // 更稳：优先 primaryEmailAddress.emailAddress（而不是 primaryEmailAddressId）
+    // 优先使用 Clerk primaryEmailAddress.emailAddress，和官方 User 资源字段保持一致。
     const email =
       user.primaryEmailAddress?.emailAddress ||
       user.emailAddresses?.[0]?.emailAddress ||

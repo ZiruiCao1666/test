@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { getProfileInitial, useUserProfile } from '../../providers/UserProfileProvider';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -58,7 +59,9 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
-  const avatarUrl = user?.imageUrl || null;
+  const { profile } = useUserProfile();
+  const avatarUrl = profile?.avatarUrl || user?.imageUrl || null;
+  const avatarInitial = getProfileInitial(profile?.displayName || user?.fullName || user?.firstName);
   const getTokenRef = React.useRef(getToken);
 
   React.useEffect(() => {
@@ -218,7 +221,7 @@ export default function RewardsScreen() {
               <Image source={{ uri: avatarUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>U</Text>
+                <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
               </View>
             )}
           </View>

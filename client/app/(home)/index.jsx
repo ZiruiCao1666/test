@@ -20,14 +20,17 @@ const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const { profile } = useUserProfile();
 
   const username =
+    profile?.displayName ||
     user?.firstName ||
     user?.fullName ||
     user?.primaryEmailAddress?.emailAddress ||
     'Student';
 
-  const avatarUrl = user?.imageUrl || null;
+  const avatarUrl = profile?.avatarUrl || user?.imageUrl || null;
+  const avatarInitial = getProfileInitial(username);
 
   const [totalSignedDays, setTotalSignedDays] = React.useState(0);
   const [streakDays, setStreakDays] = React.useState(0);
@@ -243,7 +246,7 @@ export default function HomeScreen() {
               <Image source={{ uri: avatarUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>U</Text>
+                <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
               </View>
             )}
           </View>
@@ -334,7 +337,7 @@ export default function HomeScreen() {
                 <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />
               ) : (
                 <View style={[styles.todoAvatar, styles.avatarFallback]}>
-                  <Text style={styles.avatarFallbackText}>U</Text>
+                  <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
                 </View>
               )}
 
