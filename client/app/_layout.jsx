@@ -14,12 +14,8 @@ if (!publishableKey) {
 
 export default function RootLayout() {
   return (
-    // 参考 Clerk Expo Quickstart：https://clerk.com/docs/expo/getting-started/quickstart
-    // 官网示例是在根布局里用 <ClerkProvider publishableKey=... tokenCache=...> 包住路由树。
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <UserProfileProvider>
-        <Slot />
-      </UserProfileProvider>
+      <Slot />
     </ClerkProvider>
   );
 }
