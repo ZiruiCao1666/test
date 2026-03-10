@@ -58,9 +58,7 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
-  const { profile } = useUserProfile();
-  const avatarUrl = profile?.avatarUrl || user?.imageUrl || null;
-  const avatarInitial = getProfileInitial(profile?.displayName || user?.fullName || user?.firstName);
+
   const getTokenRef = React.useRef(getToken);
 
   React.useEffect(() => {

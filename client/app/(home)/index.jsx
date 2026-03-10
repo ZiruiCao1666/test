@@ -20,17 +20,15 @@ const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
-  const { profile } = useUserProfile();
 
   const username =
-    profile?.displayName ||
     user?.firstName ||
     user?.fullName ||
     user?.primaryEmailAddress?.emailAddress ||
     'Student';
 
-  const avatarUrl = profile?.avatarUrl || user?.imageUrl || null;
-  const avatarInitial = getProfileInitial(username);
+  const avatarUrl = user?.imageUrl || null;
+  const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
   const [totalSignedDays, setTotalSignedDays] = React.useState(0);
   const [streakDays, setStreakDays] = React.useState(0);
