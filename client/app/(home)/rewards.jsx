@@ -58,6 +58,13 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const username =
+    user?.firstName ||
+    user?.fullName ||
+    user?.primaryEmailAddress?.emailAddress ||
+    'Student';
+  const avatarUrl = user?.imageUrl || null;
+  const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
   const getTokenRef = React.useRef(getToken);
 

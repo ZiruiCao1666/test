@@ -1,0 +1,179 @@
+# Student Motivation App
+
+A student motivation app built with Expo Router, Clerk, Express, and Postgres.
+
+## Stack
+
+- Node.js `v20.19.4`
+- Expo `~54.0.33`
+- Expo Router `~6.0.23`
+- React Native `0.81.5`
+- React `19.1.0`
+- Clerk Expo `^2.19.11`
+- Express `^4.21.2`
+- pg `^8.13.1`
+
+## Official References
+
+These links are the main official references for the setup used in this project:
+
+- Node.js download: <https://nodejs.org/en/download>
+- Expo environment variables: <https://docs.expo.dev/guides/environment-variables/>
+- Expo Router installation: <https://docs.expo.dev/router/installation/>
+- Expo Router SDK reference: <https://docs.expo.dev/versions/v54.0.0/sdk/router/>
+- Clerk Expo quickstart: <https://clerk.com/docs/expo/getting-started/quickstart>
+- Clerk Express `clerkMiddleware()`: <https://clerk.com/docs/reference/express/clerk-middleware>
+- Clerk Express `getAuth()`: <https://clerk.com/docs/reference/express/get-auth>
+- node-postgres connection guide: <https://node-postgres.com/features/connecting>
+
+## How This Project Maps To The Official Docs
+
+- Expo loads public client variables from `.env` files when they use the `EXPO_PUBLIC_` prefix.
+- This project reads `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` and `EXPO_PUBLIC_API_URL` from `client/.env`.
+- Expo docs recommend not storing secrets in `EXPO_PUBLIC_` variables because they are exposed in the app bundle.
+- Expo Router is already configured in this project with `index.js` importing `expo-router/entry`, route files under `client/app/`, and the app scheme set to `studentmotivation`.
+- Clerk is initialized in the Expo root layout with `ClerkProvider`, and the backend uses Clerk Express middleware plus `getAuth()` to verify requests.
+- Postgres is connected from the server with `DATABASE_URL` through `pg`'s `Pool`.
+
+## Project Structure
+
+- `client/`: Expo app
+- `server/`: Express API server
+- `server/sql/`: SQL reference files
+
+## Features
+
+- Clerk sign in / sign up
+- Daily check-in and points
+- Reward catalog and redemption history
+- Canvas account connection and data sync
+- User profile sync to backend
+
+## Environment Variables
+
+### `server/.env`
+
+Set these values before starting the backend:
+
+```env
+DATABASE_URL=your_postgres_connection_string
+CLERK_SECRET_KEY=your_clerk_secret_key
+PORT=10000
+CANVAS_TOKEN_SECRET=your_canvas_token_secret
+```
+
+Notes:
+
+- `PORT` defaults to `10000` if not set
+- `CANVAS_TOKEN_SECRET` is required for Canvas token encryption
+- `CLERK_PUBLISHABLE_KEY` may exist in your local env, but the current server code does not depend on it directly
+- Backend environment variables are loaded by `dotenv/config` when the server starts
+- Clerk backend auth in this project follows the Clerk Express pattern of `app.use(clerkMiddleware())` plus `getAuth(req)` inside routes
+- Postgres connection is configured through `DATABASE_URL`
+
+### `client/.env`
+
+Set these values before starting the Expo app:
+
+```env
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+EXPO_PUBLIC_API_URL=http://localhost:10000
+```
+
+Notes:
+
+- The client code reads `EXPO_PUBLIC_API_URL`
+- The client code also reads `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- Per Expo's official environment variable guide, only `EXPO_PUBLIC_` variables are available in app code
+- Do not put server secrets in `client/.env`
+- If you run Expo on a real phone, do not use `localhost`
+- For a real device, use your computer LAN IP, for example:
+  `EXPO_PUBLIC_API_URL=http://192.168.1.20:10000`
+- For Android emulator, you may need:
+  `EXPO_PUBLIC_API_URL=http://10.0.2.2:10000`
+
+## Install
+
+### Backend
+
+```bash
+cd server
+npm install
+npm run dev
+```
+
+The backend will run on:
+
+```txt
+http://localhost:10000
+```
+
+unless you override `PORT` in `server/.env`.
+
+Official references:
+
+- Clerk Express setup: <https://clerk.com/docs/expressjs/getting-started/quickstart>
+- Clerk middleware reference: <https://clerk.com/docs/reference/express/clerk-middleware>
+- Clerk auth helper reference: <https://clerk.com/docs/reference/express/get-auth>
+- node-postgres connection guide: <https://node-postgres.com/features/connecting>
+
+### Client
+
+```bash
+cd client
+npm install
+npm run start
+```
+
+Then open the Expo app and run on web, emulator, or device.
+
+Official references:
+
+- Expo getting started: <https://docs.expo.dev/>
+- Expo environment variables: <https://docs.expo.dev/guides/environment-variables/>
+- Expo Router installation: <https://docs.expo.dev/router/installation/>
+- Clerk Expo quickstart: <https://clerk.com/docs/expo/getting-started/quickstart>
+
+Install note:
+
+- For new Expo packages added later, Expo officially recommends using `npx expo install ...` so versions stay compatible with the current SDK.
+
+## Auth and Routing
+
+Main route groups:
+
+- `(auth)`: sign-in and sign-up pages
+- `(home)`: authenticated app pages
+
+Important screens:
+
+- `/sign-in`
+- `/sign-up`
+- `/`
+- `/calendar`
+- `/rewards`
+- `/orders`
+- `/my-profile`
+- `/sso-callback`
+
+## Backend API
+
+Main endpoints used by the client:
+
+- `GET /health`
+- `POST /users/sync`
+- `GET /checkins/status`
+- `POST /checkins/today`
+- `GET /rewards/catalog`
+- `POST /rewards/redeem`
+- `GET /rewards/orders`
+- `GET /canvas/credentials`
+- `PUT /canvas/credentials`
+- `DELETE /canvas/credentials`
+
+## Notes
+
+- The Expo app uses the scheme `studentmotivation`
+- SSO callback route is `/sso-callback`
+- Canvas credentials are encrypted on the server before storage
+- Clerk auth is required for protected app routes and backend API access
