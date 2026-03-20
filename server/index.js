@@ -40,6 +40,8 @@ const TRIPLE_REWARD_MULTIPLIER = 3
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
 const CANVAS_IV_BYTES = 12
 const CANVAS_TOKEN_SECRET = process.env.CANVAS_TOKEN_SECRET || ''
+const TASK_MODE_DEADLINE = 'deadline'
+const TASK_MODE_RANGE = 'range'
 
 function mapRewardRow(row) {
   return {
@@ -49,6 +51,91 @@ function mapRewardRow(row) {
     category: row.category,
     imageUrl: row.image_url || '',
     isActive: row.is_active,
+  }
+}
+
+function trimTaskTime(value) {
+  const safe = String(value ?? '').trim()
+  return safe ? safe.slice(0, 5) : ''
+}
+
+function mapCustomTaskRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    taskDate: row.task_date,
+    timingMode: row.timing_mode,
+    dueTime: trimTaskTime(row.due_time),
+    startTime: trimTaskTime(row.start_time),
+    endTime: trimTaskTime(row.end_time),
+    isCompleted: Boolean(row.is_completed),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function normalizeDateInput(value) {
+  const safe = String(value ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safe)) return ''
+  return safe
+}
+
+function normalizeTimeInput(value) {
+  const safe = String(value ?? '').trim()
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(safe)) return ''
+  return safe
+}
+
+function normalizeTaskPayload(body) {
+  const title = String(body?.title ?? '').trim()
+  const taskDate = normalizeDateInput(body?.taskDate)
+  const timingMode =
+    body?.timingMode === TASK_MODE_RANGE ? TASK_MODE_RANGE : TASK_MODE_DEADLINE
+  const dueTime = normalizeTimeInput(body?.dueTime)
+  const startTime = normalizeTimeInput(body?.startTime)
+  const endTime = normalizeTimeInput(body?.endTime)
+  const isCompleted = Boolean(body?.isCompleted)
+
+  if (!title) {
+    return { error: 'Task title is required' }
+  }
+  if (title.length > 200) {
+    return { error: 'Task title is too long' }
+  }
+  if (!taskDate) {
+    return { error: 'Task date must be YYYY-MM-DD' }
+  }
+
+  if (timingMode === TASK_MODE_DEADLINE) {
+    if (!dueTime) {
+      return { error: 'Due time must be HH:MM' }
+    }
+    return {
+      title,
+      taskDate,
+      timingMode,
+      dueTime,
+      startTime: '',
+      endTime: '',
+      isCompleted,
+    }
+  }
+
+  if (!startTime || !endTime) {
+    return { error: 'Start time and end time must be HH:MM' }
+  }
+  if (endTime <= startTime) {
+    return { error: 'End time must be later than start time' }
+  }
+
+  return {
+    title,
+    taskDate,
+    timingMode,
+    dueTime: '',
+    startTime,
+    endTime,
+    isCompleted,
   }
 }
 
@@ -168,6 +255,24 @@ async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_app_reward_orders_user_created_at
       ON app_reward_orders (clerk_user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS app_custom_tasks (
+      id BIGSERIAL PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      task_date DATE NOT NULL,
+      timing_mode TEXT NOT NULL DEFAULT 'deadline'
+        CHECK (timing_mode IN ('deadline', 'range')),
+      due_time TIME,
+      start_time TIME,
+      end_time TIME,
+      is_completed BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_custom_tasks_user_date
+      ON app_custom_tasks (clerk_user_id, task_date ASC, created_at ASC);
   `)
 
   await pool.query(
@@ -383,6 +488,216 @@ app.delete('/canvas/credentials', async (req, res) => {
     return res.json({ ok: true })
   } catch (e) {
     console.error('[BE] /canvas/credentials DELETE error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /tasks
+ * Return the current user's custom tasks.
+ */
+app.get('/tasks', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      FROM app_custom_tasks
+      WHERE clerk_user_id = $1
+      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC
+      `,
+      [userId],
+    )
+
+    return res.json({
+      ok: true,
+      items: result.rows.map(mapCustomTaskRow),
+    })
+  } catch (e) {
+    console.error('[BE] /tasks GET error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * POST /tasks
+ * Create one custom task for the current user.
+ */
+app.post('/tasks', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const normalized = normalizeTaskPayload(req.body)
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error })
+    }
+
+    const result = await pool.query(
+      `
+      INSERT INTO app_custom_tasks (
+        clerk_user_id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      RETURNING
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      `,
+      [
+        userId,
+        normalized.title,
+        normalized.taskDate,
+        normalized.timingMode,
+        normalized.dueTime || null,
+        normalized.startTime || null,
+        normalized.endTime || null,
+        normalized.isCompleted,
+      ],
+    )
+
+    return res.status(201).json({
+      ok: true,
+      item: mapCustomTaskRow(result.rows[0]),
+    })
+  } catch (e) {
+    console.error('[BE] /tasks POST error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * PUT /tasks/:id
+ * Update one custom task.
+ */
+app.put('/tasks/:id', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const taskId = Number(req.params?.id)
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Invalid task id' })
+    }
+
+    const normalized = normalizeTaskPayload(req.body)
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error })
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE app_custom_tasks
+      SET
+        title = $3,
+        task_date = $4,
+        timing_mode = $5,
+        due_time = $6,
+        start_time = $7,
+        end_time = $8,
+        is_completed = $9,
+        updated_at = NOW()
+      WHERE id = $1 AND clerk_user_id = $2
+      RETURNING
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      `,
+      [
+        taskId,
+        userId,
+        normalized.title,
+        normalized.taskDate,
+        normalized.timingMode,
+        normalized.dueTime || null,
+        normalized.startTime || null,
+        normalized.endTime || null,
+        normalized.isCompleted,
+      ],
+    )
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Task not found' })
+    }
+
+    return res.json({
+      ok: true,
+      item: mapCustomTaskRow(result.rows[0]),
+    })
+  } catch (e) {
+    console.error('[BE] /tasks PUT error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * DELETE /tasks/:id
+ * Remove one custom task.
+ */
+app.delete('/tasks/:id', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    const taskId = Number(req.params?.id)
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Invalid task id' })
+    }
+
+    const result = await pool.query(
+      `
+      DELETE FROM app_custom_tasks
+      WHERE id = $1 AND clerk_user_id = $2
+      RETURNING id
+      `,
+      [taskId, userId],
+    )
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Task not found' })
+    }
+
+    return res.json({ ok: true })
+  } catch (e) {
+    console.error('[BE] /tasks DELETE error:', e)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
