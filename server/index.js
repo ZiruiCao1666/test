@@ -174,6 +174,170 @@ function decryptCanvasToken(cipherText, iv, authTag) {
   return decrypted.toString('utf8')
 }
 
+function normalizeCanvasBaseUrl(value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+  return withProtocol.replace(/\/+$/, '')
+}
+
+function buildCanvasBaseUrl(value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+  if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
+    return normalizeCanvasBaseUrl(trimmed)
+  }
+  return `https://${trimmed}.instructure.com`
+}
+
+function parseLinkHeader(header) {
+  if (!header) return {}
+  return header.split(',').reduce((acc, part) => {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="([^"]+)"/)
+    if (match) {
+      acc[match[2]] = match[1]
+    }
+    return acc
+  }, {})
+}
+
+async function fetchCanvasPage(baseUrl, token, pathOrUrl) {
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${baseUrl}${pathOrUrl}`
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  })
+
+  const raw = await response.text()
+  let data = null
+  if (raw) {
+    try {
+      data = JSON.parse(raw)
+    } catch (_error) {
+      data = null
+    }
+  }
+
+  if (!response.ok) {
+    const message = data?.errors?.[0]?.message || data?.message || response.statusText
+    throw new Error(`Canvas ${response.status} ${message}`)
+  }
+
+  const links = parseLinkHeader(response.headers.get('link'))
+  return {
+    data,
+    nextUrl: links.next || '',
+  }
+}
+
+async function fetchCanvasPaged(baseUrl, token, path) {
+  let nextUrl = path
+  const aggregated = []
+  const visited = new Set()
+
+  while (nextUrl) {
+    if (visited.has(nextUrl)) break
+    visited.add(nextUrl)
+
+    const { data, nextUrl: newNextUrl } = await fetchCanvasPage(baseUrl, token, nextUrl)
+    if (!Array.isArray(data)) return data
+
+    aggregated.push(...data)
+    nextUrl = newNextUrl
+  }
+
+  return aggregated
+}
+
+async function getStoredCanvasCredentials(userId) {
+  await ensureUserRow(userId)
+
+  const result = await pool.query(
+    `
+    SELECT canvas_school, canvas_token_ciphertext, canvas_token_iv, canvas_token_tag
+    FROM app_canvas_credentials
+    WHERE clerk_user_id = $1
+    `,
+    [userId],
+  )
+
+  if (result.rowCount === 0) {
+    return { school: '', token: '' }
+  }
+
+  const row = result.rows[0]
+  let token = ''
+
+  if (row.canvas_token_ciphertext && row.canvas_token_iv && row.canvas_token_tag) {
+    token = decryptCanvasToken(
+      row.canvas_token_ciphertext,
+      row.canvas_token_iv,
+      row.canvas_token_tag,
+    )
+  }
+
+  return {
+    school: row.canvas_school || '',
+    token,
+  }
+}
+
+function buildCustomTaskDateTime(task) {
+  const date = String(task?.taskDate || '').trim()
+  if (!date) return ''
+
+  if (task?.timingMode === TASK_MODE_RANGE && trimTaskTime(task?.startTime)) {
+    return `${date}T${trimTaskTime(task.startTime)}:00`
+  }
+
+  if (trimTaskTime(task?.dueTime)) {
+    return `${date}T${trimTaskTime(task.dueTime)}:00`
+  }
+
+  return `${date}T12:00:00`
+}
+
+function mapCustomTaskToPlanItem(task) {
+  const date = buildCustomTaskDateTime(task)
+  const sortTs = new Date(date).getTime()
+
+  return {
+    id: `custom-${String(task.id)}`,
+    source: 'custom',
+    title: task.title || 'Untitled task',
+    course: '',
+    type: task?.timingMode === TASK_MODE_RANGE ? 'custom range' : 'custom deadline',
+    date,
+    htmlUrl: '',
+    isCompleted: Boolean(task?.isCompleted),
+    sortTs: Number.isNaN(sortTs) ? Number.MAX_SAFE_INTEGER : sortTs,
+  }
+}
+
+function mapCanvasEventToPlanItem(item, index) {
+  const date = item?.due_at || item?.start_at || item?.end_at || ''
+  if (!date) return null
+
+  const sortTs = new Date(date).getTime()
+  if (Number.isNaN(sortTs)) return null
+
+  return {
+    id: `canvas-${String(item?.id || item?.event_id || item?.assignment_id || index)}`,
+    source: 'canvas',
+    title: item?.title || item?.name || 'Untitled event',
+    course: item?.context_name || item?.assignment?.course_name || '',
+    type: item?.type || item?.assignment?.type || 'event',
+    date,
+    htmlUrl: item?.html_url || item?.assignment?.html_url || '',
+    isCompleted: false,
+    sortTs,
+  }
+}
+
 async function getStreakDays(db, userId, today) {
   const r = await db.query(
     `
@@ -372,42 +536,21 @@ app.get('/canvas/credentials', async (req, res) => {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureUserRow(userId)
-    const result = await pool.query(
-      `
-      SELECT canvas_school, canvas_token_ciphertext, canvas_token_iv, canvas_token_tag
-      FROM app_canvas_credentials
-      WHERE clerk_user_id = $1
-      `,
-      [userId],
-    )
-
-    if (result.rowCount === 0) {
-      return res.json({ ok: true, school: '', token: '' })
-    }
-
-    const row = result.rows[0]
-    let token = ''
-    if (row.canvas_token_ciphertext && row.canvas_token_iv && row.canvas_token_tag) {
-      try {
-        token = decryptCanvasToken(
-          row.canvas_token_ciphertext,
-          row.canvas_token_iv,
-          row.canvas_token_tag,
-        )
-      } catch (decryptError) {
-        console.error('[BE] /canvas/credentials decrypt error:', decryptError)
-        return res.status(500).json({
-          error:
-            'Saved Canvas token cannot be decrypted. Check CANVAS_TOKEN_SECRET is set and unchanged.',
-        })
-      }
+    let stored
+    try {
+      stored = await getStoredCanvasCredentials(userId)
+    } catch (decryptError) {
+      console.error('[BE] /canvas/credentials decrypt error:', decryptError)
+      return res.status(500).json({
+        error:
+          'Saved Canvas token cannot be decrypted. Check CANVAS_TOKEN_SECRET is set and unchanged.',
+      })
     }
 
     return res.json({
       ok: true,
-      school: row.canvas_school || '',
-      token,
+      school: stored.school,
+      token: stored.token,
     })
   } catch (e) {
     console.error('[BE] /canvas/credentials error:', e)
@@ -488,6 +631,100 @@ app.delete('/canvas/credentials', async (req, res) => {
     return res.json({ ok: true })
   } catch (e) {
     console.error('[BE] /canvas/credentials DELETE error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /home/plan
+ * Return the current user's next N days of custom tasks + Canvas items.
+ */
+app.get('/home/plan', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const rawDays = Number(req.query?.days)
+    const days = Number.isInteger(rawDays)
+      ? Math.min(Math.max(rawDays, 1), 30)
+      : 7
+
+    const customTaskResult = await pool.query(
+      `
+      SELECT
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      FROM app_custom_tasks
+      WHERE clerk_user_id = $1
+        AND is_completed = FALSE
+        AND task_date >= (NOW() AT TIME ZONE 'Europe/London')::date
+        AND task_date < ((NOW() AT TIME ZONE 'Europe/London')::date + $2::int)
+      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC
+      `,
+      [userId, days],
+    )
+
+    const customItems = customTaskResult.rows
+      .map(mapCustomTaskRow)
+      .map(mapCustomTaskToPlanItem)
+
+    let canvasItems = []
+    let canvasConnected = false
+    let canvasError = ''
+
+    try {
+      const stored = await getStoredCanvasCredentials(userId)
+      canvasConnected = Boolean(stored.school && stored.token)
+
+      if (canvasConnected) {
+        const baseUrl = buildCanvasBaseUrl(stored.school)
+        const rawCanvasItems = await fetchCanvasPaged(
+          baseUrl,
+          stored.token,
+          '/api/v1/users/self/upcoming_events?per_page=50',
+        )
+
+        const nowTs = Date.now()
+        const endTs = nowTs + days * 24 * 60 * 60 * 1000
+
+        canvasItems = (Array.isArray(rawCanvasItems) ? rawCanvasItems : [])
+          .map((item, index) => mapCanvasEventToPlanItem(item, index))
+          .filter((item) => item && item.sortTs >= nowTs && item.sortTs <= endTs)
+      }
+    } catch (canvasLoadError) {
+      canvasError =
+        canvasLoadError instanceof Error
+          ? canvasLoadError.message
+          : 'Failed to load Canvas items'
+      console.error('[BE] /home/plan canvas error:', canvasLoadError)
+    }
+
+    const items = [...customItems, ...canvasItems]
+      .sort((left, right) => {
+        if (left.sortTs !== right.sortTs) return left.sortTs - right.sortTs
+        return String(left.title || '').localeCompare(String(right.title || ''))
+      })
+      .map(({ sortTs, ...item }) => item)
+
+    return res.json({
+      ok: true,
+      days,
+      canvasConnected,
+      canvasError,
+      items,
+    })
+  } catch (e) {
+    console.error('[BE] /home/plan error:', e)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })

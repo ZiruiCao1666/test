@@ -8,7 +8,6 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
-  Modal,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useAuth } from '@clerk/clerk-expo';
@@ -159,16 +158,9 @@ const PREVIEW_ACCENTS = [
   { bg: '#fef3c7', border: '#fbbf24', text: '#b45309' },
   { bg: '#ede9fe', border: '#8b5cf6', text: '#6d28d9' },
 ];
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const TIME_WHEEL_ITEM_HEIGHT = 44;
-const TIME_WHEEL_SIDE_ROWS = 2;
-const HOUR_12_OPTIONS = Array.from({ length: 12 }, (_, index) => String(index + 1));
-const MINUTE_OPTIONS = ['00', '15', '30', '45'];
-const MERIDIEM_OPTIONS = ['AM', 'PM'];
 
 const toSafeDate = (value) => {
-  if (value === null || value === undefined || value === '') return null;
-  const date = value instanceof Date ? new Date(value) : new Date(value);
+  const date = value instanceof Date ? new Date(value) : new Date(value || 0);
   if (Number.isNaN(date.getTime())) return null;
   return date;
 };
@@ -185,20 +177,6 @@ const addDays = (value, amount) => {
   if (!date) return null;
   date.setDate(date.getDate() + amount);
   return date;
-};
-
-const addMonths = (value, amount) => {
-  const date = toSafeDate(value);
-  if (!date) return null;
-  const targetDay = date.getDate();
-  const nextDate = new Date(date.getFullYear(), date.getMonth() + amount, 1);
-  const lastDayOfTargetMonth = new Date(
-    nextDate.getFullYear(),
-    nextDate.getMonth() + 1,
-    0
-  ).getDate();
-  nextDate.setDate(Math.min(targetDay, lastDayOfTargetMonth));
-  return nextDate;
 };
 
 const startOfWeek = (value) => {
@@ -253,15 +231,6 @@ const formatShortDate = (value) => {
   });
 };
 
-const formatDayMonth = (value) => {
-  const date = toSafeDate(value);
-  if (!date) return '';
-  return date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-  });
-};
-
 const formatWeekday = (value) => {
   const date = toSafeDate(value);
   if (!date) return '';
@@ -308,431 +277,6 @@ const pickPreviewAccent = (seed) => {
   return PREVIEW_ACCENTS[hash] || PREVIEW_ACCENTS[0];
 };
 
-const formatInputDate = (value) => {
-  const date = startOfDay(value) || startOfDay(new Date());
-  if (!date) return '';
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-');
-};
-
-const isValidDateInput = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
-const isValidTimeInput = (value) =>
-  /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim());
-const isQuarterHourTimeInput = (value) => {
-  const safe = String(value || '').trim();
-  return isValidTimeInput(safe) && MINUTE_OPTIONS.includes(safe.slice(3, 5));
-};
-
-const parseDateInput = (value) => {
-  const safe = String(value || '').trim();
-  if (!isValidDateInput(safe)) return null;
-  const [year, month, day] = safe.split('-').map((part) => Number(part));
-  const date = new Date(year, month - 1, day);
-  if (
-    Number.isNaN(date.getTime()) ||
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-  return date;
-};
-
-const normalizeTaskDateInput = (value, fallback = new Date()) => {
-  const normalizedDate = parseDateInput(value) || startOfDay(value) || startOfDay(fallback);
-  return formatInputDate(normalizedDate || fallback);
-};
-
-const normalizeTaskTimeInput = (value, fallback = '') => {
-  const safe = String(value || '').trim();
-  const match = safe.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
-  if (!match) return fallback;
-  return `${match[1]}:${match[2]}`;
-};
-
-const normalizeCustomTask = (task, fallbackDate = new Date()) => {
-  const timingMode = task?.timingMode === 'range' ? 'range' : 'deadline';
-  return {
-    ...task,
-    taskDate: normalizeTaskDateInput(task?.taskDate, fallbackDate),
-    dueTime: normalizeTaskTimeInput(task?.dueTime, '18:00'),
-    startTime: normalizeTaskTimeInput(task?.startTime, '09:00'),
-    endTime: normalizeTaskTimeInput(task?.endTime, '10:00'),
-    timingMode,
-  };
-};
-
-const formatTimeOnly = (value) => {
-  const safe = String(value || '').trim();
-  if (!isValidTimeInput(safe)) return safe || 'N/A';
-  const date = toSafeDate(`2000-01-01T${safe}:00`);
-  if (!date) return safe;
-  return date.toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-};
-
-const buildTaskDateTimeIso = (task) => {
-  const taskDate = String(task?.taskDate || '').trim();
-  if (!isValidDateInput(taskDate)) return '';
-  if (task?.timingMode === 'range' && isValidTimeInput(task?.startTime)) {
-    return `${taskDate}T${String(task.startTime).trim()}:00`;
-  }
-  if (isValidTimeInput(task?.dueTime)) {
-    return `${taskDate}T${String(task.dueTime).trim()}:00`;
-  }
-  return `${taskDate}T12:00:00`;
-};
-
-const formatTaskSchedule = (task) => {
-  const dateLabel = formatShortDate(task?.taskDate || '');
-  if (task?.timingMode === 'range') {
-    return `${dateLabel} | ${formatTimeOnly(task?.startTime)} - ${formatTimeOnly(task?.endTime)}`;
-  }
-  return `${dateLabel} | Due ${formatTimeOnly(task?.dueTime)}`;
-};
-
-const formatPickerDateLabel = (value) => {
-  const date = parseDateInput(value) || toSafeDate(value);
-  if (!date) return 'Pick a date';
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-};
-
-const clampDateToMonthYear = (value, year, month) => {
-  const baseDate = toSafeDate(value) || new Date();
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const nextDate = new Date(baseDate);
-  nextDate.setFullYear(year, month, Math.min(baseDate.getDate(), lastDay));
-  return nextDate;
-};
-
-const parseTimeDraft = (value) => {
-  const safe = String(value || '').trim();
-  if (!isValidTimeInput(safe)) {
-    return {
-      hour12: '6',
-      minute: '00',
-      meridiem: 'PM',
-    };
-  }
-
-  const [rawHour, rawMinute] = safe.split(':').map((part) => Number(part));
-  return {
-    hour12: String(rawHour % 12 || 12),
-    minute: MINUTE_OPTIONS.includes(String(rawMinute).padStart(2, '0'))
-      ? String(rawMinute).padStart(2, '0')
-      : '00',
-    meridiem: rawHour >= 12 ? 'PM' : 'AM',
-  };
-};
-
-const formatTimeDraftToValue = (draft) => {
-  let hour = Number(draft?.hour12 || 12);
-  if (!Number.isInteger(hour) || hour < 1 || hour > 12) hour = 12;
-
-  const minute = MINUTE_OPTIONS.includes(String(draft?.minute || ''))
-    ? String(draft.minute)
-    : '00';
-  const meridiem = draft?.meridiem === 'AM' ? 'AM' : 'PM';
-
-  if (meridiem === 'AM') {
-    hour = hour === 12 ? 0 : hour;
-  } else {
-    hour = hour === 12 ? 12 : hour + 12;
-  }
-
-  return `${String(hour).padStart(2, '0')}:${minute}`;
-};
-
-const PickerWheelColumn = ({
-  label,
-  options,
-  value,
-  onChange,
-  scrollRef,
-}) => {
-  const paddingHeight = TIME_WHEEL_ITEM_HEIGHT * TIME_WHEEL_SIDE_ROWS;
-
-  const snapToOption = (index, animated = true) => {
-    const safeIndex = Math.max(0, Math.min(options.length - 1, index));
-    const nextValue = options[safeIndex];
-    if (nextValue !== value) onChange(nextValue);
-    scrollRef?.current?.scrollTo({
-      y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
-      animated,
-    });
-  };
-
-  const handleSnap = (offsetY) => {
-    const nextIndex = Math.round(offsetY / TIME_WHEEL_ITEM_HEIGHT);
-    snapToOption(nextIndex, true);
-  };
-
-  return (
-    <View style={styles.timeWheelGroup}>
-      <Text style={styles.timeWheelLabel}>{label}</Text>
-      <View style={styles.timeWheelColumn}>
-        <View pointerEvents="none" style={styles.timeWheelGuideFrame} />
-        <ScrollView
-          ref={scrollRef}
-          bounces={false}
-          decelerationRate="fast"
-          showsVerticalScrollIndicator={false}
-          snapToInterval={TIME_WHEEL_ITEM_HEIGHT}
-          snapToAlignment="start"
-          contentContainerStyle={{ paddingVertical: paddingHeight }}
-          onMomentumScrollEnd={(event) => handleSnap(event.nativeEvent.contentOffset.y)}
-          onScrollEndDrag={(event) => handleSnap(event.nativeEvent.contentOffset.y)}
-        >
-          {options.map((option, index) => {
-            const active = option === value;
-            return (
-              <Pressable
-                key={`${label}-${option}`}
-                onPress={() => snapToOption(index)}
-                style={styles.timeWheelItem}
-              >
-                <Text
-                  style={[
-                    styles.timeWheelItemText,
-                    active ? styles.timeWheelItemTextActive : null,
-                  ]}
-                >
-                  {option}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </View>
-  );
-};
-
-const MiniCalendarPanel = ({
-  anchorDate,
-  selectedDate,
-  onSelectDate,
-  onChangeMonth,
-  dateMarkersByDate,
-  onPressTitle,
-  titleHint,
-  footerHint,
-}) => {
-  const calendarDays = useMemo(() => buildMiniCalendarDays(anchorDate), [anchorDate]);
-
-  return (
-    <View style={styles.miniCalendarCard}>
-      <View style={styles.miniCalendarTopRow}>
-        {onPressTitle ? (
-          <Pressable
-            onPress={onPressTitle}
-            style={({ pressed }) => [
-              styles.miniCalendarTitleBtn,
-              pressed ? { opacity: 0.76 } : null,
-            ]}
-          >
-            <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {titleHint ? <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text> : null}
-          </Pressable>
-        ) : (
-          <View style={styles.miniCalendarTitleBtn}>
-            <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {titleHint ? <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text> : null}
-          </View>
-        )}
-
-        <View style={styles.miniCalendarNavRow}>
-          <Pressable
-            onPress={() => onChangeMonth(-1)}
-            style={({ pressed }) => [
-              styles.miniCalendarNavBtn,
-              pressed ? { opacity: 0.7 } : null,
-            ]}
-          >
-            <Text style={styles.miniCalendarNavText}>{'<'}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => onChangeMonth(1)}
-            style={({ pressed }) => [
-              styles.miniCalendarNavBtn,
-              pressed ? { opacity: 0.7 } : null,
-            ]}
-          >
-            <Text style={styles.miniCalendarNavText}>{'>'}</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={styles.miniCalendarWeekdays}>
-        {MINI_CALENDAR_LABELS.map((label, index) => (
-          <Text key={`${label}-${index}`} style={styles.miniCalendarWeekdayText}>
-            {label}
-          </Text>
-        ))}
-      </View>
-
-      <View style={styles.miniCalendarGrid}>
-        {calendarDays.map((day) => {
-          const markers = dateMarkersByDate?.[buildDateKey(day.date)] || {
-            count: 0,
-            hasCanvas: false,
-            hasCustom: false,
-          };
-          const isSelected = isSameDay(day.date, selectedDate);
-          const isToday = isSameDay(day.date, new Date());
-          return (
-            <Pressable
-              key={day.key}
-              onPress={() => onSelectDate(day.date)}
-              style={({ pressed }) => [
-                styles.miniCalendarCell,
-                !day.inCurrentMonth ? styles.miniCalendarCellMuted : null,
-                isSelected ? styles.miniCalendarCellSelected : null,
-                isToday ? styles.miniCalendarCellToday : null,
-                pressed ? { opacity: 0.82 } : null,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.miniCalendarCellText,
-                  !day.inCurrentMonth ? styles.miniCalendarCellTextMuted : null,
-                  isSelected ? styles.miniCalendarCellTextSelected : null,
-                ]}
-              >
-                {day.date.getDate()}
-              </Text>
-              {markers.count > 0 ? (
-                <View style={styles.miniCalendarDotRow}>
-                  {markers.hasCanvas ? <View style={styles.miniCalendarDot} /> : null}
-                  {markers.hasCustom ? <View style={styles.miniCalendarDotCustom} /> : null}
-                </View>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {footerHint ? <Text style={styles.miniCalendarHint}>{footerHint}</Text> : null}
-    </View>
-  );
-};
-
-const TaskSelectField = ({
-  label,
-  value,
-  hint,
-  onPress,
-}) => (
-  <View style={styles.taskFieldBlock}>
-    <Text style={styles.taskFieldLabel}>{label}</Text>
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.taskFieldSelect,
-        pressed ? { opacity: 0.82 } : null,
-      ]}
-    >
-      <Text style={styles.taskFieldSelectValue}>{value}</Text>
-      {hint ? <Text style={styles.taskFieldSelectHint}>{hint}</Text> : null}
-    </Pressable>
-  </View>
-);
-
-const BottomSheetPicker = ({
-  visible,
-  onClose,
-  onConfirm,
-  title,
-  subtitle,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
-  leadingLabel = '',
-  onLeadingPress,
-  cardStyle,
-  children,
-}) => (
-  <Modal
-    transparent
-    animationType="slide"
-    visible={visible}
-    onRequestClose={onClose}
-  >
-    <View style={styles.sheetOverlay}>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
-      <View style={[styles.sheetCard, cardStyle]}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetActionRow}>
-          {leadingLabel && onLeadingPress ? (
-            <Pressable
-              onPress={onLeadingPress}
-              style={({ pressed }) => [
-                styles.sheetGhostAction,
-                pressed ? { opacity: 0.82 } : null,
-              ]}
-            >
-              <Text style={styles.sheetGhostActionText}>{leadingLabel}</Text>
-            </Pressable>
-          ) : (
-            <View style={styles.sheetActionSpacer} />
-          )}
-
-          <View style={styles.sheetActionRight}>
-            <Pressable
-              onPress={onClose}
-              style={({ pressed }) => [
-                styles.sheetGhostAction,
-                pressed ? { opacity: 0.82 } : null,
-              ]}
-            >
-              <Text style={styles.sheetGhostActionText}>{cancelLabel}</Text>
-            </Pressable>
-            <Pressable
-              onPress={onConfirm}
-              style={({ pressed }) => [
-                styles.sheetPrimaryAction,
-                pressed ? { opacity: 0.82 } : null,
-              ]}
-            >
-              <Text style={styles.sheetPrimaryActionText}>{confirmLabel}</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <Text style={styles.sheetTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.sheetSubtitle}>{subtitle}</Text> : null}
-        {children}
-      </View>
-    </View>
-  </Modal>
-);
-
-const createEmptyTaskForm = (seedDate = new Date()) => ({
-  title: '',
-  taskDate: formatInputDate(seedDate),
-  timingMode: 'deadline',
-  dueTime: '18:00',
-  startTime: '09:00',
-  endTime: '10:00',
-});
-
-const sortTasks = (items) =>
-  (Array.isArray(items) ? items : []).slice().sort((left, right) => {
-    const leftTs = toSafeDate(buildTaskDateTimeIso(left))?.getTime() ?? Number.POSITIVE_INFINITY;
-    const rightTs = toSafeDate(buildTaskDateTimeIso(right))?.getTime() ?? Number.POSITIVE_INFINITY;
-    return leftTs - rightTs;
-  });
-
 export default function CalendarScreen() {
   const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
   const [schoolInput, setSchoolInput] = useState('');
@@ -753,65 +297,17 @@ export default function CalendarScreen() {
   const [submissionsByCourse, setSubmissionsByCourse] = useState({});
   const [submissionDetailsByAssignment, setSubmissionDetailsByAssignment] = useState({});
   const [lastSyncAt, setLastSyncAt] = useState(null);
-  const [customTasks, setCustomTasks] = useState([]);
-  const [tasksLoading, setTasksLoading] = useState(false);
-  const [tasksError, setTasksError] = useState('');
-  const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
-  const [taskSaving, setTaskSaving] = useState(false);
-  const [taskDeletingId, setTaskDeletingId] = useState('');
-  const [editingTaskId, setEditingTaskId] = useState('');
   const [selectedPanel, setSelectedPanel] = useState('calendar');
   const [selectedView, setSelectedView] = useState('week');
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [selectedCalendarItem, setSelectedCalendarItem] = useState(null);
-  const [calendarDetailVisible, setCalendarDetailVisible] = useState(false);
-  const [taskDatePickerVisible, setTaskDatePickerVisible] = useState(false);
-  const [taskDateDraft, setTaskDateDraft] = useState(() => new Date());
-  const [taskDateMonthAnchor, setTaskDateMonthAnchor] = useState(() => new Date());
-  const [timePickerVisible, setTimePickerVisible] = useState(false);
-  const [activeTimeField, setActiveTimeField] = useState('dueTime');
-  const [timeDraft, setTimeDraft] = useState(() => parseTimeDraft('18:00'));
-  const [monthYearPickerVisible, setMonthYearPickerVisible] = useState(false);
-  const [monthYearDraft, setMonthYearDraft] = useState(() => ({
-    year: new Date().getFullYear(),
-    month: new Date().getMonth(),
-  }));
-  const hourWheelRef = useRef(null);
-  const minuteWheelRef = useRef(null);
-  const meridiemWheelRef = useRef(null);
 
   const baseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
-  const hasPlannerContent = isConnected || customTasks.length > 0;
   const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
-  const monthYearOptions = useMemo(() => {
-    const centerYear = Number(monthYearDraft?.year) || new Date().getFullYear();
-    return Array.from({ length: 9 }, (_, index) => centerYear - 4 + index);
-  }, [monthYearDraft]);
 
   useEffect(() => {
     getTokenRef.current = getToken;
   }, [getToken]);
-
-  useEffect(() => {
-    if (!timePickerVisible) return undefined;
-
-    const syncWheelPosition = (ref, options, nextValue) => {
-      const index = Math.max(0, options.indexOf(nextValue));
-      ref?.current?.scrollTo({
-        y: index * TIME_WHEEL_ITEM_HEIGHT,
-        animated: false,
-      });
-    };
-
-    const timer = setTimeout(() => {
-      syncWheelPosition(hourWheelRef, HOUR_12_OPTIONS, timeDraft.hour12);
-      syncWheelPosition(minuteWheelRef, MINUTE_OPTIONS, timeDraft.minute);
-      syncWheelPosition(meridiemWheelRef, MERIDIEM_OPTIONS, timeDraft.meridiem);
-    }, 0);
-
-    return () => clearTimeout(timer);
-  }, [timeDraft, timePickerVisible]);
 
   const getSessionToken = async () => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -938,47 +434,6 @@ export default function CalendarScreen() {
     tokenInput,
   ]);
 
-  const fetchCustomTasks = async ({ silent = false } = {}) => {
-    if (!canPersistToBackend || !API_BASE_URL) return;
-    try {
-      if (!silent) setTasksLoading(true);
-      const sessionToken = await getSessionToken();
-      if (!sessionToken) {
-        throw new Error('No Clerk session token available');
-      }
-      const response = await fetch(`${API_BASE_URL}/tasks`, {
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || `Failed to load tasks (HTTP ${response.status})`);
-      }
-      setCustomTasks(
-        sortTasks((data?.items || []).map((item) => normalizeCustomTask(item, selectedDate)))
-      );
-      setTasksError('');
-    } catch (taskLoadError) {
-      setTasksError(
-        taskLoadError instanceof Error
-          ? taskLoadError.message
-          : 'Failed to load custom tasks.'
-      );
-    } finally {
-      if (!silent) setTasksLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!canPersistToBackend) {
-      setCustomTasks([]);
-      setTasksError('');
-      return;
-    }
-    fetchCustomTasks();
-  }, [canPersistToBackend]);
-
   const buildCanvasUrl = (pathOrUrl) => {
     if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
     return `${baseUrl}${pathOrUrl}`;
@@ -1046,7 +501,6 @@ export default function CalendarScreen() {
   };
 
   const handleClear = async () => {
-    const today = new Date();
     setProfile(null);
     setCourses([]);
     setEvents([]);
@@ -1055,28 +509,10 @@ export default function CalendarScreen() {
     setEnrollmentsByCourse({});
     setSubmissionsByCourse({});
     setSubmissionDetailsByAssignment({});
-    setEditingTaskId('');
-    setTaskDeletingId('');
     setError('');
     setSchoolInput('');
     setTokenInput('');
     setLastSyncAt(null);
-    setSelectedPanel('calendar');
-    setSelectedView('week');
-    setSelectedDate(today);
-    setTaskForm(createEmptyTaskForm(today));
-    setTaskDateDraft(today);
-    setTaskDateMonthAnchor(today);
-    setTaskDatePickerVisible(false);
-    setTimePickerVisible(false);
-    setMonthYearPickerVisible(false);
-    setTimeDraft(parseTimeDraft('18:00'));
-    setMonthYearDraft({
-      year: today.getFullYear(),
-      month: today.getMonth(),
-    });
-    setSelectedCalendarItem(null);
-    setCalendarDetailVisible(false);
     try {
       if (!canPersistToBackend) return;
       const sessionToken = await getSessionToken();
@@ -1295,7 +731,6 @@ export default function CalendarScreen() {
           return new Date(a.date) - new Date(b.date);
         });
 
-      const today = new Date();
       setProfile(profileData || null);
       setCourses(safeCourses);
       setEvents(normalizedEvents);
@@ -1306,16 +741,6 @@ export default function CalendarScreen() {
       setSubmissionDetailsByAssignment({});
       setLastSyncAt(new Date());
       setSelectedPanel('calendar');
-      setSelectedView('week');
-      setSelectedDate(today);
-      setEditingTaskId('');
-      setTaskForm(createEmptyTaskForm(today));
-      setTaskDateDraft(today);
-      setTaskDateMonthAnchor(today);
-      setMonthYearDraft({
-        year: today.getFullYear(),
-        month: today.getMonth(),
-      });
     } catch (err) {
       setError(
         err instanceof Error
@@ -1327,238 +752,27 @@ export default function CalendarScreen() {
     }
   };
 
-  const resetTaskComposer = (seedDate = selectedDate) => {
-    setEditingTaskId('');
-    setTaskForm(createEmptyTaskForm(seedDate));
-    setTaskDatePickerVisible(false);
-    setTimePickerVisible(false);
-  };
+  const totalAssignments = useMemo(
+    () =>
+      Object.values(assignmentsByCourse).reduce(
+        (sum, entry) => sum + (Array.isArray(entry?.items) ? entry.items.length : 0),
+        0
+      ),
+    [assignmentsByCourse]
+  );
 
-  const handleTaskFieldChange = (field, value) => {
-    setTaskForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-  };
-
-  useEffect(() => {
-    if (editingTaskId) return;
-    const nextDate = formatInputDate(selectedDate);
-    setTaskForm((prev) => {
-      if (prev.taskDate === nextDate) return prev;
-      return {
-        ...prev,
-        taskDate: nextDate,
-      };
-    });
-  }, [editingTaskId, selectedDate]);
-
-  const openTaskDatePicker = () => {
-    const baseDate = parseDateInput(taskForm.taskDate) || startOfDay(selectedDate) || new Date();
-    setTaskDateDraft(baseDate);
-    setTaskDateMonthAnchor(baseDate);
-    setTaskDatePickerVisible(true);
-  };
-
-  const confirmTaskDatePicker = () => {
-    handleTaskFieldChange('taskDate', formatInputDate(taskDateDraft));
-    setTaskDatePickerVisible(false);
-  };
-
-  const openTimePicker = (field) => {
-    const defaults = {
-      dueTime: '18:00',
-      startTime: '09:00',
-      endTime: '10:00',
-    };
-    setActiveTimeField(field);
-    setTimeDraft(parseTimeDraft(taskForm?.[field] || defaults[field] || '18:00'));
-    setTimePickerVisible(true);
-  };
-
-  const confirmTimePicker = () => {
-    handleTaskFieldChange(activeTimeField, formatTimeDraftToValue(timeDraft));
-    setTimePickerVisible(false);
-  };
-
-  const openMonthYearPicker = () => {
-    const baseDate = toSafeDate(selectedDate) || new Date();
-    setMonthYearDraft({
-      year: baseDate.getFullYear(),
-      month: baseDate.getMonth(),
-    });
-    setMonthYearPickerVisible(true);
-  };
-
-  const confirmMonthYearPicker = () => {
-    setSelectedDate(clampDateToMonthYear(selectedDate, monthYearDraft.year, monthYearDraft.month));
-    setMonthYearPickerVisible(false);
-  };
-
-  const buildTaskPayload = () => {
-    const payload = {
-      title: taskForm.title.trim(),
-      taskDate: taskForm.taskDate.trim(),
-      timingMode: taskForm.timingMode,
-      dueTime: taskForm.dueTime.trim(),
-      startTime: taskForm.startTime.trim(),
-      endTime: taskForm.endTime.trim(),
-      isCompleted: false,
-    };
-
-    if (!payload.title) {
-      throw new Error('Task title is required');
-    }
-    if (!isValidDateInput(payload.taskDate)) {
-      throw new Error('Choose a task date');
-    }
-    if (payload.timingMode === 'deadline') {
-      if (!isQuarterHourTimeInput(payload.dueTime)) {
-        throw new Error('Choose a due time using 00, 15, 30, or 45 minutes');
-      }
-      return {
-        ...payload,
-        startTime: '',
-        endTime: '',
-      };
-    }
-    if (!isQuarterHourTimeInput(payload.startTime) || !isQuarterHourTimeInput(payload.endTime)) {
-      throw new Error('Choose start and end times using 00, 15, 30, or 45 minutes');
-    }
-    if (payload.endTime <= payload.startTime) {
-      throw new Error('End time must be later than start time');
-    }
-    return {
-      ...payload,
-      dueTime: '',
-    };
-  };
-
-  const saveTaskToBackend = async (taskId, payload) => {
-    const sessionToken = await getSessionToken();
-    if (!sessionToken) {
-      throw new Error('No Clerk session token available');
-    }
-    const response = await fetch(
-      `${API_BASE_URL}/tasks${taskId ? `/${String(taskId)}` : ''}`,
-      {
-        method: taskId ? 'PUT' : 'POST',
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error || `Failed to save task (HTTP ${response.status})`);
-    }
-    return data?.item || null;
-  };
-
-  const handleSubmitTask = async () => {
-    if (!canPersistToBackend || !API_BASE_URL) {
-      setTasksError('Task storage requires backend auth and EXPO_PUBLIC_API_URL.');
-      return;
-    }
-
-    try {
-      setTaskSaving(true);
-      const payload = buildTaskPayload();
-      const savedTask = await saveTaskToBackend(editingTaskId, {
-        ...payload,
-        isCompleted:
-          customTasks.find((item) => String(item.id) === String(editingTaskId))?.isCompleted ||
-          false,
-      });
-      const normalizedSavedTask = savedTask ? normalizeCustomTask(savedTask, selectedDate) : null;
-      await fetchCustomTasks({ silent: true });
-      setTasksError('');
-      resetTaskComposer(
-        normalizedSavedTask?.taskDate
-          ? parseDateInput(normalizedSavedTask.taskDate) || selectedDate
-          : selectedDate
-      );
-      setSelectedPanel('calendar');
-      setSelectedView('week');
-      if (normalizedSavedTask?.taskDate) {
-        const nextSelectedDate = toSafeDate(buildTaskDateTimeIso(normalizedSavedTask));
-        if (nextSelectedDate) setSelectedDate(nextSelectedDate);
-      }
-    } catch (taskSaveError) {
-      setTasksError(
-        taskSaveError instanceof Error ? taskSaveError.message : 'Failed to save task.'
-      );
-    } finally {
-      setTaskSaving(false);
-    }
-  };
-
-  const handleEditTask = (task) => {
-    const normalizedTask = normalizeCustomTask(task, selectedDate);
-    setEditingTaskId(String(task?.id || ''));
-    setTaskForm({
-      title: String(normalizedTask?.title || ''),
-      taskDate: normalizedTask.taskDate,
-      timingMode: normalizedTask.timingMode,
-      dueTime: normalizedTask.dueTime,
-      startTime: normalizedTask.startTime,
-      endTime: normalizedTask.endTime,
-    });
-    setTasksError('');
-  };
-
-  const handleToggleTaskCompletion = async (task) => {
-    try {
-      const payload = {
-        title: String(task?.title || '').trim(),
-        taskDate: String(task?.taskDate || '').trim(),
-        timingMode: task?.timingMode === 'range' ? 'range' : 'deadline',
-        dueTime: String(task?.dueTime || '').trim(),
-        startTime: String(task?.startTime || '').trim(),
-        endTime: String(task?.endTime || '').trim(),
-        isCompleted: !task?.isCompleted,
-      };
-      await saveTaskToBackend(task?.id, payload);
-      await fetchCustomTasks({ silent: true });
-      setTasksError('');
-    } catch (toggleError) {
-      setTasksError(toggleError instanceof Error ? toggleError.message : 'Failed to update task.');
-    }
-  };
-
-  const handleDeleteTask = async (taskId) => {
-    if (!taskId) return;
-    try {
-      setTaskDeletingId(String(taskId));
-      const sessionToken = await getSessionToken();
-      if (!sessionToken) {
-        throw new Error('No Clerk session token available');
-      }
-      const response = await fetch(`${API_BASE_URL}/tasks/${String(taskId)}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || `Failed to delete task (HTTP ${response.status})`);
-      }
-      setCustomTasks((prev) => prev.filter((item) => String(item.id) !== String(taskId)));
-      if (String(editingTaskId) === String(taskId)) {
-        resetTaskComposer(selectedDate);
-      }
-      setTasksError('');
-    } catch (deleteError) {
-      setTasksError(
-        deleteError instanceof Error ? deleteError.message : 'Failed to delete task.'
-      );
-    } finally {
-      setTaskDeletingId('');
-    }
-  };
+  const submittedAssignments = useMemo(
+    () =>
+      Object.values(submissionsByCourse).reduce(
+        (sum, entry) =>
+          sum +
+          (Array.isArray(entry?.items)
+            ? entry.items.filter((item) => item?.submitted_at).length
+            : 0),
+        0
+      ),
+    [submissionsByCourse]
+  );
 
   const calendarFeed = useMemo(() => {
     const merged = [];
@@ -1586,7 +800,6 @@ export default function CalendarScreen() {
         id: `event-${String(event?.id || '')}`,
         title: event?.title || 'Untitled event',
         course: event?.course || '',
-        source: 'event',
         type: event?.type || 'event',
         status: 'Calendar item',
         htmlUrl: event?.htmlUrl || '',
@@ -1607,62 +820,31 @@ export default function CalendarScreen() {
           id: `assignment-${courseId}-${String(assignment?.id || '')}`,
           title: assignment?.name || 'Untitled assignment',
           course: courseName,
-          source: 'assignment',
-          courseId,
-          assignmentId: String(assignment?.id || ''),
           type: 'assignment',
           status: submission?.submitted_at ? 'Submitted' : 'To do',
           htmlUrl: assignment?.html_url || '',
           date: assignment?.due_at,
           accent: pickPreviewAccent(courseId || courseName),
-          score: submission?.score,
-          pointsPossible: assignment?.points_possible,
-          submittedAt: submission?.submitted_at || '',
-          late: Boolean(submission?.late),
         });
       });
     });
 
-    customTasks.forEach((task) => {
-      pushItem({
-        id: `custom-task-${String(task?.id || '')}`,
-        title: task?.title || 'Untitled task',
-        course: 'My task',
-        source: 'customTask',
-        taskId: String(task?.id || ''),
-        type: task?.timingMode === 'range' ? 'time range' : 'deadline',
-        status: task?.isCompleted ? 'Completed' : 'To do',
-        htmlUrl: '',
-        date: buildTaskDateTimeIso(task),
-        accent: pickPreviewAccent(`custom-${task?.timingMode || 'deadline'}`),
-        completed: Boolean(task?.isCompleted),
-        taskDate: String(task?.taskDate || ''),
-        dueTime: String(task?.dueTime || ''),
-        startTime: String(task?.startTime || ''),
-        endTime: String(task?.endTime || ''),
-        timingMode: task?.timingMode === 'range' ? 'range' : 'deadline',
-      });
-    });
-
     return merged.sort((left, right) => new Date(left.date) - new Date(right.date));
-  }, [events, courses, assignmentsByCourse, submissionsByCourse, customTasks]);
+  }, [events, courses, assignmentsByCourse, submissionsByCourse]);
 
-  const dateMarkersByDate = useMemo(
+  const itemCountByDate = useMemo(
     () =>
       calendarFeed.reduce((acc, item) => {
         const key = buildDateKey(item.date);
         if (!key) return acc;
-        const current = acc[key] || {
-          count: 0,
-          hasCanvas: false,
-          hasCustom: false,
-        };
-        current.count += 1;
-        if (item?.source === 'customTask') current.hasCustom = true;
-        else current.hasCanvas = true;
-        acc[key] = current;
+        acc[key] = (acc[key] || 0) + 1;
         return acc;
       }, {}),
+    [calendarFeed]
+  );
+
+  const todayItems = useMemo(
+    () => calendarFeed.filter((item) => isSameDay(item.date, new Date())),
     [calendarFeed]
   );
 
@@ -1676,6 +858,7 @@ export default function CalendarScreen() {
     () => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)),
     [weekStart]
   );
+  const miniCalendarDays = useMemo(() => buildMiniCalendarDays(selectedDate), [selectedDate]);
 
   const monthItems = useMemo(
     () =>
@@ -1714,36 +897,8 @@ export default function CalendarScreen() {
 
   const nextUpcomingItem = useMemo(() => {
     const now = Date.now();
-    return (
-      calendarFeed.find(
-        (item) => !item?.completed && new Date(item.date).getTime() >= now
-      ) || null
-    );
+    return calendarFeed.find((item) => new Date(item.date).getTime() >= now) || null;
   }, [calendarFeed]);
-
-  const selectedCalendarDetailKey =
-    selectedCalendarItem?.source === 'assignment' &&
-    selectedCalendarItem?.courseId &&
-    selectedCalendarItem?.assignmentId
-      ? buildAssignmentDetailKey(selectedCalendarItem.courseId, selectedCalendarItem.assignmentId)
-      : '';
-  const selectedCalendarDetailState = selectedCalendarDetailKey
-    ? submissionDetailsByAssignment[selectedCalendarDetailKey] || {}
-    : {};
-  const selectedCalendarDetailData = selectedCalendarDetailState.data || null;
-  const selectedCalendarTeacherComments = useMemo(() => {
-    if (!selectedCalendarDetailData) return [];
-    const detailComments = Array.isArray(selectedCalendarDetailData?.submission_comments)
-      ? selectedCalendarDetailData.submission_comments
-      : [];
-    const currentUserId =
-      profile?.id === null || profile?.id === undefined ? '' : String(profile.id);
-    return detailComments.filter(
-      (comment) =>
-        !currentUserId ||
-        String(comment?.author_id === undefined ? '' : comment.author_id) !== currentUserId
-    );
-  }, [profile?.id, selectedCalendarDetailData]);
 
   const changeCalendarWindow = (direction) => {
     const offsetByView = {
@@ -1753,64 +908,6 @@ export default function CalendarScreen() {
     };
     const nextDate = addDays(selectedDate, direction * (offsetByView[selectedView] || 7));
     if (nextDate) setSelectedDate(nextDate);
-  };
-
-  const changeMiniCalendarMonth = (direction) => {
-    const nextDate = addMonths(selectedDate, direction);
-    if (nextDate) setSelectedDate(nextDate);
-  };
-  const showTaskSection = selectedPanel === 'overview';
-
-  const openCalendarItemDetail = async (item) => {
-    setSelectedCalendarItem(item || null);
-    setCalendarDetailVisible(true);
-
-    if (
-      item?.source !== 'assignment' ||
-      !item?.courseId ||
-      !item?.assignmentId
-    ) {
-      return;
-    }
-
-    const detailKey = buildAssignmentDetailKey(item.courseId, item.assignmentId);
-    const current = submissionDetailsByAssignment[detailKey] || {};
-    if (current?.data || current?.loading) return;
-
-    setSubmissionDetailsByAssignment((prev) => ({
-      ...prev,
-      [detailKey]: {
-        ...current,
-        expanded: false,
-        loading: true,
-        error: '',
-      },
-    }));
-
-    try {
-      const detail = await fetchSingleSubmissionDetail(item.courseId, item.assignmentId);
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...prev[detailKey],
-          loading: false,
-          error: '',
-          data: detail,
-        },
-      }));
-    } catch (detailError) {
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...prev[detailKey],
-          loading: false,
-          error:
-            detailError instanceof Error
-              ? detailError.message
-              : 'Failed to load submission detail.',
-        },
-      }));
-    }
   };
 
   return (
@@ -1897,20 +994,15 @@ export default function CalendarScreen() {
           ) : null}
         </View>
 
-        {hasPlannerContent ? (
+        {isConnected ? (
           <View style={styles.previewSection}>
             <View style={styles.previewHeaderRow}>
               <View style={styles.previewHeaderTextWrap}>
-                <Text style={styles.previewEyebrow}>
-                  {isConnected ? 'SYNCED CALENDAR' : 'TASK PLANNER'}
-                </Text>
-                <Text style={styles.previewTitle}>
-                  {isConnected ? 'Canvas planner' : 'Personal planner'}
-                </Text>
+                <Text style={styles.previewEyebrow}>SYNCED CALENDAR</Text>
+                <Text style={styles.previewTitle}>Canvas planner</Text>
                 <Text style={styles.previewSubtitle}>
-                  {isConnected
-                    ? 'Calendar shows your schedule. Overview holds profile, grades, due soon, assignments, and your own tasks.'
-                    : 'Calendar now shows your own tasks even without an active Canvas sync.'}
+                  Calendar shows only your schedule. Overview holds profile, grades, due soon, and
+                  assignment details.
                 </Text>
               </View>
 
@@ -1954,30 +1046,152 @@ export default function CalendarScreen() {
 
             {selectedPanel === 'calendar' ? (
               <>
-                <View style={styles.previewFocusRow}>
-                  <View style={styles.focusTodayCard}>
-                    <Text style={styles.focusTodayLabel}>TODAY</Text>
-                    <Text style={styles.focusTodayDate}>{formatDayMonth(new Date())}</Text>
-                    <Text style={styles.focusTodayMeta}>
-                      {nextUpcomingItem
-                        ? `Next: ${nextUpcomingItem.title}`
-                        : 'Next: No synced task yet'}
-                    </Text>
-                  </View>
+                <View style={styles.heroSplitRow}>
+              <View style={styles.heroProfileCard}>
+                <Text style={styles.heroTag}>Canvas profile</Text>
+                <Text style={styles.heroName}>{profile?.name || 'Student'}</Text>
+                <Text style={styles.heroMetaText}>
+                  {profile?.primary_email || profile?.login_id || 'Canvas account connected'}
+                </Text>
+                <Text style={styles.heroMetaText}>
+                  {baseUrl || 'Canvas school host unavailable'}
+                </Text>
 
-                  <MiniCalendarPanel
-                    anchorDate={selectedDate}
-                    selectedDate={selectedDate}
-                    onSelectDate={(nextDate) => {
-                      setSelectedDate(nextDate);
+                <View style={styles.heroStatsRow}>
+                  <View style={styles.heroStatPill}>
+                    <Text style={styles.heroStatValue}>{todayItems.length}</Text>
+                    <Text style={styles.heroStatLabel}>today</Text>
+                  </View>
+                  <View style={styles.heroStatPill}>
+                    <Text style={styles.heroStatValue}>{Math.max(totalAssignments - submittedAssignments, 0)}</Text>
+                    <Text style={styles.heroStatLabel}>pending</Text>
+                  </View>
+                  <View style={styles.heroStatPill}>
+                    <Text style={styles.heroStatValue}>{courses.length}</Text>
+                    <Text style={styles.heroStatLabel}>courses</Text>
+                  </View>
+                </View>
+
+                <View style={styles.heroSummaryCard}>
+                  <Text style={styles.heroSummaryTitle}>Today</Text>
+                  <Text style={styles.heroSummaryDate}>{formatShortDate(new Date())}</Text>
+                  <Text style={styles.heroSummaryMeta}>
+                    {nextUpcomingItem
+                      ? `Next: ${nextUpcomingItem.title}`
+                      : 'No upcoming items from the current sync.'}
+                  </Text>
+                </View>
+
+                <View style={styles.heroActionRow}>
+                  <Pressable
+                    onPress={() => {
+                      setSelectedDate(new Date());
                       setSelectedView('week');
                     }}
-                    onChangeMonth={changeMiniCalendarMonth}
-                    dateMarkersByDate={dateMarkersByDate}
-                    onPressTitle={openMonthYearPicker}
-                    titleHint="Tap title to choose month"
-                    footerHint="Tap a date to jump the planner to that week."
-                  />
+                    style={({ pressed }) => [
+                      styles.heroPrimaryBtn,
+                      pressed ? { opacity: 0.85 } : null,
+                    ]}
+                  >
+                    <Text style={styles.heroPrimaryBtnText}>open week</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setSelectedPanel('overview')}
+                    style={({ pressed }) => [
+                      styles.heroGhostBtn,
+                      pressed ? { opacity: 0.85 } : null,
+                    ]}
+                  >
+                    <Text style={styles.heroGhostBtnText}>open overview</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.miniCalendarCard}>
+                <View style={styles.miniCalendarTopRow}>
+                  <Text style={styles.miniCalendarTitle}>{formatMonthYear(selectedDate)}</Text>
+                  <View style={styles.miniCalendarNavRow}>
+                    <Pressable
+                      onPress={() => changeCalendarWindow(-1)}
+                      style={({ pressed }) => [
+                        styles.miniCalendarNavBtn,
+                        pressed ? { opacity: 0.7 } : null,
+                      ]}
+                    >
+                      <Text style={styles.miniCalendarNavText}>{'<'}</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => changeCalendarWindow(1)}
+                      style={({ pressed }) => [
+                        styles.miniCalendarNavBtn,
+                        pressed ? { opacity: 0.7 } : null,
+                      ]}
+                    >
+                      <Text style={styles.miniCalendarNavText}>{'>'}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <View style={styles.miniCalendarWeekdays}>
+                  {MINI_CALENDAR_LABELS.map((label, index) => (
+                    <Text key={`${label}-${index}`} style={styles.miniCalendarWeekdayText}>
+                      {label}
+                    </Text>
+                  ))}
+                </View>
+
+                <View style={styles.miniCalendarGrid}>
+                  {miniCalendarDays.map((day) => {
+                    const count = itemCountByDate[buildDateKey(day.date)] || 0;
+                    const isSelected = isSameDay(day.date, selectedDate);
+                    const isToday = isSameDay(day.date, new Date());
+                    return (
+                      <Pressable
+                        key={day.key}
+                        onPress={() => {
+                          setSelectedDate(day.date);
+                          setSelectedView('week');
+                        }}
+                        style={({ pressed }) => [
+                          styles.miniCalendarCell,
+                          !day.inCurrentMonth ? styles.miniCalendarCellMuted : null,
+                          isSelected ? styles.miniCalendarCellSelected : null,
+                          isToday ? styles.miniCalendarCellToday : null,
+                          pressed ? { opacity: 0.82 } : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.miniCalendarCellText,
+                            !day.inCurrentMonth ? styles.miniCalendarCellTextMuted : null,
+                            isSelected ? styles.miniCalendarCellTextSelected : null,
+                          ]}
+                        >
+                          {day.date.getDate()}
+                        </Text>
+                        {count > 0 ? <View style={styles.miniCalendarDot} /> : null}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <Text style={styles.miniCalendarHint}>
+                  Tap a date to jump the planner to that week.
+                </Text>
+              </View>
+                </View>
+
+                <View style={styles.todaySpotlight}>
+              <View style={styles.todayBadge}>
+                <Text style={styles.todayBadgeText}>Today</Text>
+              </View>
+              <View style={styles.todaySpotlightBody}>
+                <Text style={styles.todaySpotlightTitle}>{formatMonthYear(selectedDate)}</Text>
+                <Text style={styles.todaySpotlightMeta}>
+                  Selected day {formatShortDate(selectedDate)} | {selectedDayItems.length} synced
+                  item{selectedDayItems.length === 1 ? '' : 's'}
+                </Text>
+              </View>
                 </View>
 
                 <View style={styles.plannerShell}>
@@ -2047,7 +1261,7 @@ export default function CalendarScreen() {
                     selectedDayItems.map((item, index) => (
                       <Pressable
                         key={`${item.id}-day-${index}`}
-                        onPress={() => openCalendarItemDetail(item)}
+                        onPress={() => openUrl(item.htmlUrl)}
                         style={({ pressed }) => [
                           styles.agendaCard,
                           pressed ? { opacity: 0.8 } : null,
@@ -2130,7 +1344,7 @@ export default function CalendarScreen() {
                               {cellItems.slice(0, 2).map((item, itemIndex) => (
                                 <Pressable
                                   key={`${item.id}-week-${itemIndex}`}
-                                  onPress={() => openCalendarItemDetail(item)}
+                                  onPress={() => openUrl(item.htmlUrl)}
                                   style={({ pressed }) => [
                                     styles.weekEventCard,
                                     {
@@ -2173,7 +1387,7 @@ export default function CalendarScreen() {
                     monthItems.slice(0, 12).map((item, index) => (
                       <Pressable
                         key={`${item.id}-month-${index}`}
-                        onPress={() => openCalendarItemDetail(item)}
+                        onPress={() => openUrl(item.htmlUrl)}
                         style={({ pressed }) => [
                           styles.agendaCard,
                           pressed ? { opacity: 0.8 } : null,
@@ -2199,190 +1413,30 @@ export default function CalendarScreen() {
                   )}
                 </View>
               ) : null}
-            </View>
-          </>
-        ) : null}
-          </View>
-        ) : null}
-
-        {showTaskSection ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>My Tasks</Text>
-            <View style={styles.taskComposerCard}>
-              <TextInput
-                value={taskForm.title}
-                onChangeText={(value) => handleTaskFieldChange('title', value)}
-                placeholder="Task name"
-                placeholderTextColor="#9ca3af"
-                style={styles.taskTitleInput}
-              />
-
-              <View style={styles.taskModeRow}>
-                {[
-                  { id: 'deadline', label: 'Due time' },
-                  { id: 'range', label: 'Time range' },
-                ].map((mode) => {
-                  const active = taskForm.timingMode === mode.id;
-                  return (
-                    <Pressable
-                      key={mode.id}
-                      onPress={() => handleTaskFieldChange('timingMode', mode.id)}
-                      style={({ pressed }) => [
-                        styles.taskModeChip,
-                        active ? styles.taskModeChipActive : null,
-                        pressed ? { opacity: 0.82 } : null,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.taskModeChipText,
-                          active ? styles.taskModeChipTextActive : null,
-                        ]}
-                      >
-                        {mode.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              <View style={styles.taskFieldsWrap}>
-                <TaskSelectField
-                  label="Date"
-                  value={formatPickerDateLabel(taskForm.taskDate)}
-                  hint="Tap to choose"
-                  onPress={openTaskDatePicker}
-                />
-
-                {taskForm.timingMode === 'deadline' ? (
-                  <TaskSelectField
-                    label="Due time"
-                    value={formatTimeOnly(taskForm.dueTime)}
-                    hint="00 • 15 • 30 • 45"
-                    onPress={() => openTimePicker('dueTime')}
-                  />
-                ) : (
-                  <>
-                    <TaskSelectField
-                      label="Start"
-                      value={formatTimeOnly(taskForm.startTime)}
-                      hint="00 • 15 • 30 • 45"
-                      onPress={() => openTimePicker('startTime')}
-                    />
-                    <TaskSelectField
-                      label="End"
-                      value={formatTimeOnly(taskForm.endTime)}
-                      hint="00 • 15 • 30 • 45"
-                      onPress={() => openTimePicker('endTime')}
-                    />
-                  </>
-                )}
-              </View>
-
-              <View style={styles.taskComposerActions}>
-                <Pressable
-                  onPress={handleSubmitTask}
-                  disabled={taskSaving}
-                  style={({ pressed }) => [
-                    styles.taskSaveBtn,
-                    taskSaving ? { opacity: 0.6 } : null,
-                    pressed ? { opacity: 0.82 } : null,
-                  ]}
-                >
-                  {taskSaving ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.taskSaveBtnText}>
-                      {editingTaskId ? 'Save changes' : 'Add task'}
-                    </Text>
-                  )}
-                </Pressable>
-
-                {editingTaskId ? (
-                  <Pressable
-                    onPress={() => resetTaskComposer(selectedDate)}
-                    style={({ pressed }) => [
-                      styles.taskCancelBtn,
-                      pressed ? { opacity: 0.82 } : null,
-                    ]}
-                  >
-                    <Text style={styles.taskCancelBtnText}>Cancel</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {tasksError ? <Text style={styles.taskErrorText}>{tasksError}</Text> : null}
-            </View>
-
-            {tasksLoading ? (
-              <View style={styles.taskLoadingWrap}>
-                <ActivityIndicator />
-              </View>
-            ) : customTasks.length === 0 ? (
-              <Text style={styles.empty}>No custom tasks yet.</Text>
+                </View>
+              </>
             ) : (
-              <View style={styles.taskList}>
-                {customTasks.map((task) => {
-                  const isDeleting = taskDeletingId === String(task.id);
-                  return (
-                    <View key={`task-${String(task.id)}`} style={styles.taskItemCard}>
-                      <Pressable
-                        onPress={() => handleToggleTaskCompletion(task)}
-                        style={({ pressed }) => [
-                          styles.taskCheckBtn,
-                          task?.isCompleted ? styles.taskCheckBtnActive : null,
-                          pressed ? { opacity: 0.82 } : null,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.taskCheckBtnText,
-                            task?.isCompleted ? styles.taskCheckBtnTextActive : null,
-                          ]}
-                        >
-                          {task?.isCompleted ? '\u2713' : ''}
-                        </Text>
-                      </Pressable>
-
-                      <View style={styles.taskItemBody}>
-                        <Text
-                          style={[
-                            styles.taskItemTitle,
-                            task?.isCompleted ? styles.taskItemTitleDone : null,
-                          ]}
-                        >
-                          {task.title}
-                        </Text>
-                        <Text style={styles.taskItemMeta}>{formatTaskSchedule(task)}</Text>
-                      </View>
-
-                      <View style={styles.taskItemActions}>
-                        <Pressable
-                          onPress={() => handleEditTask(task)}
-                          style={({ pressed }) => [
-                            styles.taskActionBtn,
-                            pressed ? { opacity: 0.82 } : null,
-                          ]}
-                        >
-                          <Text style={styles.taskActionBtnText}>Edit</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => handleDeleteTask(task.id)}
-                          disabled={isDeleting}
-                          style={({ pressed }) => [
-                            styles.taskActionBtn,
-                            isDeleting ? { opacity: 0.6 } : null,
-                            pressed ? { opacity: 0.82 } : null,
-                          ]}
-                        >
-                          <Text style={styles.taskDeleteBtnText}>
-                            {isDeleting ? '...' : 'Delete'}
-                          </Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  );
-                })}
+              <View style={styles.overviewIntroCard}>
+                <Text style={styles.overviewIntroEyebrow}>OVERVIEW</Text>
+                <Text style={styles.overviewIntroTitle}>Academic details moved here</Text>
+                <Text style={styles.overviewIntroText}>
+                  This tab now owns the profile block, course grades, due soon list, and the full
+                  assignment detail area below.
+                </Text>
+                <View style={styles.overviewIntroStatsRow}>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{courses.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>courses</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{events.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>due soon</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{totalAssignments}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>assignments</Text>
+                  </View>
+                </View>
               </View>
             )}
           </View>
@@ -2706,252 +1760,6 @@ export default function CalendarScreen() {
           </>
         ) : null}
       </ScrollView>
-
-      <BottomSheetPicker
-        visible={taskDatePickerVisible}
-        onClose={() => setTaskDatePickerVisible(false)}
-        onConfirm={confirmTaskDatePicker}
-        title="Choose date"
-        subtitle={formatPickerDateLabel(taskDateDraft)}
-        leadingLabel="Today"
-        onLeadingPress={() => {
-          const today = new Date();
-          setTaskDateDraft(today);
-          setTaskDateMonthAnchor(today);
-        }}
-      >
-        <View style={styles.sheetMiniCalendarWrap}>
-          <MiniCalendarPanel
-            anchorDate={taskDateMonthAnchor}
-            selectedDate={taskDateDraft}
-            onSelectDate={(nextDate) => {
-              setTaskDateDraft(nextDate);
-              setTaskDateMonthAnchor(nextDate);
-            }}
-            onChangeMonth={(direction) => {
-              const nextDate = addMonths(taskDateMonthAnchor, direction);
-              if (nextDate) setTaskDateMonthAnchor(nextDate);
-            }}
-            dateMarkersByDate={dateMarkersByDate}
-            footerHint="Tap a date to use it for this task."
-          />
-        </View>
-      </BottomSheetPicker>
-
-      <BottomSheetPicker
-        visible={timePickerVisible}
-        onClose={() => setTimePickerVisible(false)}
-        onConfirm={confirmTimePicker}
-        title={
-          activeTimeField === 'dueTime'
-            ? 'Choose due time'
-            : activeTimeField === 'startTime'
-              ? 'Choose start time'
-              : 'Choose end time'
-        }
-        subtitle={formatTimeOnly(formatTimeDraftToValue(timeDraft))}
-      >
-        <View style={styles.timeWheelRow}>
-          <PickerWheelColumn
-            label="Hour"
-            options={HOUR_12_OPTIONS}
-            value={timeDraft.hour12}
-            onChange={(hour12) => setTimeDraft((prev) => ({ ...prev, hour12 }))}
-            scrollRef={hourWheelRef}
-          />
-          <PickerWheelColumn
-            label="Minute"
-            options={MINUTE_OPTIONS}
-            value={timeDraft.minute}
-            onChange={(minute) => setTimeDraft((prev) => ({ ...prev, minute }))}
-            scrollRef={minuteWheelRef}
-          />
-          <PickerWheelColumn
-            label="AM / PM"
-            options={MERIDIEM_OPTIONS}
-            value={timeDraft.meridiem}
-            onChange={(meridiem) => setTimeDraft((prev) => ({ ...prev, meridiem }))}
-            scrollRef={meridiemWheelRef}
-          />
-        </View>
-      </BottomSheetPicker>
-
-      <BottomSheetPicker
-        visible={monthYearPickerVisible}
-        onClose={() => setMonthYearPickerVisible(false)}
-        onConfirm={confirmMonthYearPicker}
-        title="Choose month"
-        subtitle={`${MONTH_LABELS[monthYearDraft.month]} ${monthYearDraft.year}`}
-      >
-        <Text style={styles.monthYearSectionTitle}>Year</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.monthYearYearRow}
-        >
-          {monthYearOptions.map((year) => {
-            const active = year === monthYearDraft.year;
-            return (
-              <Pressable
-                key={`year-${year}`}
-                onPress={() => setMonthYearDraft((prev) => ({ ...prev, year }))}
-                style={({ pressed }) => [
-                  styles.monthYearYearChip,
-                  active ? styles.monthYearYearChipActive : null,
-                  pressed ? { opacity: 0.82 } : null,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.monthYearYearChipText,
-                    active ? styles.monthYearYearChipTextActive : null,
-                  ]}
-                >
-                  {year}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <Text style={styles.monthYearSectionTitle}>Month</Text>
-        <View style={styles.monthYearGrid}>
-          {MONTH_LABELS.map((label, index) => {
-            const active = index === monthYearDraft.month;
-            return (
-              <Pressable
-                key={`month-${label}`}
-                onPress={() => setMonthYearDraft((prev) => ({ ...prev, month: index }))}
-                style={({ pressed }) => [
-                  styles.monthYearCell,
-                  active ? styles.monthYearCellActive : null,
-                  pressed ? { opacity: 0.82 } : null,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.monthYearCellText,
-                    active ? styles.monthYearCellTextActive : null,
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </BottomSheetPicker>
-
-      <BottomSheetPicker
-        visible={calendarDetailVisible}
-        onClose={() => {
-          setCalendarDetailVisible(false);
-          setSelectedCalendarItem(null);
-        }}
-        onConfirm={() => {
-          if (selectedCalendarItem?.htmlUrl) {
-            setCalendarDetailVisible(false);
-            setSelectedCalendarItem(null);
-            openUrl(selectedCalendarItem.htmlUrl);
-            return;
-          }
-          setCalendarDetailVisible(false);
-          setSelectedCalendarItem(null);
-        }}
-        title={selectedCalendarItem?.title || 'Task detail'}
-        subtitle={selectedCalendarItem ? formatDateTime(selectedCalendarItem.date) : ''}
-        confirmLabel={selectedCalendarItem?.htmlUrl ? 'Open in Canvas' : 'Done'}
-      >
-        {selectedCalendarItem ? (
-          <View style={styles.sheetDetailPanel}>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Type</Text>
-              <Text style={styles.detailText}>
-                {selectedCalendarItem.source === 'customTask'
-                  ? 'Custom task'
-                  : selectedCalendarItem.type || 'Calendar item'}
-              </Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Course</Text>
-              <Text style={styles.detailText}>{selectedCalendarItem.course || 'Canvas'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Status</Text>
-              <Text style={styles.detailText}>{selectedCalendarItem.status || 'N/A'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Schedule</Text>
-              <Text style={styles.detailText}>
-                {selectedCalendarItem.source === 'customTask'
-                  ? formatTaskSchedule(selectedCalendarItem)
-                  : `${formatShortDate(selectedCalendarItem.date)} | ${formatClockTime(selectedCalendarItem.date)}`}
-              </Text>
-            </View>
-
-            {selectedCalendarItem.source === 'assignment' ? (
-              <>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Score</Text>
-                  <Text style={styles.detailText}>
-                    {formatScoreValue(
-                      selectedCalendarItem.score,
-                      selectedCalendarItem.pointsPossible
-                    )}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Submitted</Text>
-                  <Text style={styles.detailText}>
-                    {selectedCalendarItem.submittedAt
-                      ? formatDateTime(selectedCalendarItem.submittedAt)
-                      : 'Not submitted'}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Late</Text>
-                  <Text style={styles.detailText}>
-                    {selectedCalendarItem.late ? 'Yes' : 'No'}
-                  </Text>
-                </View>
-                <Text style={styles.detailHeading}>Teacher comments</Text>
-                {selectedCalendarDetailState.loading ? (
-                  <Text style={styles.detailMuted}>Loading submission detail...</Text>
-                ) : selectedCalendarDetailState.error ? (
-                  <Text style={styles.detailError}>
-                    Failed to load detail: {selectedCalendarDetailState.error}
-                  </Text>
-                ) : selectedCalendarTeacherComments.length === 0 ? (
-                  <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                ) : (
-                  selectedCalendarTeacherComments.map((comment, index) => (
-                    <View
-                      key={`calendar-detail-comment-${String(comment?.id || index)}`}
-                      style={styles.detailRow}
-                    >
-                      <Text style={styles.detailMeta}>
-                        {formatDateTime(comment?.created_at)}
-                      </Text>
-                      <Text style={styles.detailText}>
-                        {comment?.comment || 'No comment text'}
-                      </Text>
-                    </View>
-                  ))
-                )}
-              </>
-            ) : null}
-
-            {selectedCalendarItem.source === 'customTask' ? (
-              <Text style={styles.sheetDetailNote}>
-                This is your own task stored in the app and merged into the planner.
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-      </BottomSheetPicker>
     </SafeAreaView>
   );
 }
@@ -3030,45 +1838,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ece6dc',
   },
-  previewFocusRow: {
-    marginTop: 16,
-    flexDirection: 'column',
-    gap: 14,
-    alignItems: 'stretch',
-  },
-  focusTodayCard: {
-    width: '100%',
-    borderRadius: 28,
-    backgroundColor: '#111827',
-    paddingHorizontal: 22,
-    paddingVertical: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.14,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  focusTodayLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#f9fafb',
-    opacity: 0.72,
-    letterSpacing: 1,
-  },
-  focusTodayDate: {
-    marginTop: 10,
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#fff',
-  },
-  focusTodayMeta: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#d1d5db',
-  },
   previewHeaderRow: {
     gap: 12,
   },
@@ -3123,73 +1892,224 @@ const styles = StyleSheet.create({
     color: '#1f2937',
     textTransform: 'capitalize',
   },
-  miniCalendarCard: {
-    width: '100%',
-    borderRadius: 28,
-    backgroundColor: '#111827',
-    paddingHorizontal: 22,
-    paddingTop: 20,
-    paddingBottom: 18,
+  overviewIntroCard: {
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    backgroundColor: '#fffdf9',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 5,
+    borderColor: '#ebe4d9',
+  },
+  overviewIntroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9a866e',
+    letterSpacing: 0.9,
+  },
+  overviewIntroTitle: {
+    marginTop: 8,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6b7280',
+  },
+  overviewIntroStatsRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  overviewIntroStat: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: '#f4efe7',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  overviewIntroStatValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroStatLabel: {
+    marginTop: 3,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7c6f5d',
+    textTransform: 'uppercase',
+  },
+  heroSplitRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'stretch',
+  },
+  heroProfileCard: {
+    flex: 1.15,
+    borderRadius: 24,
+    backgroundColor: '#fffdf9',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ebe4d9',
+  },
+  heroTag: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9a866e',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  heroName: {
+    marginTop: 8,
+    fontSize: 24,
+    lineHeight: 28,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  heroMetaText: {
+    marginTop: 5,
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  heroStatsRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  heroStatPill: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 16,
+    backgroundColor: '#f4efe7',
+    alignItems: 'center',
+  },
+  heroStatValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  heroStatLabel: {
+    marginTop: 2,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7c6f5d',
+    textTransform: 'uppercase',
+  },
+  heroSummaryCard: {
+    marginTop: 14,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: '#111827',
+  },
+  heroSummaryTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#f9fafb',
+    opacity: 0.7,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  heroSummaryDate: {
+    marginTop: 8,
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#fff',
+  },
+  heroSummaryMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#d1d5db',
+  },
+  heroActionRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  heroPrimaryBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: '#df4d3f',
+    alignItems: 'center',
+  },
+  heroPrimaryBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#fff',
+    textTransform: 'capitalize',
+  },
+  heroGhostBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5ddd1',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+  },
+  heroGhostBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#111827',
+    textTransform: 'capitalize',
+  },
+  miniCalendarCard: {
+    width: 164,
+    borderRadius: 24,
+    backgroundColor: '#111827',
+    padding: 14,
   },
   miniCalendarTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  miniCalendarTitleBtn: {
-    flex: 1,
-    paddingRight: 12,
-  },
   miniCalendarTitle: {
-    fontSize: 20,
-    lineHeight: 24,
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 20,
     fontWeight: '900',
     color: '#fff',
-  },
-  miniCalendarTitleHint: {
-    marginTop: 4,
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#9ca3af',
+    paddingRight: 8,
   },
   miniCalendarNavRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   miniCalendarNavBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   miniCalendarNavText: {
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: '800',
     color: '#fff',
   },
   miniCalendarWeekdays: {
-    marginTop: 16,
+    marginTop: 14,
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   miniCalendarWeekdayText: {
     width: '14.2857%',
     textAlign: 'center',
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '700',
     color: '#9ca3af',
   },
   miniCalendarGrid: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
@@ -3197,9 +2117,9 @@ const styles = StyleSheet.create({
     width: '14.2857%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    borderRadius: 12,
-    minHeight: 40,
+    paddingVertical: 6,
+    borderRadius: 10,
+    minHeight: 30,
   },
   miniCalendarCellMuted: {
     opacity: 0.38,
@@ -3212,7 +2132,7 @@ const styles = StyleSheet.create({
     borderColor: '#f59e0b',
   },
   miniCalendarCellText: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '700',
     color: '#fff',
   },
@@ -3223,30 +2143,52 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   miniCalendarDot: {
-    marginTop: 4,
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    marginTop: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: '#fbbf24',
   },
-  miniCalendarDotRow: {
-    marginTop: 4,
+  miniCalendarHint: {
+    marginTop: 10,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#9ca3af',
+  },
+  todaySpotlight: {
+    marginTop: 14,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ebe4d9',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
+    gap: 12,
   },
-  miniCalendarDotCustom: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#2563eb',
+  todayBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#111827',
   },
-  miniCalendarHint: {
-    marginTop: 14,
+  todayBadgeText: {
     fontSize: 11,
-    lineHeight: 16,
-    color: '#9ca3af',
+    fontWeight: '800',
+    color: '#fff',
+  },
+  todaySpotlightBody: {
+    flex: 1,
+  },
+  todaySpotlightTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  todaySpotlightMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#6b7280',
   },
   plannerShell: {
     marginTop: 14,
@@ -3439,414 +2381,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
     color: '#6b7280',
-  },
-
-  taskComposerCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#e7e5e4',
-    backgroundColor: '#fff',
-    padding: 14,
-  },
-  taskTitleInput: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fcfcfd',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  taskModeRow: {
-    marginTop: 12,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  taskModeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-  },
-  taskModeChipActive: {
-    backgroundColor: '#111827',
-    borderColor: '#111827',
-  },
-  taskModeChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#4b5563',
-  },
-  taskModeChipTextActive: {
-    color: '#fff',
-  },
-  taskFieldsWrap: {
-    marginTop: 14,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  taskFieldBlock: {
-    minWidth: 104,
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 0,
-  },
-  taskFieldLabel: {
-    marginBottom: 6,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  taskFieldSelect: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fcfcfd',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  taskFieldSelectValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  taskFieldSelectHint: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  sheetOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
-  },
-  sheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  sheetCard: {
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: '#fffdf9',
-    borderWidth: 1,
-    borderColor: '#ebe4d9',
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    paddingBottom: 24,
-    maxHeight: '90%',
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 86,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: '#d6d3d1',
-    marginBottom: 12,
-  },
-  sheetActionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 10,
-  },
-  sheetActionSpacer: {
-    minWidth: 78,
-  },
-  sheetActionRight: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'center',
-  },
-  sheetGhostAction: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5ddd1',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sheetGhostActionText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  sheetPrimaryAction: {
-    borderRadius: 999,
-    backgroundColor: '#111827',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sheetPrimaryActionText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  sheetTitle: {
-    marginTop: 16,
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#111827',
-  },
-  sheetSubtitle: {
-    marginTop: 6,
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  sheetMiniCalendarWrap: {
-    marginTop: 14,
-  },
-  sheetDetailPanel: {
-    marginTop: 14,
-    gap: 8,
-  },
-  sheetDetailNote: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#6b7280',
-  },
-  timeWheelRow: {
-    marginTop: 14,
-    flexDirection: 'row',
-    gap: 10,
-  },
-  timeWheelGroup: {
-    flex: 1,
-  },
-  timeWheelLabel: {
-    marginBottom: 8,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    textAlign: 'center',
-  },
-  timeWheelColumn: {
-    position: 'relative',
-    height: TIME_WHEEL_ITEM_HEIGHT * (TIME_WHEEL_SIDE_ROWS * 2 + 1),
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    overflow: 'hidden',
-  },
-  timeWheelGuideFrame: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    top: TIME_WHEEL_ITEM_HEIGHT * TIME_WHEEL_SIDE_ROWS,
-    height: TIME_WHEEL_ITEM_HEIGHT,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#d1d5db',
-    zIndex: 2,
-  },
-  timeWheelItem: {
-    height: TIME_WHEEL_ITEM_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timeWheelItemText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#9ca3af',
-  },
-  timeWheelItemTextActive: {
-    color: '#111827',
-    fontWeight: '800',
-  },
-  monthYearSectionTitle: {
-    marginTop: 16,
-    marginBottom: 10,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  monthYearYearRow: {
-    gap: 10,
-    paddingRight: 8,
-  },
-  monthYearYearChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  monthYearYearChipActive: {
-    borderColor: '#111827',
-  },
-  monthYearYearChipText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#6b7280',
-  },
-  monthYearYearChipTextActive: {
-    color: '#111827',
-  },
-  monthYearGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  monthYearCell: {
-    width: '22%',
-    minWidth: 74,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  monthYearCellActive: {
-    borderColor: '#111827',
-    backgroundColor: '#111827',
-  },
-  monthYearCellText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  monthYearCellTextActive: {
-    color: '#fff',
-  },
-  taskComposerActions: {
-    marginTop: 14,
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'center',
-  },
-  taskSaveBtn: {
-    minWidth: 118,
-    borderRadius: 14,
-    backgroundColor: '#d97706',
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskSaveBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  taskCancelBtn: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskCancelBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  taskErrorText: {
-    marginTop: 10,
-    fontSize: 12,
-    color: '#b91c1c',
-  },
-  taskLoadingWrap: {
-    paddingVertical: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskList: {
-    gap: 10,
-  },
-  taskItemCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  taskCheckBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: '#d1d5db',
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  taskCheckBtnActive: {
-    borderColor: '#2563eb',
-    backgroundColor: '#2563eb',
-  },
-  taskCheckBtnText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: 'transparent',
-  },
-  taskCheckBtnTextActive: {
-    color: '#fff',
-  },
-  taskItemBody: {
-    flex: 1,
-  },
-  taskItemTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  taskItemTitleDone: {
-    color: '#9ca3af',
-    textDecorationLine: 'line-through',
-  },
-  taskItemMeta: {
-    marginTop: 5,
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  taskItemActions: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  taskActionBtn: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  taskActionBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  taskDeleteBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#b91c1c',
   },
 
   section: { marginTop: 20 },

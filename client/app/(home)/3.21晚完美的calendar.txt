@@ -1560,6 +1560,15 @@ export default function CalendarScreen() {
     }
   };
 
+  const totalAssignments = useMemo(
+    () =>
+      Object.values(assignmentsByCourse).reduce(
+        (sum, entry) => sum + (Array.isArray(entry?.items) ? entry.items.length : 0),
+        0
+      ),
+    [assignmentsByCourse]
+  );
+
   const calendarFeed = useMemo(() => {
     const merged = [];
     const seen = new Set();
@@ -2201,7 +2210,30 @@ export default function CalendarScreen() {
               ) : null}
             </View>
           </>
-        ) : null}
+        ) : isConnected ? (
+              <View style={styles.overviewIntroCard}>
+                <Text style={styles.overviewIntroEyebrow}>OVERVIEW</Text>
+                <Text style={styles.overviewIntroTitle}>Academic details moved here</Text>
+                <Text style={styles.overviewIntroText}>
+                  This tab now owns the profile block, course grades, due soon list, and the full
+                  assignment detail area below.
+                </Text>
+                <View style={styles.overviewIntroStatsRow}>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{courses.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>courses</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{events.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>due soon</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{totalAssignments}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>assignments</Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -3122,6 +3154,57 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1f2937',
     textTransform: 'capitalize',
+  },
+  overviewIntroCard: {
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    backgroundColor: '#fffdf9',
+    borderWidth: 1,
+    borderColor: '#ebe4d9',
+  },
+  overviewIntroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9a866e',
+    letterSpacing: 0.9,
+  },
+  overviewIntroTitle: {
+    marginTop: 8,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6b7280',
+  },
+  overviewIntroStatsRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  overviewIntroStat: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: '#f4efe7',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  overviewIntroStatValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroStatLabel: {
+    marginTop: 3,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7c6f5d',
+    textTransform: 'uppercase',
   },
   miniCalendarCard: {
     width: '100%',

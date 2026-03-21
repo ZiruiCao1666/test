@@ -342,30 +342,6 @@ const parseDateInput = (value) => {
   return date;
 };
 
-const normalizeTaskDateInput = (value, fallback = new Date()) => {
-  const normalizedDate = parseDateInput(value) || startOfDay(value) || startOfDay(fallback);
-  return formatInputDate(normalizedDate || fallback);
-};
-
-const normalizeTaskTimeInput = (value, fallback = '') => {
-  const safe = String(value || '').trim();
-  const match = safe.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
-  if (!match) return fallback;
-  return `${match[1]}:${match[2]}`;
-};
-
-const normalizeCustomTask = (task, fallbackDate = new Date()) => {
-  const timingMode = task?.timingMode === 'range' ? 'range' : 'deadline';
-  return {
-    ...task,
-    taskDate: normalizeTaskDateInput(task?.taskDate, fallbackDate),
-    dueTime: normalizeTaskTimeInput(task?.dueTime, '18:00'),
-    startTime: normalizeTaskTimeInput(task?.startTime, '09:00'),
-    endTime: normalizeTaskTimeInput(task?.endTime, '10:00'),
-    timingMode,
-  };
-};
-
 const formatTimeOnly = (value) => {
   const safe = String(value || '').trim();
   if (!isValidTimeInput(safe)) return safe || 'N/A';
@@ -524,7 +500,7 @@ const MiniCalendarPanel = ({
   selectedDate,
   onSelectDate,
   onChangeMonth,
-  dateMarkersByDate,
+  itemCountByDate,
   onPressTitle,
   titleHint,
   footerHint,
@@ -584,11 +560,7 @@ const MiniCalendarPanel = ({
 
       <View style={styles.miniCalendarGrid}>
         {calendarDays.map((day) => {
-          const markers = dateMarkersByDate?.[buildDateKey(day.date)] || {
-            count: 0,
-            hasCanvas: false,
-            hasCustom: false,
-          };
+          const count = itemCountByDate?.[buildDateKey(day.date)] || 0;
           const isSelected = isSameDay(day.date, selectedDate);
           const isToday = isSameDay(day.date, new Date());
           return (
@@ -612,12 +584,7 @@ const MiniCalendarPanel = ({
               >
                 {day.date.getDate()}
               </Text>
-              {markers.count > 0 ? (
-                <View style={styles.miniCalendarDotRow}>
-                  {markers.hasCanvas ? <View style={styles.miniCalendarDot} /> : null}
-                  {markers.hasCustom ? <View style={styles.miniCalendarDotCustom} /> : null}
-                </View>
-              ) : null}
+              {count > 0 ? <View style={styles.miniCalendarDot} /> : null}
             </Pressable>
           );
         })}
@@ -782,7 +749,6 @@ export default function CalendarScreen() {
 
   const baseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
-  const hasPlannerContent = isConnected || customTasks.length > 0;
   const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
   const monthYearOptions = useMemo(() => {
     const centerYear = Number(monthYearDraft?.year) || new Date().getFullYear();
@@ -955,9 +921,7 @@ export default function CalendarScreen() {
       if (!response.ok) {
         throw new Error(data?.error || `Failed to load tasks (HTTP ${response.status})`);
       }
-      setCustomTasks(
-        sortTasks((data?.items || []).map((item) => normalizeCustomTask(item, selectedDate)))
-      );
+      setCustomTasks(sortTasks(data?.items));
       setTasksError('');
     } catch (taskLoadError) {
       setTasksError(
@@ -1472,18 +1436,11 @@ export default function CalendarScreen() {
           customTasks.find((item) => String(item.id) === String(editingTaskId))?.isCompleted ||
           false,
       });
-      const normalizedSavedTask = savedTask ? normalizeCustomTask(savedTask, selectedDate) : null;
       await fetchCustomTasks({ silent: true });
       setTasksError('');
-      resetTaskComposer(
-        normalizedSavedTask?.taskDate
-          ? parseDateInput(normalizedSavedTask.taskDate) || selectedDate
-          : selectedDate
-      );
-      setSelectedPanel('calendar');
-      setSelectedView('week');
-      if (normalizedSavedTask?.taskDate) {
-        const nextSelectedDate = toSafeDate(buildTaskDateTimeIso(normalizedSavedTask));
+      resetTaskComposer(savedTask?.taskDate ? new Date(savedTask.taskDate) : selectedDate);
+      if (savedTask?.taskDate) {
+        const nextSelectedDate = toSafeDate(buildTaskDateTimeIso(savedTask));
         if (nextSelectedDate) setSelectedDate(nextSelectedDate);
       }
     } catch (taskSaveError) {
@@ -1496,17 +1453,15 @@ export default function CalendarScreen() {
   };
 
   const handleEditTask = (task) => {
-    const normalizedTask = normalizeCustomTask(task, selectedDate);
     setEditingTaskId(String(task?.id || ''));
     setTaskForm({
-      title: String(normalizedTask?.title || ''),
-      taskDate: normalizedTask.taskDate,
-      timingMode: normalizedTask.timingMode,
-      dueTime: normalizedTask.dueTime,
-      startTime: normalizedTask.startTime,
-      endTime: normalizedTask.endTime,
+      title: String(task?.title || ''),
+      taskDate: String(task?.taskDate || formatInputDate(selectedDate)),
+      timingMode: task?.timingMode === 'range' ? 'range' : 'deadline',
+      dueTime: String(task?.dueTime || '18:00'),
+      startTime: String(task?.startTime || '09:00'),
+      endTime: String(task?.endTime || '10:00'),
     });
-    setTasksError('');
   };
 
   const handleToggleTaskCompletion = async (task) => {
@@ -1559,6 +1514,15 @@ export default function CalendarScreen() {
       setTaskDeletingId('');
     }
   };
+
+  const totalAssignments = useMemo(
+    () =>
+      Object.values(assignmentsByCourse).reduce(
+        (sum, entry) => sum + (Array.isArray(entry?.items) ? entry.items.length : 0),
+        0
+      ),
+    [assignmentsByCourse]
+  );
 
   const calendarFeed = useMemo(() => {
     const merged = [];
@@ -1647,20 +1611,12 @@ export default function CalendarScreen() {
     return merged.sort((left, right) => new Date(left.date) - new Date(right.date));
   }, [events, courses, assignmentsByCourse, submissionsByCourse, customTasks]);
 
-  const dateMarkersByDate = useMemo(
+  const itemCountByDate = useMemo(
     () =>
       calendarFeed.reduce((acc, item) => {
         const key = buildDateKey(item.date);
         if (!key) return acc;
-        const current = acc[key] || {
-          count: 0,
-          hasCanvas: false,
-          hasCustom: false,
-        };
-        current.count += 1;
-        if (item?.source === 'customTask') current.hasCustom = true;
-        else current.hasCanvas = true;
-        acc[key] = current;
+        acc[key] = (acc[key] || 0) + 1;
         return acc;
       }, {}),
     [calendarFeed]
@@ -1759,7 +1715,7 @@ export default function CalendarScreen() {
     const nextDate = addMonths(selectedDate, direction);
     if (nextDate) setSelectedDate(nextDate);
   };
-  const showTaskSection = selectedPanel === 'overview';
+  const showTaskSection = selectedPanel === 'overview' || !isConnected;
 
   const openCalendarItemDetail = async (item) => {
     setSelectedCalendarItem(item || null);
@@ -1897,20 +1853,15 @@ export default function CalendarScreen() {
           ) : null}
         </View>
 
-        {hasPlannerContent ? (
+        {isConnected ? (
           <View style={styles.previewSection}>
             <View style={styles.previewHeaderRow}>
               <View style={styles.previewHeaderTextWrap}>
-                <Text style={styles.previewEyebrow}>
-                  {isConnected ? 'SYNCED CALENDAR' : 'TASK PLANNER'}
-                </Text>
-                <Text style={styles.previewTitle}>
-                  {isConnected ? 'Canvas planner' : 'Personal planner'}
-                </Text>
+                <Text style={styles.previewEyebrow}>SYNCED CALENDAR</Text>
+                <Text style={styles.previewTitle}>Canvas planner</Text>
                 <Text style={styles.previewSubtitle}>
-                  {isConnected
-                    ? 'Calendar shows your schedule. Overview holds profile, grades, due soon, assignments, and your own tasks.'
-                    : 'Calendar now shows your own tasks even without an active Canvas sync.'}
+                  Calendar shows only your schedule. Overview holds profile, grades, due soon, and
+                  assignment details.
                 </Text>
               </View>
 
@@ -1973,7 +1924,7 @@ export default function CalendarScreen() {
                       setSelectedView('week');
                     }}
                     onChangeMonth={changeMiniCalendarMonth}
-                    dateMarkersByDate={dateMarkersByDate}
+                    itemCountByDate={itemCountByDate}
                     onPressTitle={openMonthYearPicker}
                     titleHint="Tap title to choose month"
                     footerHint="Tap a date to jump the planner to that week."
@@ -2199,9 +2150,32 @@ export default function CalendarScreen() {
                   )}
                 </View>
               ) : null}
-            </View>
-          </>
-        ) : null}
+                </View>
+              </>
+            ) : (
+              <View style={styles.overviewIntroCard}>
+                <Text style={styles.overviewIntroEyebrow}>OVERVIEW</Text>
+                <Text style={styles.overviewIntroTitle}>Academic details moved here</Text>
+                <Text style={styles.overviewIntroText}>
+                  This tab now owns the profile block, course grades, due soon list, and the full
+                  assignment detail area below.
+                </Text>
+                <View style={styles.overviewIntroStatsRow}>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{courses.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>courses</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{events.length}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>due soon</Text>
+                  </View>
+                  <View style={styles.overviewIntroStat}>
+                    <Text style={styles.overviewIntroStatValue}>{totalAssignments}</Text>
+                    <Text style={styles.overviewIntroStatLabel}>assignments</Text>
+                  </View>
+                </View>
+              </View>
+            )}
           </View>
         ) : null}
 
@@ -2340,7 +2314,7 @@ export default function CalendarScreen() {
                             task?.isCompleted ? styles.taskCheckBtnTextActive : null,
                           ]}
                         >
-                          {task?.isCompleted ? '\u2713' : ''}
+                          {task?.isCompleted ? '✓' : ''}
                         </Text>
                       </Pressable>
 
@@ -2732,7 +2706,7 @@ export default function CalendarScreen() {
               const nextDate = addMonths(taskDateMonthAnchor, direction);
               if (nextDate) setTaskDateMonthAnchor(nextDate);
             }}
-            dateMarkersByDate={dateMarkersByDate}
+            itemCountByDate={itemCountByDate}
             footerHint="Tap a date to use it for this task."
           />
         </View>
@@ -3123,6 +3097,57 @@ const styles = StyleSheet.create({
     color: '#1f2937',
     textTransform: 'capitalize',
   },
+  overviewIntroCard: {
+    marginTop: 16,
+    borderRadius: 24,
+    padding: 16,
+    backgroundColor: '#fffdf9',
+    borderWidth: 1,
+    borderColor: '#ebe4d9',
+  },
+  overviewIntroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#9a866e',
+    letterSpacing: 0.9,
+  },
+  overviewIntroTitle: {
+    marginTop: 8,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6b7280',
+  },
+  overviewIntroStatsRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  overviewIntroStat: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: '#f4efe7',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  overviewIntroStatValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#111827',
+  },
+  overviewIntroStatLabel: {
+    marginTop: 3,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7c6f5d',
+    textTransform: 'uppercase',
+  },
   miniCalendarCard: {
     width: '100%',
     borderRadius: 28,
@@ -3228,19 +3253,6 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 2.5,
     backgroundColor: '#fbbf24',
-  },
-  miniCalendarDotRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  miniCalendarDotCustom: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#2563eb',
   },
   miniCalendarHint: {
     marginTop: 14,
