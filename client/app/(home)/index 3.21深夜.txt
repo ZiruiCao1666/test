@@ -20,27 +20,11 @@ const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 const HOME_PLAN_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-const getItemTimestamp = (item) => {
-  const direct = Number(item?.timestampMs);
-  if (Number.isFinite(direct)) return direct;
+const formatDaysLeft = (dateText) => {
+  const date = new Date(dateText);
+  if (Number.isNaN(date.getTime())) return 'Upcoming';
 
-  const parsed = new Date(item?.date || '').getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const formatDaysLeft = (item) => {
-  const timestamp = getItemTimestamp(item);
-  if (timestamp === null) return 'Time pending';
-
-  const diffMs = timestamp - Date.now();
-  if (diffMs <= 0) return 'Due now';
-  if (diffMs <= ONE_DAY_MS) {
-    const hoursLeft = Math.max(1, Math.ceil(diffMs / (60 * 60 * 1000)));
-    return `${hoursLeft}h left`;
-  }
-
-  const date = new Date(timestamp);
-  const now = new Date(Date.now());
+  const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTargetDay = new Date(
     date.getFullYear(),
@@ -54,56 +38,20 @@ const formatDaysLeft = (item) => {
   return `${diffDays} days left`;
 };
 
-const formatPlanDateTime = (item) => {
-  const timestamp = getItemTimestamp(item);
-  if (timestamp === null) {
-    return item?.date ? String(item.date) : 'Time not synced';
-  }
+const formatPlanMeta = (item) => {
+  const date = new Date(item?.date || '');
+  const dateText = Number.isNaN(date.getTime())
+    ? 'No date'
+    : date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
 
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-};
-
-const getPlanDetail = (item) => {
-  if (item?.source === 'canvas') {
-    return item?.course || item?.type || 'Canvas item';
-  }
-  return item?.type || 'Custom task';
-};
-
-const groupPlanItems = (items) => {
-  const nowTs = Date.now();
-  const sections = [
-    { key: '24h', title: 'Within 24 hours', items: [] },
-    { key: '3d', title: 'Within 3 days', items: [] },
-    { key: '7d', title: 'Within 7 days', items: [] },
-  ];
-
-  (Array.isArray(items) ? items : []).forEach((item) => {
-    const timestamp = getItemTimestamp(item);
-    if (timestamp === null) {
-      sections[2].items.push(item);
-      return;
-    }
-
-    const diffMs = timestamp - nowTs;
-    if (diffMs <= ONE_DAY_MS) {
-      sections[0].items.push(item);
-      return;
-    }
-    if (diffMs <= 3 * ONE_DAY_MS) {
-      sections[1].items.push(item);
-      return;
-    }
-    sections[2].items.push(item);
-  });
-
-  return sections.filter((section) => section.items.length > 0);
+  const sourceLabel = item?.source === 'custom' ? 'Custom' : 'Canvas';
+  const detail = item?.course || item?.type || '';
+  return [sourceLabel, detail, dateText].filter(Boolean).join(' | ');
 };
 
 export default function HomeScreen() {
@@ -391,7 +339,6 @@ export default function HomeScreen() {
   };
 
   const lastingDays = streakDays || totalSignedDays;
-  const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
     if (!item?.htmlUrl) return;
     try {
@@ -501,68 +448,44 @@ export default function HomeScreen() {
           {homePlanError ? <Text style={styles.todoError}>{homePlanError}</Text> : null}
           {canvasPlanWarning ? <Text style={styles.todoWarning}>{canvasPlanWarning}</Text> : null}
 
-          {!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0 ? (
+          {!loadingHomePlan && !homePlanError && homePlanItems.length === 0 ? (
             <Text style={styles.todoEmpty}>No Canvas or custom tasks in the next seven days.</Text>
           ) : null}
 
-          {groupedHomePlan.map((section) => (
-            <View key={section.key} style={styles.todoSection}>
-              <Text style={styles.todoSectionTitle}>
-                {section.title} ({section.items.length})
-              </Text>
+          {homePlanItems.map((item) => {
+            const Row = item?.htmlUrl ? Pressable : View;
+            const rowProps = item?.htmlUrl
+              ? {
+                  onPress: () => openPlanItem(item),
+                  style: ({ pressed }) => [
+                    styles.todoRow,
+                    styles.todoRowClickable,
+                    pressed ? { opacity: 0.75 } : null,
+                  ],
+                }
+              : {
+                  style: styles.todoRow,
+                };
 
-              {section.items.map((item) => {
-                const Row = item?.htmlUrl ? Pressable : View;
-                const rowProps = item?.htmlUrl
-                  ? {
-                      onPress: () => openPlanItem(item),
-                      style: ({ pressed }) => [
-                        styles.todoRow,
-                        styles.todoRowClickable,
-                        pressed ? { opacity: 0.75 } : null,
-                      ],
-                    }
-                  : {
-                      style: styles.todoRow,
-                    };
+            return (
+              <Row key={item.id} {...rowProps}>
+                {avatarUrl ? (
+                  <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />
+                ) : (
+                  <View style={[styles.todoAvatar, styles.avatarFallback]}>
+                    <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+                  </View>
+                )}
 
-                return (
-                  <Row key={item.id} {...rowProps}>
-                    {avatarUrl ? (
-                      <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />
-                    ) : (
-                      <View style={[styles.todoAvatar, styles.avatarFallback]}>
-                        <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
-                      </View>
-                    )}
-
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.todoTopRow}>
-                        <Text style={styles.todoTop}>{formatDaysLeft(item)}</Text>
-                        <View
-                          style={[
-                            styles.todoSourceBadge,
-                            item?.source === 'custom'
-                              ? styles.todoSourceBadgeCustom
-                              : styles.todoSourceBadgeCanvas,
-                          ]}
-                        >
-                          <Text style={styles.todoSourceBadgeText}>
-                            {item?.source === 'custom' ? 'Custom' : 'Canvas'}
-                          </Text>
-                        </View>
-                      </View>
-                      <Text style={styles.todoText}>{item?.title || 'Untitled task'}</Text>
-                      <Text style={styles.todoMeta}>{getPlanDetail(item)}</Text>
-                      <Text style={styles.todoMetaStrong}>{formatPlanDateTime(item)}</Text>
-                      {item?.htmlUrl ? <Text style={styles.todoLinkHint}>Open in Canvas</Text> : null}
-                      <View style={styles.todoLine} />
-                    </View>
-                  </Row>
-                );
-              })}
-            </View>
-          ))}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.todoTop}>{formatDaysLeft(item?.date)}</Text>
+                  <Text style={styles.todoText}>{item?.title || 'Untitled task'}</Text>
+                  <Text style={styles.todoMeta}>{formatPlanMeta(item)}</Text>
+                  <View style={styles.todoLine} />
+                </View>
+              </Row>
+            );
+          })}
         </View>
 
         <View style={{ height: 24 }} />
@@ -633,21 +556,12 @@ const styles = StyleSheet.create({
 
   todoCard: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, padding: 12, backgroundColor: '#ffffff' },
   todoTitle: { fontSize: 14, fontWeight: '800', color: '#111827', marginBottom: 10 },
-  todoSection: { marginTop: 8 },
-  todoSectionTitle: { fontSize: 12, fontWeight: '800', color: '#374151', marginBottom: 6 },
   todoRow: { flexDirection: 'row', gap: 10, paddingVertical: 10 },
   todoRowClickable: { borderRadius: 10 },
   todoAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f3f4f6', marginTop: 2 },
-  todoTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   todoTop: { fontSize: 12, fontWeight: '800', color: '#111827' },
-  todoSourceBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  todoSourceBadgeCanvas: { backgroundColor: '#dbeafe' },
-  todoSourceBadgeCustom: { backgroundColor: '#dcfce7' },
-  todoSourceBadgeText: { fontSize: 10, fontWeight: '800', color: '#111827' },
   todoText: { marginTop: 4, fontSize: 13, color: '#6b7280' },
   todoMeta: { marginTop: 4, fontSize: 11, color: '#9ca3af' },
-  todoMetaStrong: { marginTop: 3, fontSize: 11, fontWeight: '700', color: '#374151' },
-  todoLinkHint: { marginTop: 4, fontSize: 10, fontWeight: '700', color: '#2563eb' },
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
