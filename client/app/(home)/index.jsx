@@ -74,8 +74,125 @@ const formatTimeOnly = (value) => {
   });
 };
 
-const getCustomTaskTimestamp = (item) => {
+const getPlanField = (item, camelKey, snakeKey) => {
   const safeItem = item || {};
+  if (safeItem[camelKey] !== undefined && safeItem[camelKey] !== null && safeItem[camelKey] !== '') {
+    return safeItem[camelKey];
+  }
+  if (safeItem[snakeKey] !== undefined && safeItem[snakeKey] !== null && safeItem[snakeKey] !== '') {
+    return safeItem[snakeKey];
+  }
+  return '';
+};
+
+const getTimeTextFromDate = (value) => {
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
+const getDateTextFromDate = (value) => {
+  const parsed = new Date(String(value || ''));
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().slice(0, 10);
+};
+
+const getCustomTimingMode = (item) => {
+  const safeItem = item || {};
+  const directMode = String(
+    getPlanField(safeItem, 'timingMode', 'timing_mode') || ''
+  ).trim().toLowerCase();
+  if (directMode === 'range') return 'range';
+  if (directMode === 'deadline') return 'deadline';
+
+  const typeText = String(safeItem.type || '').trim().toLowerCase();
+  if (typeText.includes('range')) return 'range';
+  return 'deadline';
+};
+
+const getCustomTaskDateText = (item) => {
+  const directDate = String(getPlanField(item, 'taskDate', 'task_date') || '').trim();
+  if (DATE_INPUT_RE.test(directDate)) return directDate;
+
+  const fallbackDate = getDateTextFromDate((item || {}).date);
+  if (DATE_INPUT_RE.test(fallbackDate)) return fallbackDate;
+  return '';
+};
+
+const getCustomDueTimeText = (item) => {
+  const directTime = String(getPlanField(item, 'dueTime', 'due_time') || '').trim();
+  if (TIME_INPUT_RE.test(directTime)) return directTime;
+  return getTimeTextFromDate((item || {}).date);
+};
+
+const getCustomStartTimeText = (item) => {
+  const directTime = String(getPlanField(item, 'startTime', 'start_time') || '').trim();
+  if (TIME_INPUT_RE.test(directTime)) return directTime;
+  return getTimeTextFromDate((item || {}).date);
+};
+
+const getCustomEndTimeText = (item) => {
+  const directTime = String(getPlanField(item, 'endTime', 'end_time') || '').trim();
+  if (TIME_INPUT_RE.test(directTime)) return directTime;
+  return '';
+};
+
+const buildCustomScheduleText = (item) => {
+  const timingMode = getCustomTimingMode(item);
+  const taskDate = getCustomTaskDateText(item);
+  const dateLabel = formatShortDate(taskDate);
+  if (timingMode === 'range') {
+    const startTime = getCustomStartTimeText(item);
+    const endTime = getCustomEndTimeText(item);
+    return `${dateLabel} | ${formatTimeOnly(startTime)} - ${formatTimeOnly(endTime)}`;
+  }
+  const dueTime = getCustomDueTimeText(item);
+  return `${dateLabel} | Due ${formatTimeOnly(dueTime)}`;
+};
+
+const normalizeHomePlanItem = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source !== 'custom') {
+    return safeItem;
+  }
+
+  const normalized = { ...safeItem };
+  normalized.taskDate = getCustomTaskDateText(safeItem);
+  normalized.timingMode = getCustomTimingMode(safeItem);
+  normalized.dueTime = getCustomDueTimeText(safeItem);
+  normalized.startTime = getCustomStartTimeText(safeItem);
+  normalized.endTime = getCustomEndTimeText(safeItem);
+
+  if (!normalized.scheduleText) {
+    normalized.scheduleText = buildCustomScheduleText(normalized);
+  }
+
+  if (
+    (normalized.timestampMs === undefined || normalized.timestampMs === null || normalized.timestampMs === '') &&
+    normalized.taskDate
+  ) {
+    let sourceTime = normalized.dueTime;
+    if (normalized.timingMode === 'range') {
+      sourceTime = normalized.startTime;
+    }
+    if (!TIME_INPUT_RE.test(sourceTime)) {
+      sourceTime = '12:00';
+    }
+    const parsed = new Date(`${normalized.taskDate}T${sourceTime}:00`).getTime();
+    if (Number.isFinite(parsed)) {
+      normalized.timestampMs = parsed;
+    }
+  }
+
+  return normalized;
+};
+
+const getCustomTaskTimestamp = (item) => {
+  const safeItem = normalizeHomePlanItem(item);
   const taskDate = String(safeItem.taskDate || '').trim();
   if (!DATE_INPUT_RE.test(taskDate)) return null;
 
@@ -145,7 +262,7 @@ const formatDaysLeft = (item) => {
 };
 
 const formatPlanDateTime = (item) => {
-  const safeItem = item || {};
+  const safeItem = normalizeHomePlanItem(item);
 
   if (safeItem.source === 'custom') {
     if (safeItem.scheduleText) return String(safeItem.scheduleText);
@@ -524,7 +641,7 @@ export default function HomeScreen() {
       if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
 
       if (data && Array.isArray(data.items)) {
-        setHomePlanItems(data.items);
+        setHomePlanItems(data.items.map(normalizeHomePlanItem));
       } else {
         setHomePlanItems([]);
       }
