@@ -74,6 +74,42 @@ const formatTimeOnly = (value) => {
   });
 };
 
+const normalizeDateText = (value) => {
+  const safe = String(value || '').trim();
+  if (!safe) {
+    return '';
+  }
+  if (DATE_INPUT_RE.test(safe)) {
+    return safe;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) {
+    return safe.slice(0, 10);
+  }
+  const parsed = new Date(safe);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toISOString().slice(0, 10);
+};
+
+const normalizeTimeText = (value) => {
+  const safe = String(value || '').trim();
+  if (!safe) {
+    return '';
+  }
+  if (TIME_INPUT_RE.test(safe)) {
+    return safe;
+  }
+  const hhmmssMatch = safe.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  if (hhmmssMatch) {
+    return `${hhmmssMatch[1]}:${hhmmssMatch[2]}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) {
+    return getTimeTextFromDate(safe);
+  }
+  return '';
+};
+
 const getPlanField = (item, camelKey, snakeKey) => {
   const safeItem = item || {};
   if (safeItem[camelKey] !== undefined && safeItem[camelKey] !== null && safeItem[camelKey] !== '') {
@@ -115,7 +151,7 @@ const getCustomTimingMode = (item) => {
 };
 
 const getCustomTaskDateText = (item) => {
-  const directDate = String(getPlanField(item, 'taskDate', 'task_date') || '').trim();
+  const directDate = normalizeDateText(getPlanField(item, 'taskDate', 'task_date'));
   if (DATE_INPUT_RE.test(directDate)) return directDate;
 
   const fallbackDate = getDateTextFromDate((item || {}).date);
@@ -124,19 +160,19 @@ const getCustomTaskDateText = (item) => {
 };
 
 const getCustomDueTimeText = (item) => {
-  const directTime = String(getPlanField(item, 'dueTime', 'due_time') || '').trim();
+  const directTime = normalizeTimeText(getPlanField(item, 'dueTime', 'due_time'));
   if (TIME_INPUT_RE.test(directTime)) return directTime;
   return getTimeTextFromDate((item || {}).date);
 };
 
 const getCustomStartTimeText = (item) => {
-  const directTime = String(getPlanField(item, 'startTime', 'start_time') || '').trim();
+  const directTime = normalizeTimeText(getPlanField(item, 'startTime', 'start_time'));
   if (TIME_INPUT_RE.test(directTime)) return directTime;
   return getTimeTextFromDate((item || {}).date);
 };
 
 const getCustomEndTimeText = (item) => {
-  const directTime = String(getPlanField(item, 'endTime', 'end_time') || '').trim();
+  const directTime = normalizeTimeText(getPlanField(item, 'endTime', 'end_time'));
   if (TIME_INPUT_RE.test(directTime)) return directTime;
   return '';
 };

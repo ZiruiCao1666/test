@@ -3032,6 +3032,72 @@ export default function CalendarScreen() {
                         if (Array.isArray(detailData && detailData.submission_history)) {
                           detailHistory = detailData.submission_history;
                         }
+                        let assignmentDetailNode = (
+                          <Text style={styles.detailMuted}>
+                            {getDetailFallbackText(detailState)}
+                          </Text>
+                        );
+                        if (detailData) {
+                          assignmentDetailNode = (
+                            <>
+                              <Text style={styles.detailMeta}>
+                                Late: {getYesNoText(detailData.late)}
+                              </Text>
+                              <Text style={styles.detailMeta}>
+                                Submitted at: {formatDateTime(detailData.submitted_at)}
+                              </Text>
+                              <Text style={styles.detailHeading}>Teacher comments</Text>
+                              {renderNodeWhenElse(teacherComments.length === 0, (
+                                <Text style={styles.detailMuted}>No teacher comments yet.</Text>
+                              ), (
+                                teacherComments.map((comment, index) => (
+                                  <View
+                                    key={`${courseId}-assignment-${String(safeAssignment.id)}-comment-${String((comment || {}).id || 'x')}-${index}`}
+                                    style={styles.detailRow}
+                                  >
+                                    <Text style={styles.detailMeta}>
+                                      {(comment || {}).author_name || 'Instructor'}
+                                      {' | '}
+                                      {formatDateTime((comment || {}).created_at)}
+                                    </Text>
+                                    <Text style={styles.detailText}>
+                                      {(comment || {}).comment || '-'}
+                                    </Text>
+                                  </View>
+                                ))
+                              ))}
+                              <Text style={styles.detailHeading}>Attempt history</Text>
+                              {renderNodeWhenElse(detailHistory.length === 0, (
+                                <Text style={styles.detailMuted}>No attempt history.</Text>
+                              ), (
+                                detailHistory.map((attempt, index) => (
+                                  <View
+                                    key={`${courseId}-assignment-${String(safeAssignment.id)}-attempt-${String((attempt || {}).id || (attempt || {}).attempt || 'x')}-${index}`}
+                                    style={styles.detailRow}
+                                  >
+                                    <Text style={styles.detailMeta}>
+                                      Attempt {(attempt || {}).attempt || index + 1}
+                                    </Text>
+                                    <Text style={styles.detailText}>
+                                      Submitted: {formatDateTime((attempt || {}).submitted_at)}
+                                    </Text>
+                                    <Text style={styles.detailText}>
+                                      Late: {getYesNoText((attempt || {}).late)}
+                                    </Text>
+                                    <Text style={styles.detailText}>
+                                      Score:
+                                      {' '}
+                                      {formatScoreValue(
+                                        (attempt || {}).score,
+                                        (attempt || {}).points_possible || safeAssignment.points_possible
+                                      )}
+                                    </Text>
+                                  </View>
+                                ))
+                              ))}
+                            </>
+                          );
+                        }
                         return (
                           <View
                             key={`${courseId}-assignment-${String(safeAssignment.id)}-${assignmentIndex}`}
@@ -3076,69 +3142,7 @@ export default function CalendarScreen() {
                                     Failed to load detail: {detailState.error}
                                   </Text>
                                 ))}
-                                {renderNodeWhenElse(detailData, (
-                                  <>
-                                    <Text style={styles.detailMeta}>
-                                      Late: {getYesNoText(detailData.late)}
-                                    </Text>
-                                    <Text style={styles.detailMeta}>
-                                      Submitted at: {formatDateTime(detailData.submitted_at)}
-                                    </Text>
-                                    <Text style={styles.detailHeading}>Teacher comments</Text>
-                                    {renderNodeWhenElse(teacherComments.length === 0, (
-                                      <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                                    ), (
-                                      teacherComments.map((comment, index) => (
-                                        <View
-                                          key={`${courseId}-assignment-${String(safeAssignment.id)}-comment-${String((comment || {}).id || 'x')}-${index}`}
-                                          style={styles.detailRow}
-                                        >
-                                          <Text style={styles.detailMeta}>
-                                            {(comment || {}).author_name || 'Instructor'}
-                                            {' | '}
-                                            {formatDateTime((comment || {}).created_at)}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            {(comment || {}).comment || '-'}
-                                          </Text>
-                                        </View>
-                                      ))
-                                    ))}
-                                    <Text style={styles.detailHeading}>Attempt history</Text>
-                                    {renderNodeWhenElse(detailHistory.length === 0, (
-                                      <Text style={styles.detailMuted}>No attempt history.</Text>
-                                    ), (
-                                      detailHistory.map((attempt, index) => (
-                                        <View
-                                          key={`${courseId}-assignment-${String(safeAssignment.id)}-attempt-${String((attempt || {}).id || (attempt || {}).attempt || 'x')}-${index}`}
-                                          style={styles.detailRow}
-                                        >
-                                          <Text style={styles.detailMeta}>
-                                            Attempt {(attempt || {}).attempt || index + 1}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Submitted: {formatDateTime((attempt || {}).submitted_at)}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Late: {getYesNoText((attempt || {}).late)}
-                                          </Text>
-                                          <Text style={styles.detailText}>
-                                            Score:
-                                            {' '}
-                                            {formatScoreValue(
-                                              (attempt || {}).score,
-                                              (attempt || {}).points_possible || safeAssignment.points_possible
-                                            )}
-                                          </Text>
-                                        </View>
-                                      ))
-                                    ))}
-                                  </>
-                                ), (
-                                  <Text style={styles.detailMuted}>
-                                    {getDetailFallbackText(detailState)}
-                                  </Text>
-                                ))}
+                                {assignmentDetailNode}
                               </View>
                             ))}
                             {renderNodeWhen(safeAssignment.html_url, (
