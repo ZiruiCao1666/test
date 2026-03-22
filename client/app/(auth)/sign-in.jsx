@@ -22,13 +22,26 @@ const getErrorMessage = (error, fallbackMessage) => {
 
 const getClerkErrorMessage = (error, fallbackMessage) => {
   const safeError = error || {};
-  const errors = Array.isArray(safeError.errors) ? safeError.errors : [];
+  let errors = [];
+  if (Array.isArray(safeError.errors)) {
+    errors = safeError.errors;
+  }
   if (errors.length > 0) {
     const firstError = errors[0] || {};
     if (firstError.longMessage) return firstError.longMessage;
     if (firstError.message) return firstError.message;
   }
   return getErrorMessage(error, fallbackMessage);
+};
+
+const renderNodeWhenElse = (condition, trueNode, falseNode) => {
+  if (condition) return trueNode;
+  return falseNode;
+};
+
+const getOpacityValue = (condition) => {
+  if (condition) return 0.7;
+  return 1;
 };
 
 
@@ -190,15 +203,15 @@ export default function SignInScreen() {
             borderRadius: 8,
             alignItems: 'center',
             justifyContent: 'center',
-            opacity: loadingPwd ? 0.7 : 1,
+            opacity: getOpacityValue(loadingPwd),
             //https://react.dev/reference/react/useEffect  RN Gray the button visually
           }}
         >
-          {loadingPwd ? (
+          {renderNodeWhenElse(loadingPwd, (
             <ActivityIndicator color="#fff" />
-          ) : (
+          ), (
             <Text style={{ color: '#fff', fontWeight: '700' }}>Continue</Text>
-          )}
+          ))}
         </TouchableOpacity>
 
         <View style={{ height: 20 }} />
@@ -220,10 +233,14 @@ export default function SignInScreen() {
             alignItems: 'center',
             justifyContent: 'center',
             marginBottom: 12,
-            opacity: loadingSSO === 'oauth_github' ? 0.7 : 1,
+            opacity: getOpacityValue(loadingSSO === 'oauth_github'),
           }}
         >
-          {loadingSSO === 'oauth_github' ? <ActivityIndicator /> : <Text>Continue with GitHub</Text>}
+          {renderNodeWhenElse(
+            loadingSSO === 'oauth_github',
+            <ActivityIndicator />,
+            <Text>Continue with GitHub</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -237,10 +254,14 @@ export default function SignInScreen() {
             alignItems: 'center',
             justifyContent: 'center',
             marginBottom: 12,
-            opacity: loadingSSO === 'oauth_google' ? 0.7 : 1,
+            opacity: getOpacityValue(loadingSSO === 'oauth_google'),
           }}
         >
-          {loadingSSO === 'oauth_google' ? <ActivityIndicator /> : <Text>Continue with Google</Text>}
+          {renderNodeWhenElse(
+            loadingSSO === 'oauth_google',
+            <ActivityIndicator />,
+            <Text>Continue with Google</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -253,10 +274,14 @@ export default function SignInScreen() {
             borderColor: '#ddd',
             alignItems: 'center',
             justifyContent: 'center',
-            opacity: loadingSSO === 'oauth_microsoft' ? 0.7 : 1,
+            opacity: getOpacityValue(loadingSSO === 'oauth_microsoft'),
           }}
         >
-          {loadingSSO === 'oauth_microsoft' ? <ActivityIndicator /> : <Text>Continue with Microsoft</Text>}
+          {renderNodeWhenElse(
+            loadingSSO === 'oauth_microsoft',
+            <ActivityIndicator />,
+            <Text>Continue with Microsoft</Text>
+          )}
         </TouchableOpacity>
 
         <View style={{ height: 16 }} />

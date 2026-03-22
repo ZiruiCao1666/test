@@ -105,7 +105,10 @@ const isNewlyPublished = (assignment, nowTs) => {
 const partitionAssignments = (assignments, nowTs) => {
   const visibleItems = [];
   const collapsedItems = [];
-  const safeAssignments = Array.isArray(assignments) ? assignments : [];
+  const safeAssignments = [];
+  if (Array.isArray(assignments)) {
+    assignments.forEach((item) => safeAssignments.push(item));
+  }
   safeAssignments.forEach((assignment) => {
     if (isDueWithinWindow(assignment, nowTs) || isNewlyPublished(assignment, nowTs)) {
       visibleItems.push(assignment);
@@ -126,7 +129,10 @@ const getSubmissionOrderKey = (submission) => {
 };
 
 const pickLatestSubmissions = (submissions) => {
-  const safeSubmissions = Array.isArray(submissions) ? submissions : [];
+  const safeSubmissions = [];
+  if (Array.isArray(submissions)) {
+    submissions.forEach((item) => safeSubmissions.push(item));
+  }
   return safeSubmissions.reduce((acc, submission, index) => {
     const safeSubmission = submission || {};
     const assignment = safeSubmission.assignment || {};
@@ -245,6 +251,108 @@ const getCalendarDetailConfirmLabel = (item) => {
   const safeItem = item || {};
   if (safeItem.htmlUrl) return 'Open in Canvas';
   return 'Done';
+};
+
+const getStyleWhen = (condition, style) => {
+  if (condition) return style;
+  return null;
+};
+
+const renderNodeWhen = (condition, node) => {
+  if (!condition) return null;
+  return node;
+};
+
+const renderNodeWhenElse = (condition, trueNode, falseNode) => {
+  if (condition) return trueNode;
+  return falseNode;
+};
+
+const getTextWhen = (condition, trueText, falseText) => {
+  if (condition) return trueText;
+  return falseText;
+};
+
+const getCanvasConnectButtonText = (isConnected) => {
+  if (isConnected) return 'Resync Canvas';
+  return 'Connect Canvas';
+};
+
+const getCanvasStorageHelperText = (canPersistToBackend) => {
+  if (canPersistToBackend) {
+    return 'Token is saved to your backend account storage and auto-loaded when you open the app.';
+  }
+  return 'Backend token storage is unavailable. Set EXPO_PUBLIC_API_URL and sign in first.';
+};
+
+const getPreviewEyebrowText = (isConnected) => {
+  if (isConnected) return 'SYNCED CALENDAR';
+  return 'TASK PLANNER';
+};
+
+const getPreviewTitleText = (isConnected) => {
+  if (isConnected) return 'Canvas planner';
+  return 'Personal planner';
+};
+
+const getPreviewSubtitleText = (isConnected) => {
+  if (isConnected) {
+    return 'Calendar shows your schedule. Overview holds profile, grades, due soon, assignments, and your own tasks.';
+  }
+  return 'Calendar now shows your own tasks even without an active Canvas sync.';
+};
+
+const getNextUpcomingLabel = (nextUpcomingItem) => {
+  if (nextUpcomingItem && nextUpcomingItem.title) {
+    return `Next: ${nextUpcomingItem.title}`;
+  }
+  return 'Next: No synced task yet';
+};
+
+const getTaskSaveButtonText = (editingTaskId) => {
+  if (editingTaskId) return 'Save changes';
+  return 'Add task';
+};
+
+const getSubmissionStatusText = (submission) => {
+  const safeSubmission = submission || {};
+  let statusText = 'Not submitted';
+  if (safeSubmission.submitted_at) {
+    statusText = 'Submitted';
+  }
+  if (safeSubmission.late) {
+    statusText = `${statusText} (Late)`;
+  }
+  return statusText;
+};
+
+const getSubmissionDetailButtonText = (detailState) => {
+  const safeDetailState = detailState || {};
+  if (safeDetailState.loading) return 'Loading detail...';
+  if (safeDetailState.expanded) return 'Hide submission detail';
+  return 'View submission detail';
+};
+
+const getDetailFallbackText = (detailState) => {
+  const safeDetailState = detailState || {};
+  if (safeDetailState.loading) return 'Loading detail...';
+  return 'No detail loaded yet.';
+};
+
+const getCollapseAssignmentsText = (isExpanded, count) => {
+  if (isExpanded) return 'Collapse old or no-due assignments';
+  return `Show ${count} old or no-due assignments`;
+};
+
+const getTimePickerTitle = (activeTimeField) => {
+  if (activeTimeField === 'dueTime') return 'Choose due time';
+  if (activeTimeField === 'startTime') return 'Choose start time';
+  return 'Choose end time';
+};
+
+const getYesNoText = (value) => {
+  if (value) return 'Yes';
+  return 'No';
 };
 
 const buildAssignmentDetailKey = (courseId, assignmentId) =>
@@ -601,7 +709,10 @@ const PickerWheelColumn = ({
     const safeIndex = Math.max(0, Math.min(options.length - 1, index));
     const nextValue = options[safeIndex];
     if (nextValue !== value) onChange(nextValue);
-    const currentScrollRef = scrollRef && scrollRef.current ? scrollRef.current : null;
+    let currentScrollRef = null;
+    if (scrollRef && scrollRef.current) {
+      currentScrollRef = scrollRef.current;
+    }
     if (currentScrollRef && typeof currentScrollRef.scrollTo === 'function') {
       currentScrollRef.scrollTo({
         y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
@@ -642,7 +753,7 @@ const PickerWheelColumn = ({
                 <Text
                   style={[
                     styles.timeWheelItemText,
-                    active ? styles.timeWheelItemTextActive : null,
+                    getStyleWhen(active, styles.timeWheelItemTextActive),
                   ]}
                 >
                   {option}
@@ -671,30 +782,30 @@ const MiniCalendarPanel = ({
   return (
     <View style={styles.miniCalendarCard}>
       <View style={styles.miniCalendarTopRow}>
-        {onPressTitle ? (
+        {renderNodeWhenElse(onPressTitle, (
           <Pressable
             onPress={onPressTitle}
             style={({ pressed }) => [
               styles.miniCalendarTitleBtn,
-              pressed ? { opacity: 0.76 } : null,
+              getStyleWhen(pressed, { opacity: 0.76 }),
             ]}
           >
             <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {titleHint ? <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text> : null}
+            {renderNodeWhen(titleHint, <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>)}
           </Pressable>
-        ) : (
+        ), (
           <View style={styles.miniCalendarTitleBtn}>
             <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {titleHint ? <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text> : null}
+            {renderNodeWhen(titleHint, <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>)}
           </View>
-        )}
+        ))}
 
         <View style={styles.miniCalendarNavRow}>
           <Pressable
             onPress={() => onChangeMonth(-1)}
             style={({ pressed }) => [
               styles.miniCalendarNavBtn,
-              pressed ? { opacity: 0.7 } : null,
+              getStyleWhen(pressed, { opacity: 0.7 }),
             ]}
           >
             <Text style={styles.miniCalendarNavText}>{'<'}</Text>
@@ -703,7 +814,7 @@ const MiniCalendarPanel = ({
             onPress={() => onChangeMonth(1)}
             style={({ pressed }) => [
               styles.miniCalendarNavBtn,
-              pressed ? { opacity: 0.7 } : null,
+              getStyleWhen(pressed, { opacity: 0.7 }),
             ]}
           >
             <Text style={styles.miniCalendarNavText}>{'>'}</Text>
@@ -735,33 +846,33 @@ const MiniCalendarPanel = ({
               onPress={() => onSelectDate(day.date)}
               style={({ pressed }) => [
                 styles.miniCalendarCell,
-                !day.inCurrentMonth ? styles.miniCalendarCellMuted : null,
-                isSelected ? styles.miniCalendarCellSelected : null,
-                isToday ? styles.miniCalendarCellToday : null,
-                pressed ? { opacity: 0.82 } : null,
+                getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellMuted),
+                getStyleWhen(isSelected, styles.miniCalendarCellSelected),
+                getStyleWhen(isToday, styles.miniCalendarCellToday),
+                getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
               <Text
                 style={[
                   styles.miniCalendarCellText,
-                  !day.inCurrentMonth ? styles.miniCalendarCellTextMuted : null,
-                  isSelected ? styles.miniCalendarCellTextSelected : null,
+                  getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellTextMuted),
+                  getStyleWhen(isSelected, styles.miniCalendarCellTextSelected),
                 ]}
               >
                 {day.date.getDate()}
               </Text>
-              {markers.count > 0 ? (
+              {renderNodeWhen(markers.count > 0, (
                 <View style={styles.miniCalendarDotRow}>
-                  {markers.hasCanvas ? <View style={styles.miniCalendarDot} /> : null}
-                  {markers.hasCustom ? <View style={styles.miniCalendarDotCustom} /> : null}
+                  {renderNodeWhen(markers.hasCanvas, <View style={styles.miniCalendarDot} />)}
+                  {renderNodeWhen(markers.hasCustom, <View style={styles.miniCalendarDotCustom} />)}
                 </View>
-              ) : null}
+              ))}
             </Pressable>
           );
         })}
       </View>
 
-      {footerHint ? <Text style={styles.miniCalendarHint}>{footerHint}</Text> : null}
+      {renderNodeWhen(footerHint, <Text style={styles.miniCalendarHint}>{footerHint}</Text>)}
     </View>
   );
 };
@@ -778,11 +889,11 @@ const TaskSelectField = ({
       onPress={onPress}
       style={({ pressed }) => [
         styles.taskFieldSelect,
-        pressed ? { opacity: 0.82 } : null,
+        getStyleWhen(pressed, { opacity: 0.82 }),
       ]}
     >
       <Text style={styles.taskFieldSelectValue}>{value}</Text>
-      {hint ? <Text style={styles.taskFieldSelectHint}>{hint}</Text> : null}
+      {renderNodeWhen(hint, <Text style={styles.taskFieldSelectHint}>{hint}</Text>)}
     </Pressable>
   </View>
 );
@@ -811,26 +922,26 @@ const BottomSheetPicker = ({
       <View style={[styles.sheetCard, cardStyle]}>
         <View style={styles.sheetHandle} />
         <View style={styles.sheetActionRow}>
-          {leadingLabel && onLeadingPress ? (
+          {renderNodeWhenElse(leadingLabel && onLeadingPress, (
             <Pressable
               onPress={onLeadingPress}
               style={({ pressed }) => [
                 styles.sheetGhostAction,
-                pressed ? { opacity: 0.82 } : null,
+                getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
               <Text style={styles.sheetGhostActionText}>{leadingLabel}</Text>
             </Pressable>
-          ) : (
+          ), (
             <View style={styles.sheetActionSpacer} />
-          )}
+          ))}
 
           <View style={styles.sheetActionRight}>
             <Pressable
               onPress={onClose}
               style={({ pressed }) => [
                 styles.sheetGhostAction,
-                pressed ? { opacity: 0.82 } : null,
+                getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
               <Text style={styles.sheetGhostActionText}>{cancelLabel}</Text>
@@ -839,7 +950,7 @@ const BottomSheetPicker = ({
               onPress={onConfirm}
               style={({ pressed }) => [
                 styles.sheetPrimaryAction,
-                pressed ? { opacity: 0.82 } : null,
+                getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
               <Text style={styles.sheetPrimaryActionText}>{confirmLabel}</Text>
@@ -848,7 +959,7 @@ const BottomSheetPicker = ({
         </View>
 
         <Text style={styles.sheetTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.sheetSubtitle}>{subtitle}</Text> : null}
+        {renderNodeWhen(subtitle, <Text style={styles.sheetSubtitle}>{subtitle}</Text>)}
         {children}
       </View>
     </View>
@@ -864,14 +975,25 @@ const createEmptyTaskForm = (seedDate = new Date()) => ({
   endTime: '10:00',
 });
 
-const sortTasks = (items) =>
-  (Array.isArray(items) ? items : []).slice().sort((left, right) => {
+const sortTasks = (items) => {
+  let safeItems = [];
+  if (Array.isArray(items)) {
+    safeItems = items;
+  }
+  return safeItems.slice().sort((left, right) => {
     const leftDate = toSafeDate(buildTaskDateTimeIso(left));
     const rightDate = toSafeDate(buildTaskDateTimeIso(right));
-    const leftTs = leftDate ? leftDate.getTime() : Number.POSITIVE_INFINITY;
-    const rightTs = rightDate ? rightDate.getTime() : Number.POSITIVE_INFINITY;
+    let leftTs = Number.POSITIVE_INFINITY;
+    let rightTs = Number.POSITIVE_INFINITY;
+    if (leftDate) {
+      leftTs = leftDate.getTime();
+    }
+    if (rightDate) {
+      rightTs = rightDate.getTime();
+    }
     return leftTs - rightTs;
   });
+};
 
 export default function CalendarScreen() {
   const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
@@ -925,7 +1047,10 @@ export default function CalendarScreen() {
   const hasPlannerContent = isConnected || customTasks.length > 0;
   const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
   const monthYearOptions = useMemo(() => {
-    const centerYear = Number(monthYearDraft ? monthYearDraft.year : '') || new Date().getFullYear();
+    let centerYear = new Date().getFullYear();
+    if (monthYearDraft) {
+      centerYear = Number(monthYearDraft.year) || new Date().getFullYear();
+    }
     return Array.from({ length: 9 }, (_, index) => centerYear - 4 + index);
   }, [monthYearDraft]);
 
@@ -938,7 +1063,10 @@ export default function CalendarScreen() {
 
     const syncWheelPosition = (ref, options, nextValue) => {
       const index = Math.max(0, options.indexOf(nextValue));
-      const currentRef = ref && ref.current ? ref.current : null;
+      let currentRef = null;
+      if (ref && ref.current) {
+        currentRef = ref.current;
+      }
       if (currentRef && typeof currentRef.scrollTo === 'function') {
         currentRef.scrollTo({
           y: index * TIME_WHEEL_ITEM_HEIGHT,
@@ -960,7 +1088,10 @@ export default function CalendarScreen() {
     // Clerk session token may be briefly unavailable right after sign-in, so retry a few times.
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const getToken = getTokenRef.current;
-      const token = typeof getToken === 'function' ? await getToken() : '';
+      let token = '';
+      if (typeof getToken === 'function') {
+        token = await getToken();
+      }
       if (token) return token;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
@@ -1072,11 +1203,11 @@ export default function CalendarScreen() {
           };
           setError('');
         } catch (saveError) {
-          setError(
-            saveError instanceof Error
-              ? `Failed to save token to backend: ${saveError.message}`
-              : 'Failed to save token to backend.'
-          );
+          if (saveError instanceof Error) {
+            setError(`Failed to save token to backend: ${saveError.message}`);
+          } else {
+            setError('Failed to save token to backend.');
+          }
         }
       })();
     }, SAVE_DEBOUNCE_MS);
@@ -1106,7 +1237,10 @@ export default function CalendarScreen() {
       if (!response.ok) {
         throw new Error(getApiErrorMessage(data, `Failed to load tasks (HTTP ${response.status})`));
       }
-      const items = Array.isArray(data.items) ? data.items : [];
+      let items = [];
+      if (Array.isArray(data.items)) {
+        items = data.items;
+      }
       setCustomTasks(sortTasks(items.map((item) => normalizeCustomTask(item, selectedDate))));
       setTasksError('');
     } catch (taskLoadError) {
@@ -1297,16 +1431,17 @@ export default function CalendarScreen() {
         },
       }));
     } catch (detailError) {
+      let detailErrorMessage = 'Failed to load submission detail.';
+      if (detailError instanceof Error) {
+        detailErrorMessage = detailError.message;
+      }
       setSubmissionDetailsByAssignment((prev) => ({
         ...prev,
         [detailKey]: {
           ...prev[detailKey],
           expanded: true,
           loading: false,
-          error:
-            detailError instanceof Error
-              ? detailError.message
-              : 'Failed to load submission detail.',
+          error: detailErrorMessage,
         },
       }));
     }
@@ -1326,11 +1461,11 @@ export default function CalendarScreen() {
           token: tokenInput.trim(),
         };
       } catch (persistError) {
-        setError(
-          persistError instanceof Error
-            ? `Cannot save token before sync: ${persistError.message}`
-            : 'Cannot save token before sync.'
-        );
+        if (persistError instanceof Error) {
+          setError(`Cannot save token before sync: ${persistError.message}`);
+        } else {
+          setError('Cannot save token before sync.');
+        }
         return;
       }
     }
@@ -1347,8 +1482,14 @@ export default function CalendarScreen() {
         fetchCanvasPaged(`/api/v1/users/self/upcoming_events?per_page=${PAGE_SIZE}`),
       ]);
 
-      const safeCourses = Array.isArray(coursesData) ? coursesData : [];
-      const safeEvents = Array.isArray(eventsData) ? eventsData : [];
+      let safeCourses = [];
+      let safeEvents = [];
+      if (Array.isArray(coursesData)) {
+        safeCourses = coursesData;
+      }
+      if (Array.isArray(eventsData)) {
+        safeEvents = eventsData;
+      }
 
       const perCoursePayload = await Promise.all(
         safeCourses.map(async (course) => {
@@ -1364,11 +1505,24 @@ export default function CalendarScreen() {
               ),
             ]);
 
+            let safeEnrollments = [];
+            if (Array.isArray(enrollmentList)) {
+              safeEnrollments = enrollmentList;
+            }
+            let safeAssignments = [];
+            if (Array.isArray(assignmentList)) {
+              safeAssignments = assignmentList;
+            }
+            let safeSubmissions = [];
+            if (Array.isArray(submissionList)) {
+              safeSubmissions = submissionList;
+            }
+
             return {
               courseId,
-              enrollments: Array.isArray(enrollmentList) ? enrollmentList : [],
-              assignments: Array.isArray(assignmentList) ? assignmentList : [],
-              submissions: Array.isArray(submissionList) ? submissionList : [],
+              enrollments: safeEnrollments,
+              assignments: safeAssignments,
+              submissions: safeSubmissions,
             };
           } catch (courseError) {
             return {
@@ -1401,6 +1555,14 @@ export default function CalendarScreen() {
         const assignmentCount = sortedAssignments.length;
         const submittedCount = latestSubmissions.filter((item) => isSubmissionSubmitted(item)).length;
         const onTimeCount = latestSubmissions.filter((item) => isSubmissionOnTime(item)).length;
+        let completionRate = null;
+        if (assignmentCount > 0) {
+          completionRate = submittedCount / assignmentCount;
+        }
+        let onTimeRate = null;
+        if (submittedCount > 0) {
+          onTimeRate = onTimeCount / submittedCount;
+        }
 
         submissionsMap[courseId] = {
           items: latestSubmissions,
@@ -1408,8 +1570,8 @@ export default function CalendarScreen() {
           summary: {
             assignmentCount,
             submittedCount,
-            completionRate: assignmentCount ? submittedCount / assignmentCount : null,
-            onTimeRate: submittedCount ? onTimeCount / submittedCount : null,
+            completionRate,
+            onTimeRate,
           },
         };
       });
@@ -1445,11 +1607,11 @@ export default function CalendarScreen() {
         month: today.getMonth(),
       });
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? `Connection failed: ${err.message}`
-          : 'Connection failed. Check network and token.'
-      );
+      if (err instanceof Error) {
+        setError(`Connection failed: ${err.message}`);
+      } else {
+        setError('Connection failed. Check network and token.');
+      }
     } finally {
       setLoading(false);
     }
@@ -1500,7 +1662,10 @@ export default function CalendarScreen() {
       endTime: '10:00',
     };
     setActiveTimeField(field);
-    const currentValue = taskForm && field ? taskForm[field] : '';
+    let currentValue = '';
+    if (taskForm && field) {
+      currentValue = taskForm[field];
+    }
     setTimeDraft(parseTimeDraft(currentValue || defaults[field] || '18:00'));
     setTimePickerVisible(true);
   };
@@ -1568,10 +1733,18 @@ export default function CalendarScreen() {
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
+    let requestUrl = `${API_BASE_URL}/tasks`;
+    if (taskId) {
+      requestUrl = `${API_BASE_URL}/tasks/${String(taskId)}`;
+    }
+    let requestMethod = 'POST';
+    if (taskId) {
+      requestMethod = 'PUT';
+    }
     const response = await fetch(
-      `${API_BASE_URL}/tasks${taskId ? `/${String(taskId)}` : ''}`,
+      requestUrl,
       {
-        method: taskId ? 'PUT' : 'POST',
+        method: requestMethod,
         headers: {
           Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
@@ -1596,17 +1769,24 @@ export default function CalendarScreen() {
       setTaskSaving(true);
       const payload = buildTaskPayload();
       const existingTask = customTasks.find((item) => String(item.id) === String(editingTaskId));
+      let existingTaskCompleted = false;
+      if (existingTask) {
+        existingTaskCompleted = existingTask.isCompleted;
+      }
       const savedTask = await saveTaskToBackend(editingTaskId, {
         ...payload,
-        isCompleted: existingTask ? existingTask.isCompleted : false,
+        isCompleted: existingTaskCompleted,
       });
-      const normalizedSavedTask = savedTask ? normalizeCustomTask(savedTask, selectedDate) : null;
+      let normalizedSavedTask = null;
+      if (savedTask) {
+        normalizedSavedTask = normalizeCustomTask(savedTask, selectedDate);
+      }
       await fetchCustomTasks({ silent: true });
       setTasksError('');
-      const resetDate =
-        normalizedSavedTask && normalizedSavedTask.taskDate
-          ? parseDateInput(normalizedSavedTask.taskDate) || selectedDate
-          : selectedDate;
+      let resetDate = selectedDate;
+      if (normalizedSavedTask && normalizedSavedTask.taskDate) {
+        resetDate = parseDateInput(normalizedSavedTask.taskDate) || selectedDate;
+      }
       resetTaskComposer(
         resetDate
       );
@@ -1617,9 +1797,11 @@ export default function CalendarScreen() {
         if (nextSelectedDate) setSelectedDate(nextSelectedDate);
       }
     } catch (taskSaveError) {
-      setTasksError(
-        taskSaveError instanceof Error ? taskSaveError.message : 'Failed to save task.'
-      );
+      if (taskSaveError instanceof Error) {
+        setTasksError(taskSaveError.message);
+      } else {
+        setTasksError('Failed to save task.');
+      }
     } finally {
       setTaskSaving(false);
     }
@@ -1643,10 +1825,14 @@ export default function CalendarScreen() {
   const handleToggleTaskCompletion = async (task) => {
     try {
       const safeTask = task || {};
+      let timingMode = 'deadline';
+      if (safeTask.timingMode === 'range') {
+        timingMode = 'range';
+      }
       const payload = {
         title: String(safeTask.title || '').trim(),
         taskDate: String(safeTask.taskDate || '').trim(),
-        timingMode: safeTask.timingMode === 'range' ? 'range' : 'deadline',
+        timingMode,
         dueTime: String(safeTask.dueTime || '').trim(),
         startTime: String(safeTask.startTime || '').trim(),
         endTime: String(safeTask.endTime || '').trim(),
@@ -1656,7 +1842,11 @@ export default function CalendarScreen() {
       await fetchCustomTasks({ silent: true });
       setTasksError('');
     } catch (toggleError) {
-      setTasksError(toggleError instanceof Error ? toggleError.message : 'Failed to update task.');
+      if (toggleError instanceof Error) {
+        setTasksError(toggleError.message);
+      } else {
+        setTasksError('Failed to update task.');
+      }
     }
   };
 
@@ -1684,9 +1874,11 @@ export default function CalendarScreen() {
       }
       setTasksError('');
     } catch (deleteError) {
-      setTasksError(
-        deleteError instanceof Error ? deleteError.message : 'Failed to delete task.'
-      );
+      if (deleteError instanceof Error) {
+        setTasksError(deleteError.message);
+      } else {
+        setTasksError('Failed to delete task.');
+      }
     } finally {
       setTaskDeletingId('');
     }
@@ -1736,13 +1928,20 @@ export default function CalendarScreen() {
       const courseName = safeCourse.name || safeCourse.course_code || 'Untitled course';
       const assignmentEntry = assignmentsByCourse[courseId] || {};
       const submissionEntry = submissionsByCourse[courseId] || {};
-      const assignments = Array.isArray(assignmentEntry.items) ? assignmentEntry.items : [];
+      let assignments = [];
+      if (Array.isArray(assignmentEntry.items)) {
+        assignments = assignmentEntry.items;
+      }
       const submissionLookup = submissionEntry.byAssignment || {};
 
       assignments.forEach((assignment) => {
         const safeAssignment = assignment || {};
         const submission = submissionLookup[String(safeAssignment.id)] || null;
         const safeSubmission = submission || {};
+        let submissionStatus = 'To do';
+        if (safeSubmission.submitted_at) {
+          submissionStatus = 'Submitted';
+        }
         pushItem({
           id: `assignment-${courseId}-${String(safeAssignment.id || '')}`,
           title: safeAssignment.name || 'Untitled assignment',
@@ -1751,7 +1950,7 @@ export default function CalendarScreen() {
           courseId,
           assignmentId: String(safeAssignment.id || ''),
           type: 'assignment',
-          status: safeSubmission.submitted_at ? 'Submitted' : 'To do',
+          status: submissionStatus,
           htmlUrl: safeAssignment.html_url || '',
           date: safeAssignment.due_at,
           accent: pickPreviewAccent(courseId || courseName),
@@ -1765,14 +1964,26 @@ export default function CalendarScreen() {
 
     customTasks.forEach((task) => {
       const safeTask = task || {};
+      let taskType = 'deadline';
+      if (safeTask.timingMode === 'range') {
+        taskType = 'time range';
+      }
+      let taskStatus = 'To do';
+      if (safeTask.isCompleted) {
+        taskStatus = 'Completed';
+      }
+      let normalizedTimingMode = 'deadline';
+      if (safeTask.timingMode === 'range') {
+        normalizedTimingMode = 'range';
+      }
       pushItem({
         id: `custom-task-${String(safeTask.id || '')}`,
         title: safeTask.title || 'Untitled task',
         course: 'My task',
         source: 'customTask',
         taskId: String(safeTask.id || ''),
-        type: safeTask.timingMode === 'range' ? 'time range' : 'deadline',
-        status: safeTask.isCompleted ? 'Completed' : 'To do',
+        type: taskType,
+        status: taskStatus,
         htmlUrl: '',
         date: buildTaskDateTimeIso(safeTask),
         accent: pickPreviewAccent(`custom-${safeTask.timingMode || 'deadline'}`),
@@ -1781,7 +1992,7 @@ export default function CalendarScreen() {
         dueTime: String(safeTask.dueTime || ''),
         startTime: String(safeTask.startTime || ''),
         endTime: String(safeTask.endTime || ''),
-        timingMode: safeTask.timingMode === 'range' ? 'range' : 'deadline',
+        timingMode: normalizedTimingMode,
       });
     });
 
@@ -1866,34 +2077,44 @@ export default function CalendarScreen() {
   }, [calendarFeed]);
 
   const safeSelectedCalendarItem = selectedCalendarItem || null;
-  const selectedCalendarDetailKey =
+  let selectedCalendarDetailKey = '';
+  if (
     safeSelectedCalendarItem &&
     safeSelectedCalendarItem.source === 'assignment' &&
     safeSelectedCalendarItem.courseId &&
     safeSelectedCalendarItem.assignmentId
-      ? buildAssignmentDetailKey(
-          safeSelectedCalendarItem.courseId,
-          safeSelectedCalendarItem.assignmentId
-        )
-      : '';
-  const selectedCalendarDetailState = selectedCalendarDetailKey
-    ? submissionDetailsByAssignment[selectedCalendarDetailKey] || {}
-    : {};
+  ) {
+    selectedCalendarDetailKey = buildAssignmentDetailKey(
+      safeSelectedCalendarItem.courseId,
+      safeSelectedCalendarItem.assignmentId
+    );
+  }
+  let selectedCalendarDetailState = {};
+  if (selectedCalendarDetailKey) {
+    selectedCalendarDetailState = submissionDetailsByAssignment[selectedCalendarDetailKey] || {};
+  }
   const selectedCalendarDetailData = selectedCalendarDetailState.data || null;
   const selectedCalendarTeacherComments = useMemo(() => {
     if (!selectedCalendarDetailData) return [];
-    const detailComments = Array.isArray(selectedCalendarDetailData.submission_comments)
-      ? selectedCalendarDetailData.submission_comments
-      : [];
+    let detailComments = [];
+    if (Array.isArray(selectedCalendarDetailData.submission_comments)) {
+      detailComments = selectedCalendarDetailData.submission_comments;
+    }
     const safeProfile = profile || {};
-    const currentUserId =
-      safeProfile.id === null || safeProfile.id === undefined ? '' : String(safeProfile.id);
+    let currentUserId = '';
+    if (safeProfile.id !== null && safeProfile.id !== undefined) {
+      currentUserId = String(safeProfile.id);
+    }
     return detailComments.filter(
       (comment) => {
         const safeComment = comment || {};
+        let authorId = '';
+        if (safeComment.author_id !== undefined) {
+          authorId = safeComment.author_id;
+        }
         return (
           !currentUserId ||
-          String(safeComment.author_id === undefined ? '' : safeComment.author_id) !== currentUserId
+          String(authorId) !== currentUserId
         );
       }
     );
@@ -1915,8 +2136,14 @@ export default function CalendarScreen() {
   };
   const showTaskSection = selectedPanel === 'overview';
   const safeProfile = profile || {};
-  const currentProfileId =
-    safeProfile.id === null || safeProfile.id === undefined ? '' : String(safeProfile.id);
+  let currentProfileId = '';
+  if (safeProfile.id !== null && safeProfile.id !== undefined) {
+    currentProfileId = String(safeProfile.id);
+  }
+  let selectedCalendarDetailSubtitle = '';
+  if (safeSelectedCalendarItem) {
+    selectedCalendarDetailSubtitle = formatDateTime(safeSelectedCalendarItem.date);
+  }
 
   const openCalendarItemDetail = async (item) => {
     const safeItem = item || null;
@@ -1958,15 +2185,16 @@ export default function CalendarScreen() {
         },
       }));
     } catch (detailError) {
+      let detailErrorMessage = 'Failed to load submission detail.';
+      if (detailError instanceof Error) {
+        detailErrorMessage = detailError.message;
+      }
       setSubmissionDetailsByAssignment((prev) => ({
         ...prev,
         [detailKey]: {
           ...prev[detailKey],
           loading: false,
-          error:
-            detailError instanceof Error
-              ? detailError.message
-              : 'Failed to load submission detail.',
+          error: detailErrorMessage,
         },
       }));
     }
@@ -2018,23 +2246,23 @@ export default function CalendarScreen() {
               disabled={loading}
               style={({ pressed }) => [
                 styles.primaryBtn,
-                pressed ? { opacity: 0.7 } : null,
+                getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              {loading ? (
+              {renderNodeWhenElse(loading, (
                 <ActivityIndicator color="#fff" />
-              ) : (
+              ), (
                 <Text style={styles.primaryBtnText}>
-                  {isConnected ? 'Resync Canvas' : 'Connect Canvas'}
+                  {getCanvasConnectButtonText(isConnected)}
                 </Text>
-              )}
+              ))}
             </Pressable>
 
             <Pressable
               onPress={handleClear}
               style={({ pressed }) => [
                 styles.ghostBtn,
-                pressed ? { opacity: 0.7 } : null,
+                getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
               <Text style={styles.ghostBtnText}>Clear</Text>
@@ -2042,34 +2270,30 @@ export default function CalendarScreen() {
           </View>
 
           <Text style={styles.helper}>
-            {canPersistToBackend
-              ? 'Token is saved to your backend account storage and auto-loaded when you open the app.'
-              : 'Backend token storage is unavailable. Set EXPO_PUBLIC_API_URL and sign in first.'}
+            {getCanvasStorageHelperText(canPersistToBackend)}
           </Text>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          {lastSyncAt ? (
+          {renderNodeWhen(error, <Text style={styles.error}>{error}</Text>)}
+          {renderNodeWhen(lastSyncAt, (
             <Text style={styles.sync}>
               Last sync:
               {' '}
               {lastSyncAt.toLocaleString()}
             </Text>
-          ) : null}
+          ))}
         </View>
 
-        {hasPlannerContent ? (
+        {renderNodeWhen(hasPlannerContent, (
           <View style={styles.previewSection}>
             <View style={styles.previewHeaderRow}>
               <View style={styles.previewHeaderTextWrap}>
                 <Text style={styles.previewEyebrow}>
-                  {isConnected ? 'SYNCED CALENDAR' : 'TASK PLANNER'}
+                  {getPreviewEyebrowText(isConnected)}
                 </Text>
                 <Text style={styles.previewTitle}>
-                  {isConnected ? 'Canvas planner' : 'Personal planner'}
+                  {getPreviewTitleText(isConnected)}
                 </Text>
                 <Text style={styles.previewSubtitle}>
-                  {isConnected
-                    ? 'Calendar shows your schedule. Overview holds profile, grades, due soon, assignments, and your own tasks.'
-                    : 'Calendar now shows your own tasks even without an active Canvas sync.'}
+                  {getPreviewSubtitleText(isConnected)}
                 </Text>
               </View>
 
@@ -2078,14 +2302,14 @@ export default function CalendarScreen() {
                   onPress={() => setSelectedPanel('calendar')}
                   style={({ pressed }) => [
                     styles.previewTab,
-                    selectedPanel === 'calendar' ? styles.previewTabActive : null,
-                    pressed ? { opacity: 0.85 } : null,
+                    getStyleWhen(selectedPanel === 'calendar', styles.previewTabActive),
+                    getStyleWhen(pressed, { opacity: 0.85 }),
                   ]}
                 >
                   <Text
                     style={[
                       styles.previewTabText,
-                      selectedPanel === 'calendar' ? styles.previewTabActiveText : null,
+                      getStyleWhen(selectedPanel === 'calendar', styles.previewTabActiveText),
                     ]}
                   >
                     calendar
@@ -2095,14 +2319,14 @@ export default function CalendarScreen() {
                   onPress={() => setSelectedPanel('overview')}
                   style={({ pressed }) => [
                     styles.previewTab,
-                    selectedPanel === 'overview' ? styles.previewTabActive : null,
-                    pressed ? { opacity: 0.85 } : null,
+                    getStyleWhen(selectedPanel === 'overview', styles.previewTabActive),
+                    getStyleWhen(pressed, { opacity: 0.85 }),
                   ]}
                 >
                   <Text
                     style={[
                       styles.previewTabText,
-                      selectedPanel === 'overview' ? styles.previewTabActiveText : null,
+                      getStyleWhen(selectedPanel === 'overview', styles.previewTabActiveText),
                     ]}
                   >
                     overview
@@ -2111,16 +2335,14 @@ export default function CalendarScreen() {
               </View>
             </View>
 
-            {selectedPanel === 'calendar' ? (
+            {renderNodeWhen(selectedPanel === 'calendar', (
               <>
                 <View style={styles.previewFocusRow}>
                   <View style={styles.focusTodayCard}>
                     <Text style={styles.focusTodayLabel}>TODAY</Text>
                     <Text style={styles.focusTodayDate}>{formatDayMonth(new Date())}</Text>
                     <Text style={styles.focusTodayMeta}>
-                      {nextUpcomingItem
-                        ? `Next: ${nextUpcomingItem.title}`
-                        : 'Next: No synced task yet'}
+                      {getNextUpcomingLabel(nextUpcomingItem)}
                     </Text>
                   </View>
 
@@ -2146,7 +2368,7 @@ export default function CalendarScreen() {
                     onPress={() => changeCalendarWindow(-1)}
                     style={({ pressed }) => [
                       styles.plannerArrowBtn,
-                      pressed ? { opacity: 0.7 } : null,
+                      getStyleWhen(pressed, { opacity: 0.7 }),
                     ]}
                   >
                     <Text style={styles.plannerArrowText}>{'<'}</Text>
@@ -2155,7 +2377,7 @@ export default function CalendarScreen() {
                     onPress={() => setSelectedDate(new Date())}
                     style={({ pressed }) => [
                       styles.plannerTodayBtn,
-                      pressed ? { opacity: 0.85 } : null,
+                      getStyleWhen(pressed, { opacity: 0.85 }),
                     ]}
                   >
                     <Text style={styles.plannerTodayBtnText}>Today</Text>
@@ -2164,7 +2386,7 @@ export default function CalendarScreen() {
                     onPress={() => changeCalendarWindow(1)}
                     style={({ pressed }) => [
                       styles.plannerArrowBtn,
-                      pressed ? { opacity: 0.7 } : null,
+                      getStyleWhen(pressed, { opacity: 0.7 }),
                     ]}
                   >
                     <Text style={styles.plannerArrowText}>{'>'}</Text>
@@ -2180,14 +2402,14 @@ export default function CalendarScreen() {
                         onPress={() => setSelectedView(viewKey)}
                         style={({ pressed }) => [
                           styles.plannerViewBtn,
-                          active ? styles.plannerViewBtnActive : null,
-                          pressed ? { opacity: 0.82 } : null,
+                          getStyleWhen(active, styles.plannerViewBtnActive),
+                          getStyleWhen(pressed, { opacity: 0.82 }),
                         ]}
                       >
                         <Text
                           style={[
                             styles.plannerViewBtnText,
-                            active ? styles.plannerViewBtnTextActive : null,
+                            getStyleWhen(active, styles.plannerViewBtnTextActive),
                           ]}
                         >
                           {viewKey}
@@ -2198,18 +2420,18 @@ export default function CalendarScreen() {
                 </View>
               </View>
 
-              {selectedView === 'day' ? (
+              {renderNodeWhen(selectedView === 'day', (
                 <View style={styles.agendaList}>
-                  {selectedDayItems.length === 0 ? (
+                  {renderNodeWhenElse(selectedDayItems.length === 0, (
                     <Text style={styles.empty}>No synced tasks on this day.</Text>
-                  ) : (
+                  ), (
                     selectedDayItems.map((item, index) => (
                       <Pressable
                         key={`${item.id}-day-${index}`}
                         onPress={() => openCalendarItemDetail(item)}
                         style={({ pressed }) => [
                           styles.agendaCard,
-                          pressed ? { opacity: 0.8 } : null,
+                          getStyleWhen(pressed, { opacity: 0.8 }),
                         ]}
                       >
                         <View
@@ -2227,11 +2449,11 @@ export default function CalendarScreen() {
                         </View>
                       </Pressable>
                     ))
-                  )}
+                  ))}
                 </View>
-              ) : null}
+              ))}
 
-              {selectedView === 'week' ? (
+              {renderNodeWhen(selectedView === 'week', (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View>
                     <View style={styles.weekHeaderRow}>
@@ -2244,13 +2466,13 @@ export default function CalendarScreen() {
                             onPress={() => setSelectedDate(day)}
                             style={[
                               styles.weekDayHeader,
-                              active ? styles.weekDayHeaderActive : null,
+                              getStyleWhen(active, styles.weekDayHeaderActive),
                             ]}
                           >
                             <Text
                               style={[
                                 styles.weekDayName,
-                                active ? styles.weekDayNameActive : null,
+                                getStyleWhen(active, styles.weekDayNameActive),
                               ]}
                             >
                               {formatWeekday(day)}
@@ -2258,7 +2480,7 @@ export default function CalendarScreen() {
                             <Text
                               style={[
                                 styles.weekDayNumber,
-                                active ? styles.weekDayNumberActive : null,
+                                getStyleWhen(active, styles.weekDayNumberActive),
                               ]}
                             >
                               {day.getDate()}
@@ -2282,8 +2504,8 @@ export default function CalendarScreen() {
                               onPress={() => setSelectedDate(day)}
                               style={[
                                 styles.weekGridCell,
-                                isSameDay(day, selectedDate) ? styles.weekGridCellSelected : null,
-                                isSameDay(day, new Date()) ? styles.weekGridCellToday : null,
+                                getStyleWhen(isSameDay(day, selectedDate), styles.weekGridCellSelected),
+                                getStyleWhen(isSameDay(day, new Date()), styles.weekGridCellToday),
                               ]}
                             >
                               {cellItems.slice(0, 2).map((item, itemIndex) => (
@@ -2296,7 +2518,7 @@ export default function CalendarScreen() {
                                       backgroundColor: getAccentColor(item, 'bg', '#eff6ff'),
                                       borderLeftColor: getAccentColor(item, 'border', '#60a5fa'),
                                     },
-                                    pressed ? { opacity: 0.8 } : null,
+                                    getStyleWhen(pressed, { opacity: 0.8 }),
                                   ]}
                                 >
                                   <Text
@@ -2312,9 +2534,10 @@ export default function CalendarScreen() {
                                   </Text>
                                 </Pressable>
                               ))}
-                              {cellItems.length > 2 ? (
+                              {renderNodeWhen(
+                                cellItems.length > 2,
                                 <Text style={styles.weekMoreText}>+{cellItems.length - 2} more</Text>
-                              ) : null}
+                              )}
                             </Pressable>
                           );
                         })}
@@ -2322,20 +2545,20 @@ export default function CalendarScreen() {
                     ))}
                   </View>
                 </ScrollView>
-              ) : null}
+              ))}
 
-              {selectedView === 'month' ? (
+              {renderNodeWhen(selectedView === 'month', (
                 <View style={styles.agendaList}>
-                  {monthItems.length === 0 ? (
+                  {renderNodeWhenElse(monthItems.length === 0, (
                     <Text style={styles.empty}>No synced tasks in this month.</Text>
-                  ) : (
+                  ), (
                     monthItems.slice(0, 12).map((item, index) => (
                       <Pressable
                         key={`${item.id}-month-${index}`}
                         onPress={() => openCalendarItemDetail(item)}
                         style={({ pressed }) => [
                           styles.agendaCard,
-                          pressed ? { opacity: 0.8 } : null,
+                          getStyleWhen(pressed, { opacity: 0.8 }),
                         ]}
                       >
                         <View
@@ -2355,16 +2578,16 @@ export default function CalendarScreen() {
                         </View>
                       </Pressable>
                     ))
-                  )}
+                  ))}
                 </View>
-              ) : null}
+              ))}
             </View>
           </>
-        ) : null}
+        ))}
           </View>
-        ) : null}
+        ))}
 
-        {showTaskSection ? (
+        {renderNodeWhen(showTaskSection, (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>My Tasks</Text>
             <View style={styles.taskComposerCard}>
@@ -2388,14 +2611,14 @@ export default function CalendarScreen() {
                       onPress={() => handleTaskFieldChange('timingMode', mode.id)}
                       style={({ pressed }) => [
                         styles.taskModeChip,
-                        active ? styles.taskModeChipActive : null,
-                        pressed ? { opacity: 0.82 } : null,
+                        getStyleWhen(active, styles.taskModeChipActive),
+                        getStyleWhen(pressed, { opacity: 0.82 }),
                       ]}
                     >
                       <Text
                         style={[
                           styles.taskModeChipText,
-                          active ? styles.taskModeChipTextActive : null,
+                          getStyleWhen(active, styles.taskModeChipTextActive),
                         ]}
                       >
                         {mode.label}
@@ -2413,14 +2636,14 @@ export default function CalendarScreen() {
                   onPress={openTaskDatePicker}
                 />
 
-                {taskForm.timingMode === 'deadline' ? (
+                {renderNodeWhenElse(taskForm.timingMode === 'deadline', (
                   <TaskSelectField
                     label="Due time"
                     value={formatTimeOnly(taskForm.dueTime)}
                     hint="00 • 15 • 30 • 45"
                     onPress={() => openTimePicker('dueTime')}
                   />
-                ) : (
+                ), (
                   <>
                     <TaskSelectField
                       label="Start"
@@ -2435,7 +2658,7 @@ export default function CalendarScreen() {
                       onPress={() => openTimePicker('endTime')}
                     />
                   </>
-                )}
+                ))}
               </View>
 
               <View style={styles.taskComposerActions}>
@@ -2444,42 +2667,42 @@ export default function CalendarScreen() {
                   disabled={taskSaving}
                   style={({ pressed }) => [
                     styles.taskSaveBtn,
-                    taskSaving ? { opacity: 0.6 } : null,
-                    pressed ? { opacity: 0.82 } : null,
+                    getStyleWhen(taskSaving, { opacity: 0.6 }),
+                    getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
-                  {taskSaving ? (
+                  {renderNodeWhenElse(taskSaving, (
                     <ActivityIndicator color="#fff" size="small" />
-                  ) : (
+                  ), (
                     <Text style={styles.taskSaveBtnText}>
-                      {editingTaskId ? 'Save changes' : 'Add task'}
+                      {getTaskSaveButtonText(editingTaskId)}
                     </Text>
-                  )}
+                  ))}
                 </Pressable>
 
-                {editingTaskId ? (
+                {renderNodeWhen(editingTaskId, (
                   <Pressable
                     onPress={() => resetTaskComposer(selectedDate)}
                     style={({ pressed }) => [
                       styles.taskCancelBtn,
-                      pressed ? { opacity: 0.82 } : null,
+                      getStyleWhen(pressed, { opacity: 0.82 }),
                     ]}
                   >
                     <Text style={styles.taskCancelBtnText}>Cancel</Text>
                   </Pressable>
-                ) : null}
+                ))}
               </View>
 
-              {tasksError ? <Text style={styles.taskErrorText}>{tasksError}</Text> : null}
+              {renderNodeWhen(tasksError, <Text style={styles.taskErrorText}>{tasksError}</Text>)}
             </View>
 
-            {tasksLoading ? (
+            {renderNodeWhenElse(tasksLoading, (
               <View style={styles.taskLoadingWrap}>
                 <ActivityIndicator />
               </View>
-            ) : customTasks.length === 0 ? (
+            ), renderNodeWhenElse(customTasks.length === 0, (
               <Text style={styles.empty}>No custom tasks yet.</Text>
-            ) : (
+            ), (
               <View style={styles.taskList}>
                 {customTasks.map((task) => {
                   const isDeleting = taskDeletingId === String(task.id);
@@ -2489,17 +2712,17 @@ export default function CalendarScreen() {
                         onPress={() => handleToggleTaskCompletion(task)}
                         style={({ pressed }) => [
                           styles.taskCheckBtn,
-                          task.isCompleted ? styles.taskCheckBtnActive : null,
-                          pressed ? { opacity: 0.82 } : null,
+                          getStyleWhen(task.isCompleted, styles.taskCheckBtnActive),
+                          getStyleWhen(pressed, { opacity: 0.82 }),
                         ]}
                       >
                         <Text
                           style={[
                             styles.taskCheckBtnText,
-                            task.isCompleted ? styles.taskCheckBtnTextActive : null,
+                            getStyleWhen(task.isCompleted, styles.taskCheckBtnTextActive),
                           ]}
                         >
-                          {task.isCompleted ? '\u2713' : ''}
+                          {getTextWhen(task.isCompleted, '\u2713', '')}
                         </Text>
                       </Pressable>
 
@@ -2507,7 +2730,7 @@ export default function CalendarScreen() {
                         <Text
                           style={[
                             styles.taskItemTitle,
-                            task.isCompleted ? styles.taskItemTitleDone : null,
+                            getStyleWhen(task.isCompleted, styles.taskItemTitleDone),
                           ]}
                         >
                           {task.title}
@@ -2520,7 +2743,7 @@ export default function CalendarScreen() {
                           onPress={() => handleEditTask(task)}
                           style={({ pressed }) => [
                             styles.taskActionBtn,
-                            pressed ? { opacity: 0.82 } : null,
+                            getStyleWhen(pressed, { opacity: 0.82 }),
                           ]}
                         >
                           <Text style={styles.taskActionBtnText}>Edit</Text>
@@ -2530,12 +2753,12 @@ export default function CalendarScreen() {
                           disabled={isDeleting}
                           style={({ pressed }) => [
                             styles.taskActionBtn,
-                            isDeleting ? { opacity: 0.6 } : null,
-                            pressed ? { opacity: 0.82 } : null,
+                            getStyleWhen(isDeleting, { opacity: 0.6 }),
+                            getStyleWhen(pressed, { opacity: 0.82 }),
                           ]}
                         >
                           <Text style={styles.taskDeleteBtnText}>
-                            {isDeleting ? '...' : 'Delete'}
+                            {getTextWhen(isDeleting, '...', 'Delete')}
                           </Text>
                         </Pressable>
                       </View>
@@ -2543,42 +2766,42 @@ export default function CalendarScreen() {
                   );
                 })}
               </View>
-            )}
+            )))}
           </View>
-        ) : null}
+        ))}
 
-        {isConnected && selectedPanel === 'overview' ? (
+        {renderNodeWhen(isConnected && selectedPanel === 'overview', (
           <>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Profile</Text>
-          {!profile ? (
+          {renderNodeWhenElse(!profile, (
             <Text style={styles.empty}>No profile synced yet.</Text>
-          ) : (
+          ), (
             <View style={styles.profileCard}>
               <Text style={styles.profileName}>{safeProfile.name || 'Unknown user'}</Text>
-              {safeProfile.primary_email || safeProfile.login_id ? (
+              {renderNodeWhen(safeProfile.primary_email || safeProfile.login_id, (
                 <Text style={styles.profileMeta}>
                   Email/Login:
                   {' '}
                   {safeProfile.primary_email || safeProfile.login_id}
                 </Text>
-              ) : null}
-              {safeProfile.time_zone ? (
+              ))}
+              {renderNodeWhen(safeProfile.time_zone, (
                 <Text style={styles.profileMeta}>
                   Time zone:
                   {' '}
                   {safeProfile.time_zone}
                 </Text>
-              ) : null}
+              ))}
             </View>
-          )}
+          ))}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Course Grades</Text>
-          {courses.length === 0 ? (
+          {renderNodeWhenElse(courses.length === 0, (
             <Text style={styles.empty}>No courses synced.</Text>
-          ) : (
+          ), (
             <View style={styles.events}>
               {courses.map((course, courseIndex) => {
                 const safeCourse = course || {};
@@ -2601,29 +2824,29 @@ export default function CalendarScreen() {
                     <Text style={styles.gradeMeta}>Term: {termName}</Text>
                     <Text style={styles.gradeMeta}>Completion: {completionText}</Text>
                     <Text style={styles.gradeMeta}>On-time: {onTimeText}</Text>
-                    {grades.html_url ? (
+                    {renderNodeWhen(grades.html_url, (
                       <Pressable
                         onPress={() => openUrl(grades.html_url)}
                         style={({ pressed }) => [
                           styles.inlineLinkBtn,
-                          pressed ? { opacity: 0.7 } : null,
+                          getStyleWhen(pressed, { opacity: 0.7 }),
                         ]}
                       >
                         <Text style={styles.inlineLinkText}>Open grade page</Text>
                       </Pressable>
-                    ) : null}
+                    ))}
                   </View>
                 );
               })}
             </View>
-          )}
+          ))}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Due Soon</Text>
-          {events.length === 0 ? (
+          {renderNodeWhenElse(events.length === 0, (
             <Text style={styles.empty}>No upcoming events.</Text>
-          ) : (
+          ), (
             <View style={styles.events}>
               {events.map((event, eventIndex) => (
                 <Pressable
@@ -2631,8 +2854,8 @@ export default function CalendarScreen() {
                   onPress={() => openUrl(event.htmlUrl)}
                   style={({ pressed }) => [
                     styles.eventItem,
-                    event.htmlUrl ? styles.eventClickable : null,
-                    pressed ? { opacity: 0.7 } : null,
+                    getStyleWhen(event.htmlUrl, styles.eventClickable),
+                    getStyleWhen(pressed, { opacity: 0.7 }),
                   ]}
                 >
                   <View style={styles.eventTag}>
@@ -2640,51 +2863,53 @@ export default function CalendarScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.eventTitle}>{event.title}</Text>
-                    {event.course ? <Text style={styles.eventCourse}>{event.course}</Text> : null}
+                    {renderNodeWhen(event.course, <Text style={styles.eventCourse}>{event.course}</Text>)}
                     <Text style={styles.eventDate}>{formatDateTime(event.date)}</Text>
-                    {event.htmlUrl ? <Text style={styles.eventLink}>Open in Canvas</Text> : null}
+                    {renderNodeWhen(event.htmlUrl, <Text style={styles.eventLink}>Open in Canvas</Text>)}
                   </View>
                 </Pressable>
               ))}
             </View>
-          )}
+          ))}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Assignments + Scores</Text>
-          {courses.length === 0 ? (
+          {renderNodeWhenElse(courses.length === 0, (
             <Text style={styles.empty}>No assignment data yet.</Text>
-          ) : (
+          ), (
             courses.map((course, courseIndex) => {
               const safeCourse = course || {};
               const courseId = String(safeCourse.id);
               const assignmentEntry = assignmentsByCourse[courseId];
-              const assignments = assignmentEntry && Array.isArray(assignmentEntry.items)
-                ? assignmentEntry.items
-                : [];
+              let assignments = [];
+              if (assignmentEntry && Array.isArray(assignmentEntry.items)) {
+                assignments = assignmentEntry.items;
+              }
               const submissionEntry = submissionsByCourse[courseId] || {};
               const submissionLookup = submissionEntry.byAssignment || {};
               const nowTs = Date.now();
               const { visibleItems, collapsedItems } = partitionAssignments(assignments, nowTs);
               const isExpanded = Boolean(expandedAssignmentsByCourse[courseId]);
-              const displayItems = isExpanded
-                ? [...visibleItems, ...collapsedItems]
-                : visibleItems;
+              let displayItems = visibleItems;
+              if (isExpanded) {
+                displayItems = [...visibleItems, ...collapsedItems];
+              }
 
               return (
                 <View key={`${courseId}-assignment-group-${courseIndex}`} style={styles.assignmentGroup}>
                   <Text style={styles.assignmentCourseName}>
                     {safeCourse.name || safeCourse.course_code || 'Untitled course'}
                   </Text>
-                  {assignments.length === 0 ? (
+                  {renderNodeWhenElse(assignments.length === 0, (
                     <Text style={styles.empty}>No assignments in this course.</Text>
-                  ) : (
+                  ), (
                     <View style={styles.assignments}>
-                      {displayItems.length === 0 ? (
+                      {renderNodeWhen(displayItems.length === 0, (
                         <Text style={styles.assignmentHint}>
                           No assignments in current window. Expand to see all.
                         </Text>
-                      ) : null}
+                      ))}
                       {displayItems.map((assignment, assignmentIndex) => {
                         const safeAssignment = assignment || {};
                         const submission = submissionLookup[String(safeAssignment.id)] || null;
@@ -2696,29 +2921,33 @@ export default function CalendarScreen() {
                         const detailKey = buildAssignmentDetailKey(courseId, safeAssignment.id);
                         const detailState = submissionDetailsByAssignment[detailKey] || {};
                         const detailData = detailState.data || null;
-                        const detailComments = Array.isArray(detailData && detailData.submission_comments)
-                          ? detailData.submission_comments
-                          : [];
+                        let detailComments = [];
+                        if (Array.isArray(detailData && detailData.submission_comments)) {
+                          detailComments = detailData.submission_comments;
+                        }
                         const teacherComments = detailComments.filter(
                           (comment) => {
                             const safeComment = comment || {};
+                            let authorId = '';
+                            if (safeComment.author_id !== undefined) {
+                              authorId = safeComment.author_id;
+                            }
                             return (
                               !currentProfileId ||
-                              String(
-                                safeComment.author_id === undefined ? '' : safeComment.author_id
-                              ) !== currentProfileId
+                              String(authorId) !== currentProfileId
                             );
                           }
                         );
-                        const detailHistory = Array.isArray(detailData && detailData.submission_history)
-                          ? detailData.submission_history
-                          : [];
+                        let detailHistory = [];
+                        if (Array.isArray(detailData && detailData.submission_history)) {
+                          detailHistory = detailData.submission_history;
+                        }
                         return (
                           <View
                             key={`${courseId}-assignment-${String(safeAssignment.id)}-${assignmentIndex}`}
                             style={[
                               styles.assignmentItem,
-                              safeAssignment.html_url ? styles.eventClickable : null,
+                              getStyleWhen(safeAssignment.html_url, styles.eventClickable),
                             ]}
                           >
                             <Text style={styles.assignmentTitle}>
@@ -2735,8 +2964,7 @@ export default function CalendarScreen() {
                             <Text style={styles.assignmentMeta}>
                               Status:
                               {' '}
-                              {safeSubmission.submitted_at ? 'Submitted' : 'Not submitted'}
-                              {safeSubmission.late ? ' (Late)' : ''}
+                              {getSubmissionStatusText(safeSubmission)}
                             </Text>
                             <Pressable
                               onPress={() =>
@@ -2744,36 +2972,32 @@ export default function CalendarScreen() {
                               }
                               style={({ pressed }) => [
                                 styles.detailBtn,
-                                pressed ? { opacity: 0.7 } : null,
+                                getStyleWhen(pressed, { opacity: 0.7 }),
                               ]}
                             >
                               <Text style={styles.detailBtnText}>
-                                {detailState.loading
-                                  ? 'Loading detail...'
-                                  : detailState.expanded
-                                    ? 'Hide submission detail'
-                                    : 'View submission detail'}
+                                {getSubmissionDetailButtonText(detailState)}
                               </Text>
                             </Pressable>
-                            {detailState.expanded ? (
+                            {renderNodeWhen(detailState.expanded, (
                               <View style={styles.detailPanel}>
-                                {detailState.error ? (
+                                {renderNodeWhen(detailState.error, (
                                   <Text style={styles.detailError}>
                                     Failed to load detail: {detailState.error}
                                   </Text>
-                                ) : null}
-                                {detailData ? (
+                                ))}
+                                {renderNodeWhenElse(detailData, (
                                   <>
                                     <Text style={styles.detailMeta}>
-                                      Late: {detailData.late ? 'Yes' : 'No'}
+                                      Late: {getYesNoText(detailData.late)}
                                     </Text>
                                     <Text style={styles.detailMeta}>
                                       Submitted at: {formatDateTime(detailData.submitted_at)}
                                     </Text>
                                     <Text style={styles.detailHeading}>Teacher comments</Text>
-                                    {teacherComments.length === 0 ? (
+                                    {renderNodeWhenElse(teacherComments.length === 0, (
                                       <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                                    ) : (
+                                    ), (
                                       teacherComments.map((comment, index) => (
                                         <View
                                           key={`${courseId}-assignment-${String(safeAssignment.id)}-comment-${String((comment || {}).id || 'x')}-${index}`}
@@ -2789,11 +3013,11 @@ export default function CalendarScreen() {
                                           </Text>
                                         </View>
                                       ))
-                                    )}
+                                    ))}
                                     <Text style={styles.detailHeading}>Attempt history</Text>
-                                    {detailHistory.length === 0 ? (
+                                    {renderNodeWhenElse(detailHistory.length === 0, (
                                       <Text style={styles.detailMuted}>No attempt history.</Text>
-                                    ) : (
+                                    ), (
                                       detailHistory.map((attempt, index) => (
                                         <View
                                           key={`${courseId}-assignment-${String(safeAssignment.id)}-attempt-${String((attempt || {}).id || (attempt || {}).attempt || 'x')}-${index}`}
@@ -2806,7 +3030,7 @@ export default function CalendarScreen() {
                                             Submitted: {formatDateTime((attempt || {}).submitted_at)}
                                           </Text>
                                           <Text style={styles.detailText}>
-                                            Late: {(attempt || {}).late ? 'Yes' : 'No'}
+                                            Late: {getYesNoText((attempt || {}).late)}
                                           </Text>
                                           <Text style={styles.detailText}>
                                             Score:
@@ -2818,32 +3042,30 @@ export default function CalendarScreen() {
                                           </Text>
                                         </View>
                                       ))
-                                    )}
+                                    ))}
                                   </>
-                                ) : (
+                                ), (
                                   <Text style={styles.detailMuted}>
-                                    {detailState.loading
-                                      ? 'Loading detail...'
-                                      : 'No detail loaded yet.'}
+                                    {getDetailFallbackText(detailState)}
                                   </Text>
-                                )}
+                                ))}
                               </View>
-                            ) : null}
-                            {safeAssignment.html_url ? (
+                            ))}
+                            {renderNodeWhen(safeAssignment.html_url, (
                               <Pressable
                                 onPress={() => openUrl(safeAssignment.html_url)}
                                 style={({ pressed }) => [
                                   styles.inlineLinkBtn,
-                                  pressed ? { opacity: 0.7 } : null,
+                                  getStyleWhen(pressed, { opacity: 0.7 }),
                                 ]}
                               >
                                 <Text style={styles.inlineLinkText}>Open assignment</Text>
                               </Pressable>
-                            ) : null}
+                            ))}
                           </View>
                         );
                       })}
-                      {collapsedItems.length > 0 ? (
+                      {renderNodeWhen(collapsedItems.length > 0, (
                         <Pressable
                           onPress={() =>
                             setExpandedAssignmentsByCourse((prev) => ({
@@ -2853,27 +3075,25 @@ export default function CalendarScreen() {
                           }
                           style={({ pressed }) => [
                             styles.collapseBtn,
-                            pressed ? { opacity: 0.7 } : null,
+                            getStyleWhen(pressed, { opacity: 0.7 }),
                           ]}
                         >
                           <Text style={styles.collapseBtnText}>
-                            {isExpanded
-                              ? 'Collapse old or no-due assignments'
-                              : `Show ${collapsedItems.length} old or no-due assignments`}
+                            {getCollapseAssignmentsText(isExpanded, collapsedItems.length)}
                           </Text>
                         </Pressable>
-                      ) : null}
+                      ))}
                     </View>
-                  )}
+                  ))}
                 </View>
               );
             })
-          )}
+          ))}
         </View>
 
         <View style={{ height: 90 }} />
           </>
-        ) : null}
+        ))}
       </ScrollView>
 
       <BottomSheetPicker
@@ -2911,13 +3131,7 @@ export default function CalendarScreen() {
         visible={timePickerVisible}
         onClose={() => setTimePickerVisible(false)}
         onConfirm={confirmTimePicker}
-        title={
-          activeTimeField === 'dueTime'
-            ? 'Choose due time'
-            : activeTimeField === 'startTime'
-              ? 'Choose start time'
-              : 'Choose end time'
-        }
+        title={getTimePickerTitle(activeTimeField)}
         subtitle={formatTimeOnly(formatTimeDraftToValue(timeDraft))}
       >
         <View style={styles.timeWheelRow}>
@@ -2966,14 +3180,14 @@ export default function CalendarScreen() {
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, year }))}
                 style={({ pressed }) => [
                   styles.monthYearYearChip,
-                  active ? styles.monthYearYearChipActive : null,
-                  pressed ? { opacity: 0.82 } : null,
+                  getStyleWhen(active, styles.monthYearYearChipActive),
+                  getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.monthYearYearChipText,
-                    active ? styles.monthYearYearChipTextActive : null,
+                    getStyleWhen(active, styles.monthYearYearChipTextActive),
                   ]}
                 >
                   {year}
@@ -2993,14 +3207,14 @@ export default function CalendarScreen() {
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, month: index }))}
                 style={({ pressed }) => [
                   styles.monthYearCell,
-                  active ? styles.monthYearCellActive : null,
-                  pressed ? { opacity: 0.82 } : null,
+                  getStyleWhen(active, styles.monthYearCellActive),
+                  getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.monthYearCellText,
-                    active ? styles.monthYearCellTextActive : null,
+                    getStyleWhen(active, styles.monthYearCellTextActive),
                   ]}
                 >
                   {label}
@@ -3028,66 +3242,68 @@ export default function CalendarScreen() {
           setSelectedCalendarItem(null);
         }}
         title={(safeSelectedCalendarItem && safeSelectedCalendarItem.title) || 'Task detail'}
-        subtitle={selectedCalendarItem ? formatDateTime(selectedCalendarItem.date) : ''}
+        subtitle={selectedCalendarDetailSubtitle}
         confirmLabel={getCalendarDetailConfirmLabel(safeSelectedCalendarItem)}
       >
-        {selectedCalendarItem ? (
+        {renderNodeWhen(safeSelectedCalendarItem, (
           <View style={styles.sheetDetailPanel}>
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Type</Text>
-              <Text style={styles.detailText}>{getCalendarDetailTypeLabel(selectedCalendarItem)}</Text>
+              <Text style={styles.detailText}>{getCalendarDetailTypeLabel(safeSelectedCalendarItem)}</Text>
             </View>
 
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Course</Text>
-              <Text style={styles.detailText}>{selectedCalendarItem.course || 'Canvas'}</Text>
+              <Text style={styles.detailText}>{safeSelectedCalendarItem.course || 'Canvas'}</Text>
             </View>
 
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Status</Text>
-              <Text style={styles.detailText}>{selectedCalendarItem.status || 'N/A'}</Text>
+              <Text style={styles.detailText}>{safeSelectedCalendarItem.status || 'N/A'}</Text>
             </View>
 
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Schedule</Text>
-              <Text style={styles.detailText}>{formatCalendarDetailSchedule(selectedCalendarItem)}</Text>
+              <Text style={styles.detailText}>{formatCalendarDetailSchedule(safeSelectedCalendarItem)}</Text>
             </View>
 
-            {selectedCalendarItem.source === 'assignment' ? (
+            {renderNodeWhen(safeSelectedCalendarItem.source === 'assignment', (
               <>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailMeta}>Score</Text>
                   <Text style={styles.detailText}>
                     {formatScoreValue(
-                      selectedCalendarItem.score,
-                      selectedCalendarItem.pointsPossible
+                      safeSelectedCalendarItem.score,
+                      safeSelectedCalendarItem.pointsPossible
                     )}
                   </Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailMeta}>Submitted</Text>
                   <Text style={styles.detailText}>
-                    {selectedCalendarItem.submittedAt
-                      ? formatDateTime(selectedCalendarItem.submittedAt)
-                      : 'Not submitted'}
+                    {getTextWhen(
+                      safeSelectedCalendarItem.submittedAt,
+                      formatDateTime(safeSelectedCalendarItem.submittedAt),
+                      'Not submitted'
+                    )}
                   </Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailMeta}>Late</Text>
                   <Text style={styles.detailText}>
-                    {selectedCalendarItem.late ? 'Yes' : 'No'}
+                    {getYesNoText(safeSelectedCalendarItem.late)}
                   </Text>
                 </View>
                 <Text style={styles.detailHeading}>Teacher comments</Text>
-                {selectedCalendarDetailState.loading ? (
+                {renderNodeWhenElse(selectedCalendarDetailState.loading, (
                   <Text style={styles.detailMuted}>Loading submission detail...</Text>
-                ) : selectedCalendarDetailState.error ? (
+                ), renderNodeWhenElse(selectedCalendarDetailState.error, (
                   <Text style={styles.detailError}>
                     Failed to load detail: {selectedCalendarDetailState.error}
                   </Text>
-                ) : selectedCalendarTeacherComments.length === 0 ? (
+                ), renderNodeWhenElse(selectedCalendarTeacherComments.length === 0, (
                   <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                ) : (
+                ), (
                   selectedCalendarTeacherComments.map((comment, index) => (
                     <View
                       key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
@@ -3101,17 +3317,17 @@ export default function CalendarScreen() {
                       </Text>
                     </View>
                   ))
-                )}
+                ))))}
               </>
-            ) : null}
+            ))}
 
-            {selectedCalendarItem.source === 'customTask' ? (
+            {renderNodeWhen(safeSelectedCalendarItem.source === 'customTask', (
               <Text style={styles.sheetDetailNote}>
                 This is your own task stored in the app and merged into the planner.
               </Text>
-            ) : null}
+            ))}
           </View>
-        ) : null}
+        ))}
       </BottomSheetPicker>
     </SafeAreaView>
   );

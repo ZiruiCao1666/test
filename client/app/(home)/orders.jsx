@@ -22,6 +22,21 @@ function isAbortError(error) {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function getStyleWhen(condition, style) {
+  if (condition) return style;
+  return null;
+}
+
+function renderNodeWhen(condition, node) {
+  if (!condition) return null;
+  return node;
+}
+
+function getRefreshText(loading) {
+  if (loading) return 'loading';
+  return 'refresh';
+}
+
 async function readJsonSafely(response) {
   const raw = await response.text();
   if (!raw) return {};
@@ -77,7 +92,10 @@ export default function OrdersScreen() {
       }
 
       const getToken = getTokenRef.current;
-      const token = typeof getToken === 'function' ? await getToken() : '';
+      let token = '';
+      if (typeof getToken === 'function') {
+        token = await getToken();
+      }
       if (!token) throw new Error('No session token');
 
       const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/orders`, {
@@ -87,11 +105,17 @@ export default function OrdersScreen() {
       const data = await readJsonSafely(res);
       if (!res.ok) throw new Error(data.error || 'Failed to load orders');
 
-      setOrders(Array.isArray(data.items) ? data.items : []);
+      if (Array.isArray(data.items)) {
+        setOrders(data.items);
+      } else {
+        setOrders([]);
+      }
     } catch (e) {
-      setError(
-        isAbortError(e) ? 'Request timeout. Please retry.' : getErrorMessage(e, 'Failed to load orders')
-      );
+      if (isAbortError(e)) {
+        setError('Request timeout. Please retry.');
+      } else {
+        setError(getErrorMessage(e, 'Failed to load orders'));
+      }
       setOrders([]);
     } finally {
       setLoading(false);
@@ -114,25 +138,25 @@ export default function OrdersScreen() {
             disabled={loading}
             style={({ pressed }) => [
               styles.refreshBtn,
-              loading ? { opacity: 0.6 } : null,
-              pressed ? { opacity: 0.7 } : null,
+              getStyleWhen(loading, { opacity: 0.6 }),
+              getStyleWhen(pressed, { opacity: 0.7 }),
             ]}
           >
-            <Text style={styles.refreshText}>{loading ? 'loading' : 'refresh'}</Text>
+            <Text style={styles.refreshText}>{getRefreshText(loading)}</Text>
           </Pressable>
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {renderNodeWhen(error, <Text style={styles.errorText}>{error}</Text>)}
 
-        {loading ? (
+        {renderNodeWhen(loading, (
           <View style={styles.loadingWrap}>
             <ActivityIndicator />
           </View>
-        ) : null}
+        ))}
 
-        {!loading && orders.length === 0 ? (
+        {renderNodeWhen(!loading && orders.length === 0, (
           <Text style={styles.emptyText}>No redemption records yet.</Text>
-        ) : null}
+        ))}
 
         {orders.map((item) => (
           <View key={String(item.id)} style={styles.card}>

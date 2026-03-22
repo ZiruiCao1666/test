@@ -36,6 +36,21 @@ const getApiErrorMessage = (data, fallback) => {
   return fallback;
 };
 
+const getStyleWhen = (condition, style) => {
+  if (condition) return style;
+  return null;
+};
+
+const renderNodeWhen = (condition, node) => {
+  if (!condition) return null;
+  return node;
+};
+
+const renderNodeWhenElse = (condition, trueNode, falseNode) => {
+  if (condition) return trueNode;
+  return falseNode;
+};
+
 const formatShortDate = (value) => {
   const safe = String(value || '').trim();
   if (!DATE_INPUT_RE.test(safe)) return safe || 'Date not set';
@@ -68,9 +83,15 @@ const getCustomTaskTimestamp = (item) => {
   if (safeItem.timingMode === 'range') {
     sourceTime = String(safeItem.startTime || '').trim();
   }
-  const safeTime = TIME_INPUT_RE.test(sourceTime) ? sourceTime : '12:00';
+  let safeTime = '12:00';
+  if (TIME_INPUT_RE.test(sourceTime)) {
+    safeTime = sourceTime;
+  }
   const parsed = new Date(`${taskDate}T${safeTime}:00`).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+  return null;
 };
 
 const getItemTimestamp = (item) => {
@@ -91,7 +112,10 @@ const getItemTimestamp = (item) => {
   }
 
   const parsed = new Date(safeItem.date || '').getTime();
-  return Number.isFinite(parsed) ? parsed : null;
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+  return null;
 };
 
 const formatDaysLeft = (item) => {
@@ -183,6 +207,76 @@ const getPlanSourceBadgeStyle = (item) => {
   return styles.todoSourceBadgeCanvas;
 };
 
+const getPrimaryEmail = (safeUser) => {
+  if (safeUser.primaryEmailAddress && safeUser.primaryEmailAddress.emailAddress) {
+    return safeUser.primaryEmailAddress.emailAddress;
+  }
+  return '';
+};
+
+const getUserDisplayName = (safeUser, primaryEmail) => {
+  if (safeUser.firstName) return safeUser.firstName;
+  if (safeUser.fullName) return safeUser.fullName;
+  if (primaryEmail) return primaryEmail;
+  return 'Student';
+};
+
+const getSummaryValueText = (summaryReady, value) => {
+  if (summaryReady) return value;
+  return '...';
+};
+
+const getCheckInButtonText = (checkedInToday) => {
+  if (checkedInToday) return 'Checked in\ntoday';
+  return 'Click to\ncheck in';
+};
+
+const getCheckInAlertText = (gained) => {
+  if (gained > 0) return `Checked in for today (+${gained} points)`;
+  return 'Already checked in today';
+};
+
+const getPlanEmptyMessage = () => 'No Canvas or custom tasks in the next seven days.';
+
+const buildPlanRowProps = (item, openPlanItem) => {
+  const safeItem = item || {};
+  if (safeItem.htmlUrl) {
+    return {
+      onPress: () => openPlanItem(safeItem),
+      style: ({ pressed }) => [
+        styles.todoRow,
+        styles.todoRowClickable,
+        getStyleWhen(pressed, { opacity: 0.75 }),
+      ],
+    };
+  }
+  return {
+    style: styles.todoRow,
+  };
+};
+
+const renderAvatarNode = (avatarUrl, avatarInitial) => {
+  if (avatarUrl) {
+    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
+  }
+  return (
+    <View style={[styles.avatar, styles.avatarFallback]}>
+      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    </View>
+  );
+};
+
+const renderTodoAvatarNode = (avatarUrl, avatarInitial) => {
+  if (avatarUrl) {
+    return <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />;
+  }
+  return (
+    <View style={[styles.todoAvatar, styles.avatarFallback]}>
+      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    </View>
+  );
+};
+
 const groupPlanItems = (items) => {
   const nowTs = Date.now();
   const sections = [
@@ -191,7 +285,10 @@ const groupPlanItems = (items) => {
     { key: '7d', title: 'Within 7 days', items: [] },
   ];
 
-  const safeItems = Array.isArray(items) ? items : [];
+  let safeItems = [];
+  if (Array.isArray(items)) {
+    safeItems = items;
+  }
   safeItems.forEach((item) => {
     const timestamp = getItemTimestamp(item);
     if (timestamp === null) {
@@ -218,17 +315,10 @@ export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const safeUser = user || {};
-  const primaryEmail =
-    safeUser.primaryEmailAddress && safeUser.primaryEmailAddress.emailAddress
-      ? safeUser.primaryEmailAddress.emailAddress
-      : '';
+  const primaryEmail = getPrimaryEmail(safeUser);
   const userId = safeUser.id || null;
 
-  const username =
-    safeUser.firstName ||
-    safeUser.fullName ||
-    primaryEmail ||
-    'Student';
+  const username = getUserDisplayName(safeUser, primaryEmail);
   const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
@@ -274,9 +364,10 @@ export default function HomeScreen() {
   const applySummaryData = React.useCallback((data = {}) => {
     const safeData = data || {};
     const nextTotal = Number(safeData.totalDays) || 0;
-    const nextStreak = safeData.streakDays !== undefined
-      ? Number(safeData.streakDays) || 0
-      : nextTotal;
+    let nextStreak = nextTotal;
+    if (safeData.streakDays !== undefined) {
+      nextStreak = Number(safeData.streakDays) || 0;
+    }
 
     setTotalSignedDays(nextTotal);
     setStreakDays(nextStreak);
@@ -292,11 +383,14 @@ export default function HomeScreen() {
       const safeData = data || {};
       const payload = {
         totalDays: Number(safeData.totalDays) || 0,
-        streakDays: safeData.streakDays !== undefined ? Number(safeData.streakDays) || 0 : undefined,
+        streakDays: undefined,
         checkedInToday: Boolean(safeData.checkedInToday),
         points: Number(safeData.points) || 0,
         updatedAt: Date.now(),
       };
+      if (safeData.streakDays !== undefined) {
+        payload.streakDays = Number(safeData.streakDays) || 0;
+      }
 
       await SecureStore.setItemAsync(summaryCacheKey, JSON.stringify(payload));
       setHasCachedSummary(true);
@@ -328,7 +422,10 @@ export default function HomeScreen() {
   const getSessionToken = React.useCallback(async () => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const tokenGetter = getTokenRef.current;
-      const token = tokenGetter ? await tokenGetter() : '';
+      let token = '';
+      if (tokenGetter) {
+        token = await tokenGetter();
+      }
       if (token) return token;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
@@ -426,8 +523,16 @@ export default function HomeScreen() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
 
-      setHomePlanItems(data && Array.isArray(data.items) ? data.items : []);
-      setCanvasPlanWarning(String(data && data.canvasError ? data.canvasError : '').trim());
+      if (data && Array.isArray(data.items)) {
+        setHomePlanItems(data.items);
+      } else {
+        setHomePlanItems([]);
+      }
+      if (data && data.canvasError) {
+        setCanvasPlanWarning(String(data.canvasError).trim());
+      } else {
+        setCanvasPlanWarning('');
+      }
     } catch (e) {
       setHomePlanItems([]);
       setCanvasPlanWarning('');
@@ -499,7 +604,7 @@ export default function HomeScreen() {
       persistSummaryToCache(data);
 
       const gained = Number(data.gainedPoints) || 0;
-      Alert.alert('Check-in', gained > 0 ? `Checked in for today (+${gained} points)` : 'Already checked in today');
+      Alert.alert('Check-in', getCheckInAlertText(gained));
     } catch (e) {
       Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
@@ -527,13 +632,7 @@ export default function HomeScreen() {
           <Text style={styles.headerTitle}>STUDENT MOTIVATION</Text>
 
           <View style={styles.headerSideRight}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
-              </View>
-            )}
+            {renderAvatarNode(avatarUrl, avatarInitial)}
           </View>
         </View>
 
@@ -545,15 +644,18 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Lasting days</Text>
             <View style={{ height: 6 }} />
-            {!summaryReady ? (
-              <ActivityIndicator />
-            ) : (
+            {renderNodeWhenElse(
+              !summaryReady,
+              <ActivityIndicator />,
               <>
                 <Text style={styles.cardBig}>
                   {lastingDays}
                   <Text style={styles.cardBigUnit}> days</Text>
                 </Text>
-                {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+                {renderNodeWhen(
+                  loadingSummary,
+                  <ActivityIndicator size="small" style={{ marginTop: 6 }} />
+                )}
               </>
             )}
             <Text style={styles.cardHint}>Continuous sign-in builds habits</Text>
@@ -562,23 +664,26 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>points</Text>
             <View style={{ height: 6 }} />
-            {!summaryReady ? (
-              <ActivityIndicator />
-            ) : (
+            {renderNodeWhenElse(
+              !summaryReady,
+              <ActivityIndicator />,
               <>
                 <Text style={styles.cardBig}>{points}</Text>
-                {loadingSummary ? <ActivityIndicator size="small" style={{ marginTop: 6 }} /> : null}
+                {renderNodeWhen(
+                  loadingSummary,
+                  <ActivityIndicator size="small" style={{ marginTop: 6 }} />
+                )}
               </>
             )}
             <Text style={styles.cardHint}>Earn points by daily check-in</Text>
           </View>
         </View>
 
-        {summaryError ? (
+        {renderNodeWhen(summaryError, (
           <Text style={{ marginBottom: 10, fontSize: 12, color: '#b91c1c' }}>
             {summaryError}
           </Text>
-        ) : null}
+        ))}
 
         <View style={styles.centerBlock}>
           <Pressable
@@ -586,24 +691,24 @@ export default function HomeScreen() {
             disabled={checkingIn || checkedInToday}
             style={({ pressed }) => [
               styles.circle,
-              (checkingIn || checkedInToday) ? { opacity: 0.6 } : null,
-              pressed ? { opacity: 0.85, transform: [{ scale: 0.99 }] } : null,
+              getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
+              getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
             ]}
           >
-            {checkingIn ? (
+            {renderNodeWhenElse(checkingIn, (
               <ActivityIndicator />
-            ) : (
+            ), (
               <Text style={styles.circleText}>
-                {checkedInToday ? 'Checked in\ntoday' : 'Click to\ncheck in'}
+                {getCheckInButtonText(checkedInToday)}
               </Text>
-            )}
+            ))}
           </Pressable>
 
           <View style={styles.infoRow}>
             <Text style={styles.star}>*</Text>
             <View style={{ flex: 1 }}>
               <Text style={styles.infoTitle}>
-                Signed in for a total of {summaryReady ? totalSignedDays : '...'} days
+                Signed in for a total of {getSummaryValueText(summaryReady, totalSignedDays)} days
               </Text>
               <Text style={styles.infoSub}>
                 {getSummaryStatusText(Boolean(summaryError), checkedInToday)}
@@ -615,13 +720,14 @@ export default function HomeScreen() {
 
         <View style={styles.todoCard}>
           <Text style={styles.todoTitle}>Things to be done within seven days</Text>
-          {loadingHomePlan ? <ActivityIndicator style={{ marginVertical: 10 }} /> : null}
-          {homePlanError ? <Text style={styles.todoError}>{homePlanError}</Text> : null}
-          {canvasPlanWarning ? <Text style={styles.todoWarning}>{canvasPlanWarning}</Text> : null}
+          {renderNodeWhen(loadingHomePlan, <ActivityIndicator style={{ marginVertical: 10 }} />)}
+          {renderNodeWhen(homePlanError, <Text style={styles.todoError}>{homePlanError}</Text>)}
+          {renderNodeWhen(canvasPlanWarning, <Text style={styles.todoWarning}>{canvasPlanWarning}</Text>)}
 
-          {!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0 ? (
-            <Text style={styles.todoEmpty}>No Canvas or custom tasks in the next seven days.</Text>
-          ) : null}
+          {renderNodeWhen(
+            !loadingHomePlan && !homePlanError && groupedHomePlan.length === 0,
+            <Text style={styles.todoEmpty}>{getPlanEmptyMessage()}</Text>
+          )}
 
           {groupedHomePlan.map((section) => (
             <View key={section.key} style={styles.todoSection}>
@@ -631,29 +737,15 @@ export default function HomeScreen() {
 
               {section.items.map((item) => {
                 const safeItem = item || {};
-                const Row = safeItem.htmlUrl ? Pressable : View;
-                const rowProps = safeItem.htmlUrl
-                  ? {
-                      onPress: () => openPlanItem(safeItem),
-                      style: ({ pressed }) => [
-                        styles.todoRow,
-                        styles.todoRowClickable,
-                        pressed ? { opacity: 0.75 } : null,
-                      ],
-                    }
-                  : {
-                      style: styles.todoRow,
-                    };
+                let Row = View;
+                if (safeItem.htmlUrl) {
+                  Row = Pressable;
+                }
+                const rowProps = buildPlanRowProps(safeItem, openPlanItem);
 
                 return (
                   <Row key={safeItem.id} {...rowProps}>
-                    {avatarUrl ? (
-                      <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />
-                    ) : (
-                      <View style={[styles.todoAvatar, styles.avatarFallback]}>
-                        <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
-                      </View>
-                    )}
+                    {renderTodoAvatarNode(avatarUrl, avatarInitial)}
 
                     <View style={{ flex: 1 }}>
                       <View style={styles.todoTopRow}>
@@ -672,7 +764,7 @@ export default function HomeScreen() {
                       <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
                       <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
                       <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
-                      {safeItem.htmlUrl ? <Text style={styles.todoLinkHint}>Open in Canvas</Text> : null}
+                      {renderNodeWhen(safeItem.htmlUrl, <Text style={styles.todoLinkHint}>Open in Canvas</Text>)}
                       <View style={styles.todoLine} />
                     </View>
                   </Row>

@@ -37,6 +37,54 @@ function isAbortError(error) {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function getStyleWhen(condition, style) {
+  if (condition) return style;
+  return null;
+}
+
+function renderNodeWhen(condition, node) {
+  if (!condition) return null;
+  return node;
+}
+
+function renderNodeWhenElse(condition, trueNode, falseNode) {
+  if (condition) return trueNode;
+  return falseNode;
+}
+
+function getRefreshText(loading) {
+  if (loading) return 'loading';
+  return 'refresh';
+}
+
+function getRedeemButtonText(disabled) {
+  if (disabled) return 'redeeming...';
+  return 'redeem';
+}
+
+function getPointsText(loading, points) {
+  if (loading) return '...';
+  return points;
+}
+
+function renderAvatarNode(avatarUrl, avatarInitial) {
+  if (avatarUrl) {
+    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
+  }
+  return (
+    <View style={[styles.avatar, styles.avatarFallback]}>
+      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    </View>
+  );
+}
+
+function renderRewardImage(item) {
+  if (item.imageUrl) {
+    return <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />;
+  }
+  return <Text style={styles.cardImageHint}>image</Text>;
+}
+
 async function readJsonSafely(response) {
   const raw = await response.text();
   if (!raw) return {};
@@ -87,10 +135,20 @@ function normalizeCatalog(items) {
       if (isActive === null || isActive === undefined) {
         isActive = true;
       }
+      if (Number.isFinite(pointsCost)) {
+        return {
+          id: rewardId,
+          title: String(title),
+          pointsCost,
+          category: String(category),
+          imageUrl: String(imageUrl),
+          isActive,
+        };
+      }
       return {
         id: rewardId,
         title: String(title),
-        pointsCost: Number.isFinite(pointsCost) ? pointsCost : 0,
+        pointsCost: 0,
         category: String(category),
         imageUrl: String(imageUrl),
         isActive,
@@ -156,7 +214,10 @@ export default function RewardsScreen() {
       setError(null);
 
       const getTokenFromRef = getTokenRef.current;
-      const token = typeof getTokenFromRef === 'function' ? await getTokenFromRef() : '';
+      let token = '';
+      if (typeof getTokenFromRef === 'function') {
+        token = await getTokenFromRef();
+      }
       if (!token) throw new Error('No session token');
 
       if (!API_BASE_URL) {
@@ -184,15 +245,21 @@ export default function RewardsScreen() {
       if (catalogRes.ok) {
         const catalogData = await readJsonSafely(catalogRes);
         const normalized = normalizeCatalog(catalogData.items);
-        setCatalog(normalized.length ? normalized : FALLBACK_CATALOG);
+        if (normalized.length > 0) {
+          setCatalog(normalized);
+        } else {
+          setCatalog(FALLBACK_CATALOG);
+        }
       } else {
         setCatalog(FALLBACK_CATALOG);
       }
     } catch (e) {
       setCatalog(FALLBACK_CATALOG);
-      setError(
-        isAbortError(e) ? 'Request timeout, please retry.' : getErrorMessage(e, 'Failed to load rewards')
-      );
+      if (isAbortError(e)) {
+        setError('Request timeout, please retry.');
+      } else {
+        setError(getErrorMessage(e, 'Failed to load rewards'));
+      }
     } finally {
       setLoading(false);
     }
@@ -222,7 +289,10 @@ export default function RewardsScreen() {
       }
 
       const getTokenFromRef = getTokenRef.current;
-      const token = typeof getTokenFromRef === 'function' ? await getTokenFromRef() : '';
+      let token = '';
+      if (typeof getTokenFromRef === 'function') {
+        token = await getTokenFromRef();
+      }
       if (!token) throw new Error('No session token');
 
       const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/redeem`, {
@@ -253,10 +323,11 @@ export default function RewardsScreen() {
       Alert.alert('Redeemed', `${item.title} redeemed successfully.`);
       loadRewards();
     } catch (e) {
-      Alert.alert(
-        'Error',
-        isAbortError(e) ? 'Request timeout, please retry.' : getErrorMessage(e, 'Redeem failed')
-      );
+      if (isAbortError(e)) {
+        Alert.alert('Error', 'Request timeout, please retry.');
+      } else {
+        Alert.alert('Error', getErrorMessage(e, 'Redeem failed'));
+      }
     } finally {
       setRedeemingId(null);
     }
@@ -279,19 +350,13 @@ export default function RewardsScreen() {
               onPress={() => router.push('/orders')}
               style={({ pressed }) => [
                 styles.ordersBtn,
-                pressed ? { opacity: 0.7 } : null,
+                getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
               <Text style={styles.ordersText}>my orders</Text>
             </Pressable>
 
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
-              </View>
-            )}
+            {renderAvatarNode(avatarUrl, avatarInitial)}
           </View>
         </View>
 
@@ -299,7 +364,7 @@ export default function RewardsScreen() {
           <View>
             <Text style={styles.pointsLabel}>my points</Text>
             <Text style={styles.pointsValue}>
-              {loading ? '...' : points}
+              {getPointsText(loading, points)}
             </Text>
           </View>
           <Pressable
@@ -307,24 +372,24 @@ export default function RewardsScreen() {
             disabled={loading}
             style={({ pressed }) => [
               styles.refreshBtn,
-              loading ? { opacity: 0.6 } : null,
-              pressed ? { opacity: 0.7 } : null,
+              getStyleWhen(loading, { opacity: 0.6 }),
+              getStyleWhen(pressed, { opacity: 0.7 }),
             ]}
           >
-            <Text style={styles.refreshText}>{loading ? 'loading' : 'refresh'}</Text>
+            <Text style={styles.refreshText}>{getRefreshText(loading)}</Text>
           </Pressable>
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {renderNodeWhen(error, <Text style={styles.errorText}>{error}</Text>)}
 
-        {loading ? (
+        {renderNodeWhen(loading, (
           <View style={styles.loadingWrap}>
             <ActivityIndicator />
           </View>
-        ) : null}
+        ))}
 
         {sectionKeys.map((key, idx) => (
-          <View key={key} style={idx > 0 ? { marginTop: 18 } : null}>
+          <View key={key} style={getStyleWhen(idx > 0, { marginTop: 18 })}>
             <Text style={styles.sectionTitle}>{CATEGORY_LABELS[key] || key}</Text>
             <View style={styles.grid}>
               {sections[key].map((item) => {
@@ -332,11 +397,7 @@ export default function RewardsScreen() {
                 return (
                   <View key={String(item.id)} style={styles.card}>
                     <View style={styles.cardImageSlot}>
-                      {item.imageUrl ? (
-                        <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />
-                      ) : (
-                        <Text style={styles.cardImageHint}>image</Text>
-                      )}
+                      {renderRewardImage(item)}
                     </View>
                     <Text style={styles.cardTitle}>{item.title}</Text>
                     <Text style={styles.cardPoints}>{item.pointsCost} points</Text>
@@ -346,11 +407,11 @@ export default function RewardsScreen() {
                       disabled={disabled}
                       style={({ pressed }) => [
                         styles.redeemBtn,
-                        disabled ? { opacity: 0.65 } : null,
-                        pressed ? { opacity: 0.8 } : null,
+                        getStyleWhen(disabled, { opacity: 0.65 }),
+                        getStyleWhen(pressed, { opacity: 0.8 }),
                       ]}
                     >
-                      <Text style={styles.redeemText}>{disabled ? 'redeeming...' : 'redeem'}</Text>
+                      <Text style={styles.redeemText}>{getRedeemButtonText(disabled)}</Text>
                     </Pressable>
                   </View>
                 );
@@ -359,9 +420,9 @@ export default function RewardsScreen() {
           </View>
         ))}
 
-        {!loading && sectionKeys.length === 0 ? (
+        {renderNodeWhen(!loading && sectionKeys.length === 0, (
           <Text style={styles.emptyText}>No rewards available now.</Text>
-        ) : null}
+        ))}
 
         <View style={{ height: 90 }} />
       </ScrollView>
