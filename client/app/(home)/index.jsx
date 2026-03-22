@@ -19,10 +19,59 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 const HOME_PLAN_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+const formatShortDate = (value) => {
+  const safe = String(value || '').trim();
+  if (!DATE_INPUT_RE.test(safe)) return safe || 'Date not set';
+  const date = new Date(`${safe}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return safe;
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+  });
+};
+
+const formatTimeOnly = (value) => {
+  const safe = String(value || '').trim();
+  if (!TIME_INPUT_RE.test(safe)) return safe || '--:--';
+  const date = new Date(`2000-01-01T${safe}:00`);
+  if (Number.isNaN(date.getTime())) return safe;
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
+const getCustomTaskTimestamp = (item) => {
+  const taskDate = String(item?.taskDate || '').trim();
+  if (!DATE_INPUT_RE.test(taskDate)) return null;
+
+  const sourceTime =
+    item?.timingMode === 'range'
+      ? String(item?.startTime || '').trim()
+      : String(item?.dueTime || '').trim();
+  const safeTime = TIME_INPUT_RE.test(sourceTime) ? sourceTime : '12:00';
+  const parsed = new Date(`${taskDate}T${safeTime}:00`).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const getItemTimestamp = (item) => {
-  const direct = Number(item?.timestampMs);
-  if (Number.isFinite(direct)) return direct;
+  if (item?.source === 'custom') {
+    const customTimestamp = getCustomTaskTimestamp(item);
+    if (customTimestamp !== null) return customTimestamp;
+  }
+
+  if (typeof item?.timestampMs === 'number' && Number.isFinite(item.timestampMs)) {
+    return item.timestampMs;
+  }
+
+  if (typeof item?.timestampMs === 'string' && item.timestampMs.trim() !== '') {
+    const direct = Number(item.timestampMs);
+    if (Number.isFinite(direct)) return direct;
+  }
 
   const parsed = new Date(item?.date || '').getTime();
   return Number.isFinite(parsed) ? parsed : null;
@@ -55,6 +104,16 @@ const formatDaysLeft = (item) => {
 };
 
 const formatPlanDateTime = (item) => {
+  if (item?.source === 'custom') {
+    if (item?.scheduleText) return String(item.scheduleText);
+
+    const dateLabel = formatShortDate(item?.taskDate || '');
+    if (item?.timingMode === 'range') {
+      return `${dateLabel} | ${formatTimeOnly(item?.startTime)} - ${formatTimeOnly(item?.endTime)}`;
+    }
+    return `${dateLabel} | Due ${formatTimeOnly(item?.dueTime)}`;
+  }
+
   const timestamp = getItemTimestamp(item);
   if (timestamp === null) {
     return item?.date ? String(item.date) : 'Time not synced';
@@ -74,8 +133,7 @@ const getPlanDetail = (item) => {
     const parts = [item?.course, item?.type].filter(Boolean);
     return parts.length > 0 ? parts.join(' | ') : 'Canvas item';
   }
-  const parts = [item?.type].filter(Boolean);
-  return parts.length > 0 ? parts.join(' | ') : 'Custom task';
+  return item?.type || 'Custom task';
 };
 
 const groupPlanItems = (items) => {
