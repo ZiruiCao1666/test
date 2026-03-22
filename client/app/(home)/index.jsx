@@ -41,16 +41,6 @@ const getStyleWhen = (condition, style) => {
   return null;
 };
 
-const renderNodeWhen = (condition, node) => {
-  if (!condition) return null;
-  return node;
-};
-
-const renderNodeWhenElse = (condition, trueNode, falseNode) => {
-  if (condition) return trueNode;
-  return falseNode;
-};
-
 const formatShortDate = (value) => {
   const safe = String(value || '').trim();
   if (!DATE_INPUT_RE.test(safe)) return safe || 'Date not set';
@@ -904,6 +894,75 @@ export default function HomeScreen() {
     }
   }, []);
 
+  let lastingDaysValueNode = <ActivityIndicator />;
+  if (summaryReady) {
+    let loadingIndicatorNode = null;
+    if (loadingSummary) {
+      loadingIndicatorNode = <ActivityIndicator size="small" style={{ marginTop: 6 }} />;
+    }
+    lastingDaysValueNode = (
+      <>
+        <Text style={styles.cardBig}>
+          {lastingDays}
+          <Text style={styles.cardBigUnit}> days</Text>
+        </Text>
+        {loadingIndicatorNode}
+      </>
+    );
+  }
+
+  let pointsValueNode = <ActivityIndicator />;
+  if (summaryReady) {
+    let loadingIndicatorNode = null;
+    if (loadingSummary) {
+      loadingIndicatorNode = <ActivityIndicator size="small" style={{ marginTop: 6 }} />;
+    }
+    pointsValueNode = (
+      <>
+        <Text style={styles.cardBig}>{points}</Text>
+        {loadingIndicatorNode}
+      </>
+    );
+  }
+
+  let summaryErrorNode = null;
+  if (summaryError) {
+    summaryErrorNode = (
+      <Text style={{ marginBottom: 10, fontSize: 12, color: '#b91c1c' }}>
+        {summaryError}
+      </Text>
+    );
+  }
+
+  let checkInCircleNode = (
+    <Text style={styles.circleText}>
+      {getCheckInButtonText(checkedInToday)}
+    </Text>
+  );
+  if (checkingIn) {
+    checkInCircleNode = <ActivityIndicator />;
+  }
+
+  let loadingHomePlanNode = null;
+  if (loadingHomePlan) {
+    loadingHomePlanNode = <ActivityIndicator style={{ marginVertical: 10 }} />;
+  }
+
+  let homePlanErrorNode = null;
+  if (homePlanError) {
+    homePlanErrorNode = <Text style={styles.todoError}>{homePlanError}</Text>;
+  }
+
+  let canvasPlanWarningNode = null;
+  if (canvasPlanWarning) {
+    canvasPlanWarningNode = <Text style={styles.todoWarning}>{canvasPlanWarning}</Text>;
+  }
+
+  let homePlanEmptyNode = null;
+  if (!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0) {
+    homePlanEmptyNode = <Text style={styles.todoEmpty}>{getPlanEmptyMessage()}</Text>;
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -924,46 +983,19 @@ export default function HomeScreen() {
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Lasting days</Text>
             <View style={{ height: 6 }} />
-            {renderNodeWhenElse(
-              !summaryReady,
-              <ActivityIndicator />,
-              <>
-                <Text style={styles.cardBig}>
-                  {lastingDays}
-                  <Text style={styles.cardBigUnit}> days</Text>
-                </Text>
-                {renderNodeWhen(
-                  loadingSummary,
-                  <ActivityIndicator size="small" style={{ marginTop: 6 }} />
-                )}
-              </>
-            )}
+            {lastingDaysValueNode}
             <Text style={styles.cardHint}>Continuous sign-in builds habits</Text>
           </View>
 
           <View style={styles.card}>
             <Text style={styles.cardLabel}>points</Text>
             <View style={{ height: 6 }} />
-            {renderNodeWhenElse(
-              !summaryReady,
-              <ActivityIndicator />,
-              <>
-                <Text style={styles.cardBig}>{points}</Text>
-                {renderNodeWhen(
-                  loadingSummary,
-                  <ActivityIndicator size="small" style={{ marginTop: 6 }} />
-                )}
-              </>
-            )}
+            {pointsValueNode}
             <Text style={styles.cardHint}>Earn points by daily check-in</Text>
           </View>
         </View>
 
-        {renderNodeWhen(summaryError, (
-          <Text style={{ marginBottom: 10, fontSize: 12, color: '#b91c1c' }}>
-            {summaryError}
-          </Text>
-        ))}
+        {summaryErrorNode}
 
         <View style={styles.centerBlock}>
           <Pressable
@@ -975,13 +1007,7 @@ export default function HomeScreen() {
               getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
             ]}
           >
-            {renderNodeWhenElse(checkingIn, (
-              <ActivityIndicator />
-            ), (
-              <Text style={styles.circleText}>
-                {getCheckInButtonText(checkedInToday)}
-              </Text>
-            ))}
+            {checkInCircleNode}
           </Pressable>
 
           <View style={styles.infoRow}>
@@ -1000,14 +1026,10 @@ export default function HomeScreen() {
 
         <View style={styles.todoCard}>
           <Text style={styles.todoTitle}>Things to be done within seven days</Text>
-          {renderNodeWhen(loadingHomePlan, <ActivityIndicator style={{ marginVertical: 10 }} />)}
-          {renderNodeWhen(homePlanError, <Text style={styles.todoError}>{homePlanError}</Text>)}
-          {renderNodeWhen(canvasPlanWarning, <Text style={styles.todoWarning}>{canvasPlanWarning}</Text>)}
-
-          {renderNodeWhen(
-            !loadingHomePlan && !homePlanError && groupedHomePlan.length === 0,
-            <Text style={styles.todoEmpty}>{getPlanEmptyMessage()}</Text>
-          )}
+          {loadingHomePlanNode}
+          {homePlanErrorNode}
+          {canvasPlanWarningNode}
+          {homePlanEmptyNode}
 
           {groupedHomePlan.map((section) => (
             <View key={section.key} style={styles.todoSection}>
@@ -1022,6 +1044,10 @@ export default function HomeScreen() {
                   Row = Pressable;
                 }
                 const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+                let todoLinkHintNode = null;
+                if (safeItem.htmlUrl) {
+                  todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
+                }
 
                 return (
                   <Row key={safeItem.id} {...rowProps}>
@@ -1044,7 +1070,7 @@ export default function HomeScreen() {
                       <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
                       <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
                       <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
-                      {renderNodeWhen(safeItem.htmlUrl, <Text style={styles.todoLinkHint}>Open in Canvas</Text>)}
+                      {todoLinkHintNode}
                       <View style={styles.todoLine} />
                     </View>
                   </Row>
