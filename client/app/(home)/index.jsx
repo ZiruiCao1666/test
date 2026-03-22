@@ -71,9 +71,11 @@ const formatPlanDateTime = (item) => {
 
 const getPlanDetail = (item) => {
   if (item?.source === 'canvas') {
-    return item?.course || item?.type || 'Canvas item';
+    const parts = [item?.course, item?.type].filter(Boolean);
+    return parts.length > 0 ? parts.join(' | ') : 'Canvas item';
   }
-  return item?.type || 'Custom task';
+  const parts = [item?.type].filter(Boolean);
+  return parts.length > 0 ? parts.join(' | ') : 'Custom task';
 };
 
 const groupPlanItems = (items) => {
