@@ -22,6 +22,20 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+const getErrorMessage = (error, fallback) => {
+  if (error && typeof error.message === 'string' && error.message) {
+    return error.message;
+  }
+  return fallback;
+};
+
+const getApiErrorMessage = (data, fallback) => {
+  if (data && typeof data.error === 'string' && data.error) {
+    return data.error;
+  }
+  return fallback;
+};
+
 const formatShortDate = (value) => {
   const safe = String(value || '').trim();
   if (!DATE_INPUT_RE.test(safe)) return safe || 'Date not set';
@@ -46,34 +60,37 @@ const formatTimeOnly = (value) => {
 };
 
 const getCustomTaskTimestamp = (item) => {
-  const taskDate = String(item?.taskDate || '').trim();
+  const safeItem = item || {};
+  const taskDate = String(safeItem.taskDate || '').trim();
   if (!DATE_INPUT_RE.test(taskDate)) return null;
 
   const sourceTime =
-    item?.timingMode === 'range'
-      ? String(item?.startTime || '').trim()
-      : String(item?.dueTime || '').trim();
+    safeItem.timingMode === 'range'
+      ? String(safeItem.startTime || '').trim()
+      : String(safeItem.dueTime || '').trim();
   const safeTime = TIME_INPUT_RE.test(sourceTime) ? sourceTime : '12:00';
   const parsed = new Date(`${taskDate}T${safeTime}:00`).getTime();
   return Number.isFinite(parsed) ? parsed : null;
 };
 
 const getItemTimestamp = (item) => {
-  if (item?.source === 'custom') {
-    const customTimestamp = getCustomTaskTimestamp(item);
+  const safeItem = item || {};
+
+  if (safeItem.source === 'custom') {
+    const customTimestamp = getCustomTaskTimestamp(safeItem);
     if (customTimestamp !== null) return customTimestamp;
   }
 
-  if (typeof item?.timestampMs === 'number' && Number.isFinite(item.timestampMs)) {
-    return item.timestampMs;
+  if (typeof safeItem.timestampMs === 'number' && Number.isFinite(safeItem.timestampMs)) {
+    return safeItem.timestampMs;
   }
 
-  if (typeof item?.timestampMs === 'string' && item.timestampMs.trim() !== '') {
-    const direct = Number(item.timestampMs);
+  if (typeof safeItem.timestampMs === 'string' && safeItem.timestampMs.trim() !== '') {
+    const direct = Number(safeItem.timestampMs);
     if (Number.isFinite(direct)) return direct;
   }
 
-  const parsed = new Date(item?.date || '').getTime();
+  const parsed = new Date(safeItem.date || '').getTime();
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -104,19 +121,21 @@ const formatDaysLeft = (item) => {
 };
 
 const formatPlanDateTime = (item) => {
-  if (item?.source === 'custom') {
-    if (item?.scheduleText) return String(item.scheduleText);
+  const safeItem = item || {};
 
-    const dateLabel = formatShortDate(item?.taskDate || '');
-    if (item?.timingMode === 'range') {
-      return `${dateLabel} | ${formatTimeOnly(item?.startTime)} - ${formatTimeOnly(item?.endTime)}`;
+  if (safeItem.source === 'custom') {
+    if (safeItem.scheduleText) return String(safeItem.scheduleText);
+
+    const dateLabel = formatShortDate(safeItem.taskDate || '');
+    if (safeItem.timingMode === 'range') {
+      return `${dateLabel} | ${formatTimeOnly(safeItem.startTime)} - ${formatTimeOnly(safeItem.endTime)}`;
     }
-    return `${dateLabel} | Due ${formatTimeOnly(item?.dueTime)}`;
+    return `${dateLabel} | Due ${formatTimeOnly(safeItem.dueTime)}`;
   }
 
-  const timestamp = getItemTimestamp(item);
+  const timestamp = getItemTimestamp(safeItem);
   if (timestamp === null) {
-    return item?.date ? String(item.date) : 'Time not synced';
+    return safeItem.date ? String(safeItem.date) : 'Time not synced';
   }
 
   return new Date(timestamp).toLocaleString(undefined, {
@@ -129,11 +148,13 @@ const formatPlanDateTime = (item) => {
 };
 
 const getPlanDetail = (item) => {
-  if (item?.source === 'canvas') {
-    const parts = [item?.course, item?.type].filter(Boolean);
+  const safeItem = item || {};
+
+  if (safeItem.source === 'canvas') {
+    const parts = [safeItem.course, safeItem.type].filter(Boolean);
     return parts.length > 0 ? parts.join(' | ') : 'Canvas item';
   }
-  return item?.type || 'Custom task';
+  return safeItem.type || 'Custom task';
 };
 
 const groupPlanItems = (items) => {
@@ -169,13 +190,19 @@ const groupPlanItems = (items) => {
 export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const safeUser = user || {};
+  const primaryEmail =
+    safeUser.primaryEmailAddress && safeUser.primaryEmailAddress.emailAddress
+      ? safeUser.primaryEmailAddress.emailAddress
+      : '';
+  const userId = safeUser.id || null;
 
   const username =
-    user?.firstName ||
-    user?.fullName ||
-    user?.primaryEmailAddress?.emailAddress ||
+    safeUser.firstName ||
+    safeUser.fullName ||
+    primaryEmail ||
     'Student';
-  const avatarUrl = user?.imageUrl || null;
+  const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
 
@@ -213,20 +240,21 @@ export default function HomeScreen() {
   }, []);
 
   const summaryCacheKey = React.useMemo(() => {
-    if (!user?.id) return null;
-    return `${SUMMARY_CACHE_PREFIX}:${user.id}`;
-  }, [user?.id]);
+    if (!userId) return null;
+    return `${SUMMARY_CACHE_PREFIX}:${userId}`;
+  }, [userId]);
 
   const applySummaryData = React.useCallback((data = {}) => {
-    const nextTotal = Number(data?.totalDays) || 0;
-    const nextStreak = data?.streakDays !== undefined
-      ? Number(data?.streakDays) || 0
+    const safeData = data || {};
+    const nextTotal = Number(safeData.totalDays) || 0;
+    const nextStreak = safeData.streakDays !== undefined
+      ? Number(safeData.streakDays) || 0
       : nextTotal;
 
     setTotalSignedDays(nextTotal);
     setStreakDays(nextStreak);
-    setCheckedInToday(Boolean(data?.checkedInToday));
-    setPoints(Number(data?.points) || 0);
+    setCheckedInToday(Boolean(safeData.checkedInToday));
+    setPoints(Number(safeData.points) || 0);
     setSummaryReady(true);
   }, []);
 
@@ -234,11 +262,12 @@ export default function HomeScreen() {
     if (!summaryCacheKey) return;
 
     try {
+      const safeData = data || {};
       const payload = {
-        totalDays: Number(data?.totalDays) || 0,
-        streakDays: data?.streakDays !== undefined ? Number(data?.streakDays) || 0 : undefined,
-        checkedInToday: Boolean(data?.checkedInToday),
-        points: Number(data?.points) || 0,
+        totalDays: Number(safeData.totalDays) || 0,
+        streakDays: safeData.streakDays !== undefined ? Number(safeData.streakDays) || 0 : undefined,
+        checkedInToday: Boolean(safeData.checkedInToday),
+        points: Number(safeData.points) || 0,
         updatedAt: Date.now(),
       };
 
@@ -271,7 +300,8 @@ export default function HomeScreen() {
 
   const getSessionToken = React.useCallback(async () => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const token = await getTokenRef.current?.();
+      const tokenGetter = getTokenRef.current;
+      const token = tokenGetter ? await tokenGetter() : '';
       if (token) return token;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
@@ -291,7 +321,7 @@ export default function HomeScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
 
-      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return;
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return;
 
       const token = await getSessionToken();
       if (!token) return;
@@ -301,16 +331,16 @@ export default function HomeScreen() {
       }, timeoutMs);
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Failed to load summary');
+      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load summary'));
 
       applySummaryData(data);
       persistSummaryToCache(data);
       summaryRetryRef.current = 0;
     } catch (e) {
-      if (e?.name === 'AbortError') {
+      if (e && e.name === 'AbortError') {
         setSummaryError('Network is slow. Retrying in background...');
       } else {
-        setSummaryError(e?.message || 'Failed to load summary');
+        setSummaryError(getErrorMessage(e, 'Failed to load summary'));
       }
 
       if (summaryRetryRef.current < 2) {
@@ -320,7 +350,7 @@ export default function HomeScreen() {
         }, 1500);
       }
 
-      console.log('[Home] loadSummary error:', e?.message || e);
+      console.log('[Home] loadSummary error:', getErrorMessage(e, 'Unknown error'));
       console.log('[Home] API_BASE_URL =', API_BASE_URL);
       console.log('[Home] URL =', `${API_BASE_URL}/checkins/status`);
     } finally {
@@ -333,7 +363,7 @@ export default function HomeScreen() {
     authLoaded,
     isSignedIn,
     userLoaded,
-    user?.id,
+    userId,
     applySummaryData,
     persistSummaryToCache,
     getSessionToken,
@@ -353,7 +383,7 @@ export default function HomeScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
 
-      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return;
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return;
 
       const token = await getSessionToken();
       if (!token) return;
@@ -367,25 +397,25 @@ export default function HomeScreen() {
       );
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Failed to load seven-day plan');
+      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
 
-      setHomePlanItems(Array.isArray(data?.items) ? data.items : []);
-      setCanvasPlanWarning(String(data?.canvasError || '').trim());
+      setHomePlanItems(data && Array.isArray(data.items) ? data.items : []);
+      setCanvasPlanWarning(String(data && data.canvasError ? data.canvasError : '').trim());
     } catch (e) {
       setHomePlanItems([]);
       setCanvasPlanWarning('');
-      setHomePlanError(e?.message || 'Failed to load seven-day plan');
-      console.log('[Home] loadHomePlan error:', e?.message || e);
+      setHomePlanError(getErrorMessage(e, 'Failed to load seven-day plan'));
+      console.log('[Home] loadHomePlan error:', getErrorMessage(e, 'Unknown error'));
     } finally {
       if (!silent) {
         setLoadingHomePlan(false);
       }
     }
-  }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, user?.id, getSessionToken]);
+  }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, userId, getSessionToken]);
 
   useFocusEffect(
     React.useCallback(() => {
-      if (!authLoaded || !isSignedIn || !userLoaded || !user?.id) return undefined;
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return undefined;
 
       let alive = true;
 
@@ -405,7 +435,7 @@ export default function HomeScreen() {
       authLoaded,
       isSignedIn,
       userLoaded,
-      user?.id,
+      userId,
       hydrateSummaryFromCache,
       loadSummary,
       loadHomePlan,
@@ -435,7 +465,7 @@ export default function HomeScreen() {
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Check-in failed');
+      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Check-in failed'));
 
       setSummaryError(null);
       applySummaryData(data);
@@ -444,7 +474,7 @@ export default function HomeScreen() {
       const gained = Number(data.gainedPoints) || 0;
       Alert.alert('Check-in', gained > 0 ? `Checked in for today (+${gained} points)` : 'Already checked in today');
     } catch (e) {
-      Alert.alert('Error', e?.message || 'Something went wrong');
+      Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
       setCheckingIn(false);
     }
@@ -453,9 +483,10 @@ export default function HomeScreen() {
   const lastingDays = streakDays || totalSignedDays;
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
-    if (!item?.htmlUrl) return;
+    const safeItem = item || {};
+    if (!safeItem.htmlUrl) return;
     try {
-      await Linking.openURL(item.htmlUrl);
+      await Linking.openURL(safeItem.htmlUrl);
     } catch (_error) {
       Alert.alert('Open failed', 'Cannot open this Canvas link on the current device.');
     }
@@ -572,10 +603,11 @@ export default function HomeScreen() {
               </Text>
 
               {section.items.map((item) => {
-                const Row = item?.htmlUrl ? Pressable : View;
-                const rowProps = item?.htmlUrl
+                const safeItem = item || {};
+                const Row = safeItem.htmlUrl ? Pressable : View;
+                const rowProps = safeItem.htmlUrl
                   ? {
-                      onPress: () => openPlanItem(item),
+                      onPress: () => openPlanItem(safeItem),
                       style: ({ pressed }) => [
                         styles.todoRow,
                         styles.todoRowClickable,
@@ -587,7 +619,7 @@ export default function HomeScreen() {
                     };
 
                 return (
-                  <Row key={item.id} {...rowProps}>
+                  <Row key={safeItem.id} {...rowProps}>
                     {avatarUrl ? (
                       <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />
                     ) : (
@@ -602,20 +634,20 @@ export default function HomeScreen() {
                         <View
                           style={[
                             styles.todoSourceBadge,
-                            item?.source === 'custom'
+                            safeItem.source === 'custom'
                               ? styles.todoSourceBadgeCustom
                               : styles.todoSourceBadgeCanvas,
                           ]}
                         >
                           <Text style={styles.todoSourceBadgeText}>
-                            {item?.source === 'custom' ? 'Custom' : 'Canvas'}
+                            {safeItem.source === 'custom' ? 'Custom' : 'Canvas'}
                           </Text>
                         </View>
                       </View>
-                      <Text style={styles.todoText}>{item?.title || 'Untitled task'}</Text>
-                      <Text style={styles.todoMeta}>{getPlanDetail(item)}</Text>
-                      <Text style={styles.todoMetaStrong}>{formatPlanDateTime(item)}</Text>
-                      {item?.htmlUrl ? <Text style={styles.todoLinkHint}>Open in Canvas</Text> : null}
+                      <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
+                      <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
+                      <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
+                      {safeItem.htmlUrl ? <Text style={styles.todoLinkHint}>Open in Canvas</Text> : null}
                       <View style={styles.todoLine} />
                     </View>
                   </Row>
