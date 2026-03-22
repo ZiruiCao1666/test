@@ -55,8 +55,15 @@ function mapRewardRow(row) {
 }
 
 function trimTaskTime(value) {
-  const safe = String(value ?? '').trim()
-  return safe ? safe.slice(0, 5) : ''
+  let safeValue = ''
+  if (value !== null && value !== undefined) {
+    safeValue = value
+  }
+  const safe = String(safeValue).trim()
+  if (!safe) {
+    return ''
+  }
+  return safe.slice(0, 5)
 }
 
 function mapCustomTaskRow(row) {
@@ -75,26 +82,41 @@ function mapCustomTaskRow(row) {
 }
 
 function normalizeDateInput(value) {
-  const safe = String(value ?? '').trim()
+  let safeValue = ''
+  if (value !== null && value !== undefined) {
+    safeValue = value
+  }
+  const safe = String(safeValue).trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(safe)) return ''
   return safe
 }
 
 function normalizeTimeInput(value) {
-  const safe = String(value ?? '').trim()
+  let safeValue = ''
+  if (value !== null && value !== undefined) {
+    safeValue = value
+  }
+  const safe = String(safeValue).trim()
   if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(safe)) return ''
   return safe
 }
 
 function normalizeTaskPayload(body) {
-  const title = String(body?.title ?? '').trim()
-  const taskDate = normalizeDateInput(body?.taskDate)
-  const timingMode =
-    body?.timingMode === TASK_MODE_RANGE ? TASK_MODE_RANGE : TASK_MODE_DEADLINE
-  const dueTime = normalizeTimeInput(body?.dueTime)
-  const startTime = normalizeTimeInput(body?.startTime)
-  const endTime = normalizeTimeInput(body?.endTime)
-  const isCompleted = Boolean(body?.isCompleted)
+  const safeBody = body || {}
+  let titleValue = ''
+  if (safeBody.title !== null && safeBody.title !== undefined) {
+    titleValue = safeBody.title
+  }
+  const title = String(titleValue).trim()
+  const taskDate = normalizeDateInput(safeBody.taskDate)
+  let timingMode = TASK_MODE_DEADLINE
+  if (safeBody.timingMode === TASK_MODE_RANGE) {
+    timingMode = TASK_MODE_RANGE
+  }
+  const dueTime = normalizeTimeInput(safeBody.dueTime)
+  const startTime = normalizeTimeInput(safeBody.startTime)
+  const endTime = normalizeTimeInput(safeBody.endTime)
+  const isCompleted = Boolean(safeBody.isCompleted)
 
   if (!title) {
     return { error: 'Task title is required' }
@@ -177,9 +199,10 @@ function decryptCanvasToken(cipherText, iv, authTag) {
 function normalizeCanvasBaseUrl(value) {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`
+  let withProtocol = `https://${trimmed}`
+  if (/^https?:\/\//i.test(trimmed)) {
+    withProtocol = trimmed
+  }
   return withProtocol.replace(/\/+$/, '')
 }
 
@@ -190,6 +213,16 @@ function buildCanvasBaseUrl(value) {
     return normalizeCanvasBaseUrl(trimmed)
   }
   return `https://${trimmed}.instructure.com`
+}
+
+function buildAbsoluteCanvasUrl(baseUrl, value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (trimmed.startsWith('/')) {
+    return `${baseUrl}${trimmed}`
+  }
+  return `${baseUrl}/${trimmed}`
 }
 
 function parseLinkHeader(header) {
@@ -204,7 +237,10 @@ function parseLinkHeader(header) {
 }
 
 async function fetchCanvasPage(baseUrl, token, pathOrUrl) {
-  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${baseUrl}${pathOrUrl}`
+  let url = `${baseUrl}${pathOrUrl}`
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    url = pathOrUrl
+  }
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -223,7 +259,18 @@ async function fetchCanvasPage(baseUrl, token, pathOrUrl) {
   }
 
   if (!response.ok) {
-    const message = data?.errors?.[0]?.message || data?.message || response.statusText
+    let errors = []
+    if (data && Array.isArray(data.errors)) {
+      errors = data.errors
+    }
+    let firstError = null
+    if (errors.length > 0) {
+      firstError = errors[0]
+    }
+    const message =
+      (firstError && firstError.message) ||
+      (data && data.message) ||
+      response.statusText
     throw new Error(`Canvas ${response.status} ${message}`)
   }
 
@@ -252,8 +299,9 @@ async function fetchCanvasPaged(baseUrl, token, path) {
 
   return aggregated
 }
-
 async function getStoredCanvasCredentials(userId) {
+  // Make sure the current user already exists in app_users.
+  // This avoids missing-user problems before reading saved Canvas credentials.
   await ensureUserRow(userId)
 
   const result = await pool.query(
@@ -264,7 +312,6 @@ async function getStoredCanvasCredentials(userId) {
     `,
     [userId],
   )
-
   if (result.rowCount === 0) {
     return { school: '', token: '' }
   }
@@ -287,54 +334,185 @@ async function getStoredCanvasCredentials(userId) {
 }
 
 function buildCustomTaskDateTime(task) {
-  const date = String(task?.taskDate || '').trim()
+  const safeTask = task || {}
+  const date = String(safeTask.taskDate || '').trim()
   if (!date) return ''
 
-  if (task?.timingMode === TASK_MODE_RANGE && trimTaskTime(task?.startTime)) {
-    return `${date}T${trimTaskTime(task.startTime)}:00`
+  if (safeTask.timingMode === TASK_MODE_RANGE && trimTaskTime(safeTask.startTime)) {
+    return `${date}T${trimTaskTime(safeTask.startTime)}:00`
   }
 
-  if (trimTaskTime(task?.dueTime)) {
-    return `${date}T${trimTaskTime(task.dueTime)}:00`
+  if (trimTaskTime(safeTask.dueTime)) {
+    return `${date}T${trimTaskTime(safeTask.dueTime)}:00`
   }
 
   return `${date}T12:00:00`
 }
 
+function formatHomeTaskSchedule(task) {
+  // 把自定义任务转换成首页直接展示的时间文案。
+  // 例如：
+  // - 20 Mar | Due 18:00
+  // - 25 Mar | 09:00 - 10:00
+  const safeTask = task || {}
+  const taskDate = String(safeTask.taskDate || '').trim()
+  if (!taskDate) return 'Date not set'
+
+  const parsed = new Date(`${taskDate}T00:00:00`)
+  let dateLabel = taskDate
+  if (!Number.isNaN(parsed.getTime())) {
+    dateLabel = parsed.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+    })
+  }
+
+  if (safeTask.timingMode === TASK_MODE_RANGE) {
+    const start = trimTaskTime(safeTask.startTime)
+    const end = trimTaskTime(safeTask.endTime)
+    return `${dateLabel} | ${start || '--:--'} - ${end || '--:--'}`
+  }
+
+  return `${dateLabel} | Due ${trimTaskTime(safeTask.dueTime) || '--:--'}`
+}
+
+function getCanvasPlanDate(item) {
+  // Canvas 不同类型的任务，时间字段不完全一致。
+  // 这里按优先级兜底，尽量拿到最准确的截止时间。
+  const safeItem = item || {}
+  const plannable = safeItem.plannable || {}
+  const assignment = safeItem.assignment || {}
+  return (
+    plannable.due_at ||
+    plannable.todo_date ||
+    safeItem.plannable_date ||
+    assignment.due_at ||
+    safeItem.due_at ||
+    safeItem.start_at ||
+    safeItem.end_at ||
+    plannable.all_day_date ||
+    safeItem.all_day_date ||
+    ''
+  )
+}
+
+function getCanvasPlanTitle(item) {
+  // Canvas 标题字段可能出现在 plannable / assignment / 顶层对象里，
+  // 这里统一做一次提取，减少前端重复判断。
+  const safeItem = item || {}
+  const plannable = safeItem.plannable || {}
+  const assignment = safeItem.assignment || {}
+  return (
+    plannable.name ||
+    plannable.title ||
+    safeItem.title ||
+    safeItem.name ||
+    assignment.name ||
+    'Untitled event'
+  )
+}
+
+function getCanvasPlanType(item) {
+  // 把 Canvas 返回的原始类型整理成更适合前端直接显示的文本。
+  const safeItem = item || {}
+  const assignment = safeItem.assignment || {}
+  let rawType = 'event'
+  if (safeItem.plannable_type) {
+    rawType = safeItem.plannable_type
+  } else if (safeItem.type) {
+    rawType = safeItem.type
+  } else if (assignment.type) {
+    rawType = assignment.type
+  } else if (safeItem.linked_object_type) {
+    rawType = safeItem.linked_object_type
+  }
+  return String(rawType).replace(/_/g, ' ')
+}
+
+function getCanvasPlanCourse(item, courseNameById) {
+  // 先用 course_id 去课程表里找正式课程名，
+  // 如果没有，再退回 Canvas 返回对象里的上下文字段。
+  const safeItem = item || {}
+  const assignment = safeItem.assignment || {}
+  const plannable = safeItem.plannable || {}
+  const courseId = String(safeItem.course_id || safeItem.context_id || '')
+  if (courseId && courseNameById[courseId]) {
+    return courseNameById[courseId]
+  }
+
+  return (
+    safeItem.context_name ||
+    safeItem.course_name ||
+    assignment.course_name ||
+    plannable.context_name ||
+    ''
+  )
+}
+
 function mapCustomTaskToPlanItem(task) {
-  const date = buildCustomTaskDateTime(task)
+  // 把数据库里的自定义任务转换成首页 /home/plan 能直接使用的统一结构。
+  // 统一后，首页就能把 custom task 和 Canvas task 一起排序展示。
+  const safeTask = task || {}
+  const date = buildCustomTaskDateTime(safeTask)
   const sortTs = new Date(date).getTime()
+  let type = 'due time'
+  if (safeTask.timingMode === TASK_MODE_RANGE) {
+    type = 'time range'
+  }
+  let timestampMs = null
+  if (!Number.isNaN(sortTs)) {
+    timestampMs = sortTs
+  }
+  let safeSortTs = Number.MAX_SAFE_INTEGER
+  if (!Number.isNaN(sortTs)) {
+    safeSortTs = sortTs
+  }
 
   return {
-    id: `custom-${String(task.id)}`,
+    id: `custom-${String(safeTask.id)}`,
     source: 'custom',
-    title: task.title || 'Untitled task',
+    title: safeTask.title || 'Untitled task',
     course: '',
-    type: task?.timingMode === TASK_MODE_RANGE ? 'custom range' : 'custom deadline',
+    type,
     date,
-    timestampMs: Number.isNaN(sortTs) ? null : sortTs,
+    timestampMs,
     htmlUrl: '',
-    isCompleted: Boolean(task?.isCompleted),
-    sortTs: Number.isNaN(sortTs) ? Number.MAX_SAFE_INTEGER : sortTs,
+    isCompleted: Boolean(safeTask.isCompleted),
+    taskDate: safeTask.taskDate || '',
+    timingMode: safeTask.timingMode || TASK_MODE_DEADLINE,
+    dueTime: trimTaskTime(safeTask.dueTime),
+    startTime: trimTaskTime(safeTask.startTime),
+    endTime: trimTaskTime(safeTask.endTime),
+    scheduleText: formatHomeTaskSchedule(safeTask),
+    sortTs: safeSortTs,
   }
 }
 
-function mapCanvasEventToPlanItem(item, index) {
-  const date = item?.due_at || item?.start_at || item?.end_at || ''
+function mapCanvasEventToPlanItem(item, index, options = {}) {
+  // 把 Canvas Planner API 的返回结果也转换成同一套结构，
+  // 这样前端不用分别写两套渲染逻辑。
+  const { baseUrl = '', courseNameById = {} } = options
+  const safeItem = item || {}
+  const plannable = safeItem.plannable || {}
+  const assignment = safeItem.assignment || {}
+  const date = getCanvasPlanDate(safeItem)
   if (!date) return null
 
   const sortTs = new Date(date).getTime()
   if (Number.isNaN(sortTs)) return null
 
   return {
-    id: `canvas-${String(item?.id || item?.event_id || item?.assignment_id || index)}`,
+    id: `canvas-${String(safeItem.id || safeItem.event_id || safeItem.assignment_id || index)}`,
     source: 'canvas',
-    title: item?.title || item?.name || 'Untitled event',
-    course: item?.context_name || item?.assignment?.course_name || '',
-    type: item?.type || item?.assignment?.type || 'event',
+    title: getCanvasPlanTitle(safeItem),
+    course: getCanvasPlanCourse(safeItem, courseNameById),
+    type: getCanvasPlanType(safeItem),
     date,
     timestampMs: sortTs,
-    htmlUrl: item?.html_url || item?.assignment?.html_url || '',
+    htmlUrl: buildAbsoluteCanvasUrl(
+      baseUrl,
+      safeItem.html_url || plannable.html_url || assignment.html_url || '',
+    ),
     isCompleted: false,
     sortTs,
   }
@@ -361,12 +539,18 @@ async function getStreakDays(db, userId, today) {
     [userId, today],
   )
 
-  return r.rows[0]?.streak ?? 0
+  let firstRow = null
+  if (r.rows && r.rows.length > 0) {
+    firstRow = r.rows[0]
+  }
+  if (firstRow && firstRow.streak != null) {
+    return firstRow.streak
+  }
+  return 0
 }
 
 async function initDb() {
-  // 1) 用户表：新增 points 字段
-  // 2) 签到表：一人一天只能有一条（UNIQUE），防止重复加分
+  // Create the core tables the app needs before any route starts using them.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_users (
       clerk_user_id TEXT PRIMARY KEY,
@@ -456,7 +640,7 @@ async function initDb() {
 
 initDb().catch((e) => {
   console.error('[DB] init failed:', e)
-  // 云上不建议直接 process.exit(1)，先让服务起来，方便 /health 看错误
+  // On hosted platforms, keep the service alive so /health can still report DB problems.
 })
 
 app.get('/health', async (_req, res) => {
@@ -469,13 +653,15 @@ app.get('/health', async (_req, res) => {
 })
 
 // 用英国当天日期，避免时区跨天问题
+// Use the London calendar date so daily features do not drift across time zones.
 async function getLondonToday() {
   const r = await pool.query(`SELECT (NOW() AT TIME ZONE 'Europe/London')::date AS today`)
-  return r.rows[0].today // 例如 '2026-01-27'
+  return r.rows[0].today
 }
 
-// 确保 users 表里至少有一行（避免用户没 sync 也能签到报错）
+// Make sure app_users always has one row for the current Clerk user.
 async function ensureUserRow(userId) {
+  // Check-ins, rewards, Canvas credentials, and custom tasks all depend on this row.
   await pool.query(
     `
     INSERT INTO app_users (clerk_user_id, last_seen_at)
@@ -486,24 +672,29 @@ async function ensureUserRow(userId) {
   )
 }
 
-// 前端登录成功后调用：验证 session token，并把用户写入 Neon
-// 参考 Clerk Express getAuth 官方文档：https://clerk.com/docs/reference/express/get-auth
-// 官方方式是在路由里调用 getAuth(req) 取出 userId/sessionId，再执行自己的业务逻辑。
+// Frontend calls this after sign-in so the backend can sync the current Clerk user into Neon.
+// Reference: Clerk Express getAuth(req) and Clerk backend users.getUser(userId).
 app.post('/users/sync', async (req, res) => {
   try {
     const { userId, sessionId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    // 参考 Clerk Backend Users 文档：https://clerk.com/docs/reference/backend/user/get-user
-    // 这里按官方后端模式通过 clerkClient.users.getUser(userId) 回填邮箱、姓名、头像。
     const user = await clerkClient.users.getUser(userId)
 
-    // 更稳：优先 primaryEmailAddress.emailAddress（而不是 primaryEmailAddressId）
-    // 优先使用 Clerk primaryEmailAddress.emailAddress，和官方 User 资源字段保持一致。
-    const email =
-      user.primaryEmailAddress?.emailAddress ||
-      user.emailAddresses?.[0]?.emailAddress ||
-      null
+    let primaryEmail = null
+    if (user.primaryEmailAddress && user.primaryEmailAddress.emailAddress) {
+      primaryEmail = user.primaryEmailAddress.emailAddress
+    }
+    let firstEmail = null
+    if (
+      user.emailAddresses &&
+      user.emailAddresses.length > 0 &&
+      user.emailAddresses[0] &&
+      user.emailAddresses[0].emailAddress
+    ) {
+      firstEmail = user.emailAddresses[0].emailAddress
+    }
+    const email = primaryEmail || firstEmail || null
 
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || null
     const avatarUrl = user.imageUrl || null
@@ -574,10 +765,19 @@ app.put('/canvas/credentials', async (req, res) => {
 
     await ensureUserRow(userId)
 
-    const schoolRaw = req.body?.school
-    const tokenRaw = req.body?.token
-    const school = String(schoolRaw ?? '').trim()
-    const token = String(tokenRaw ?? '').trim()
+    const safeBody = req.body || {}
+    const schoolRaw = safeBody.school
+    const tokenRaw = safeBody.token
+    let safeSchoolRaw = ''
+    if (schoolRaw !== null && schoolRaw !== undefined) {
+      safeSchoolRaw = schoolRaw
+    }
+    let safeTokenRaw = ''
+    if (tokenRaw !== null && tokenRaw !== undefined) {
+      safeTokenRaw = tokenRaw
+    }
+    const school = String(safeSchoolRaw).trim()
+    const token = String(safeTokenRaw).trim()
 
     if (school.length > 255) {
       return res.status(400).json({ error: 'School is too long' })
@@ -648,11 +848,14 @@ app.get('/home/plan', async (req, res) => {
 
     await ensureUserRow(userId)
 
-    const rawDays = Number(req.query?.days)
-    const days = Number.isInteger(rawDays)
-      ? Math.min(Math.max(rawDays, 1), 30)
-      : 7
+    const safeQuery = req.query || {}
+    const rawDays = Number(safeQuery.days)
+    let days = 7
+    if (Number.isInteger(rawDays)) {
+      days = Math.min(Math.max(rawDays, 1), 30)
+    }
 
+    // Step 1: load incomplete custom tasks for the next N days.
     const customTaskResult = await pool.query(
       `
       SELECT
@@ -680,6 +883,7 @@ app.get('/home/plan', async (req, res) => {
       .map(mapCustomTaskRow)
       .map(mapCustomTaskToPlanItem)
 
+    // Step 2: if Canvas credentials exist, load official Canvas planner items.
     let canvasItems = []
     let canvasConnected = false
     let canvasError = ''
@@ -690,33 +894,76 @@ app.get('/home/plan', async (req, res) => {
 
       if (canvasConnected) {
         const baseUrl = buildCanvasBaseUrl(stored.school)
-        const rawCanvasItems = await fetchCanvasPaged(
-          baseUrl,
-          stored.token,
-          '/api/v1/users/self/upcoming_events?per_page=50',
-        )
-
         const nowTs = Date.now()
         const endTs = nowTs + days * 24 * 60 * 60 * 1000
+        const startIso = new Date(nowTs).toISOString()
+        const endIso = new Date(endTs).toISOString()
 
-        canvasItems = (Array.isArray(rawCanvasItems) ? rawCanvasItems : [])
-          .map((item, index) => mapCanvasEventToPlanItem(item, index))
+        // Load both course names and planner items.
+        // - Courses let us map course_id to a readable course name.
+        // - Planner items give the official upcoming study items.
+        const [rawCourses, rawCanvasItems] = await Promise.all([
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            '/api/v1/courses?enrollment_type=student&enrollment_state=active&per_page=100',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            `/api/v1/planner/items?start_date=${encodeURIComponent(startIso)}&end_date=${encodeURIComponent(endIso)}&filter=incomplete_items&per_page=50`,
+          ),
+        ])
+
+        let safeCourses = []
+        if (Array.isArray(rawCourses)) {
+          safeCourses = rawCourses
+        }
+        const courseNameById = safeCourses.reduce((acc, course) => {
+          const safeCourse = course || {}
+          const courseId = String(safeCourse.id || '')
+          if (courseId) {
+            acc[courseId] = safeCourse.name || safeCourse.course_code || 'Course ' + courseId
+          }
+          return acc
+        }, {})
+
+        let safeCanvasItems = []
+        if (Array.isArray(rawCanvasItems)) {
+          safeCanvasItems = rawCanvasItems
+        }
+        canvasItems = safeCanvasItems
+          .map((item, index) =>
+            mapCanvasEventToPlanItem(item, index, {
+              baseUrl,
+              courseNameById,
+            }),
+          )
           .filter((item) => item && item.sortTs >= nowTs && item.sortTs <= endTs)
       }
     } catch (canvasLoadError) {
-      canvasError =
-        canvasLoadError instanceof Error
-          ? canvasLoadError.message
-          : 'Failed to load Canvas items'
+      if (canvasLoadError instanceof Error) {
+        canvasError = canvasLoadError.message
+      } else {
+        canvasError = 'Failed to load Canvas items'
+      }
       console.error('[BE] /home/plan canvas error:', canvasLoadError)
     }
 
-    const items = [...customItems, ...canvasItems]
-      .sort((left, right) => {
-        if (left.sortTs !== right.sortTs) return left.sortTs - right.sortTs
-        return String(left.title || '').localeCompare(String(right.title || ''))
-      })
-      .map(({ sortTs, ...item }) => item)
+    // Step 3: merge custom tasks and Canvas tasks, then sort by time.
+    const mergedItems = customItems.concat(canvasItems)
+    mergedItems.sort((left, right) => {
+      if (left.sortTs !== right.sortTs) {
+        return left.sortTs - right.sortTs
+      }
+      return String(left.title || '').localeCompare(String(right.title || ''))
+    })
+
+    const items = mergedItems.map((item) => {
+      const nextItem = { ...item }
+      delete nextItem.sortTs
+      return nextItem
+    })
 
     return res.json({
       ok: true,
@@ -845,7 +1092,8 @@ app.put('/tasks/:id', async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
     await ensureUserRow(userId)
-    const taskId = Number(req.params?.id)
+    const safeParams = req.params || {}
+    const taskId = Number(safeParams.id)
     if (!Number.isInteger(taskId) || taskId <= 0) {
       return res.status(400).json({ error: 'Invalid task id' })
     }
@@ -916,7 +1164,8 @@ app.delete('/tasks/:id', async (req, res) => {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    const taskId = Number(req.params?.id)
+    const safeParams = req.params || {}
+    const taskId = Number(safeParams.id)
     if (!Number.isInteger(taskId) || taskId <= 0) {
       return res.status(400).json({ error: 'Invalid task id' })
     }
@@ -972,13 +1221,23 @@ app.get('/checkins/status', async (req, res) => {
       [userId],
     )
 
+    let currentPoints = 0
+    if (
+      points.rows &&
+      points.rows.length > 0 &&
+      points.rows[0] &&
+      points.rows[0].points != null
+    ) {
+      currentPoints = points.rows[0].points
+    }
+
     return res.json({
       ok: true,
       today,
       checkedInToday: Boolean(exists.rows[0].checked_in_today),
       totalDays: total.rows[0].total_days,
       streakDays: await getStreakDays(pool, userId, today),
-      points: points.rows[0]?.points ?? 0,
+      points: currentPoints,
     })
   } catch (e) {
     console.error('[BE] /checkins/status error:', e)
@@ -1028,7 +1287,8 @@ app.post('/rewards/redeem', async (req, res) => {
 
     await ensureUserRow(userId)
 
-    const rewardId = Number(req.body?.rewardId)
+    const safeBody = req.body || {}
+    const rewardId = Number(safeBody.rewardId)
     if (!Number.isInteger(rewardId) || rewardId <= 0) {
       return res.status(400).json({ error: 'Invalid rewardId' })
     }
@@ -1065,7 +1325,14 @@ app.post('/rewards/redeem', async (req, res) => {
       `,
       [userId],
     )
-    const currentPoints = Number(pointsResult.rows[0]?.points) || 0
+    let currentPoints = 0
+    if (
+      pointsResult.rows &&
+      pointsResult.rows.length > 0 &&
+      pointsResult.rows[0]
+    ) {
+      currentPoints = Number(pointsResult.rows[0].points) || 0
+    }
 
     if (currentPoints < reward.pointsCost) {
       await client.query('ROLLBACK')
@@ -1098,9 +1365,18 @@ app.post('/rewards/redeem', async (req, res) => {
     await client.query('COMMIT')
 
     const order = orderResult.rows[0]
+    let remainingPoints = 0
+    if (
+      updatedUser.rows &&
+      updatedUser.rows.length > 0 &&
+      updatedUser.rows[0]
+    ) {
+      remainingPoints = Number(updatedUser.rows[0].points) || 0
+    }
+
     return res.json({
       ok: true,
-      remainingPoints: Number(updatedUser.rows[0]?.points) || 0,
+      remainingPoints,
       order: {
         id: order.id,
         rewardId: reward.id,
@@ -1210,8 +1486,10 @@ app.post('/checkins/today', async (req, res) => {
     // 只有今天第一次签到才加分
     if (didInsert) {
       streakDays = await getStreakDays(client, userId, today)
-      const multiplier =
-        streakDays === TRIPLE_REWARD_STREAK ? TRIPLE_REWARD_MULTIPLIER : 1
+      let multiplier = 1
+      if (streakDays === TRIPLE_REWARD_STREAK) {
+        multiplier = TRIPLE_REWARD_MULTIPLIER
+      }
       gainedPoints = CHECKIN_POINTS * multiplier
 
       await client.query(
@@ -1234,14 +1512,28 @@ app.post('/checkins/today', async (req, res) => {
 
     await client.query('COMMIT')
 
+    let returnedGainedPoints = 0
+    if (didInsert) {
+      returnedGainedPoints = gainedPoints
+    }
+    let currentPoints = 0
+    if (
+      points.rows &&
+      points.rows.length > 0 &&
+      points.rows[0] &&
+      points.rows[0].points != null
+    ) {
+      currentPoints = points.rows[0].points
+    }
+
     return res.json({
       ok: true,
       today,
       checkedInToday: true,
-      gainedPoints: didInsert ? gainedPoints : 0,
+      gainedPoints: returnedGainedPoints,
       totalDays: total.rows[0].total_days,
       streakDays,
-      points: points.rows[0]?.points ?? 0,
+      points: currentPoints,
     })
   } catch (e) {
     await client.query('ROLLBACK')
