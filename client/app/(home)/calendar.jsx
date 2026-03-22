@@ -2094,6 +2094,102 @@ export default function CalendarScreen() {
     selectedCalendarDetailState = submissionDetailsByAssignment[selectedCalendarDetailKey] || {};
   }
   const selectedCalendarDetailData = selectedCalendarDetailState.data || null;
+  let lastSyncNode = null;
+  if (lastSyncAt) {
+    lastSyncNode = (
+      <Text style={styles.sync}>
+        Last sync:
+        {' '}
+        {lastSyncAt.toLocaleString()}
+      </Text>
+    );
+  }
+  let selectedCalendarDetailNode = null;
+  if (safeSelectedCalendarItem) {
+    selectedCalendarDetailNode = (
+      <View style={styles.sheetDetailPanel}>
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Type</Text>
+          <Text style={styles.detailText}>{getCalendarDetailTypeLabel(safeSelectedCalendarItem)}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Course</Text>
+          <Text style={styles.detailText}>{safeSelectedCalendarItem.course || 'Canvas'}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Status</Text>
+          <Text style={styles.detailText}>{safeSelectedCalendarItem.status || 'N/A'}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Schedule</Text>
+          <Text style={styles.detailText}>{formatCalendarDetailSchedule(safeSelectedCalendarItem)}</Text>
+        </View>
+
+        {renderNodeWhen(safeSelectedCalendarItem.source === 'assignment', (
+          <>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailMeta}>Score</Text>
+              <Text style={styles.detailText}>
+                {formatScoreValue(
+                  safeSelectedCalendarItem.score,
+                  safeSelectedCalendarItem.pointsPossible
+                )}
+              </Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailMeta}>Submitted</Text>
+              <Text style={styles.detailText}>
+                {getTextWhen(
+                  safeSelectedCalendarItem.submittedAt,
+                  formatDateTime(safeSelectedCalendarItem.submittedAt),
+                  'Not submitted'
+                )}
+              </Text>
+            </View>
+            <View style={styles.detailRow}>
+              <Text style={styles.detailMeta}>Late</Text>
+              <Text style={styles.detailText}>
+                {getYesNoText(safeSelectedCalendarItem.late)}
+              </Text>
+            </View>
+            <Text style={styles.detailHeading}>Teacher comments</Text>
+            {renderNodeWhenElse(selectedCalendarDetailState.loading, (
+              <Text style={styles.detailMuted}>Loading submission detail...</Text>
+            ), renderNodeWhenElse(selectedCalendarDetailState.error, (
+              <Text style={styles.detailError}>
+                Failed to load detail: {selectedCalendarDetailState.error}
+              </Text>
+            ), renderNodeWhenElse(selectedCalendarTeacherComments.length === 0, (
+              <Text style={styles.detailMuted}>No teacher comments yet.</Text>
+            ), (
+              selectedCalendarTeacherComments.map((comment, index) => (
+                <View
+                  key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
+                  style={styles.detailRow}
+                >
+                  <Text style={styles.detailMeta}>
+                    {formatDateTime((comment || {}).created_at)}
+                  </Text>
+                  <Text style={styles.detailText}>
+                    {(comment || {}).comment || 'No comment text'}
+                  </Text>
+                </View>
+              ))
+            ))))}
+          </>
+        ))}
+
+        {renderNodeWhen(safeSelectedCalendarItem.source === 'customTask', (
+          <Text style={styles.sheetDetailNote}>
+            This is your own task stored in the app and merged into the planner.
+          </Text>
+        ))}
+      </View>
+    );
+  }
   const selectedCalendarTeacherComments = useMemo(() => {
     if (!selectedCalendarDetailData) return [];
     let detailComments = [];
@@ -2273,13 +2369,7 @@ export default function CalendarScreen() {
             {getCanvasStorageHelperText(canPersistToBackend)}
           </Text>
           {renderNodeWhen(error, <Text style={styles.error}>{error}</Text>)}
-          {renderNodeWhen(lastSyncAt, (
-            <Text style={styles.sync}>
-              Last sync:
-              {' '}
-              {lastSyncAt.toLocaleString()}
-            </Text>
-          ))}
+          {lastSyncNode}
         </View>
 
         {renderNodeWhen(hasPlannerContent, (
@@ -3245,89 +3335,7 @@ export default function CalendarScreen() {
         subtitle={selectedCalendarDetailSubtitle}
         confirmLabel={getCalendarDetailConfirmLabel(safeSelectedCalendarItem)}
       >
-        {renderNodeWhen(safeSelectedCalendarItem, (
-          <View style={styles.sheetDetailPanel}>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Type</Text>
-              <Text style={styles.detailText}>{getCalendarDetailTypeLabel(safeSelectedCalendarItem)}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Course</Text>
-              <Text style={styles.detailText}>{safeSelectedCalendarItem.course || 'Canvas'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Status</Text>
-              <Text style={styles.detailText}>{safeSelectedCalendarItem.status || 'N/A'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Schedule</Text>
-              <Text style={styles.detailText}>{formatCalendarDetailSchedule(safeSelectedCalendarItem)}</Text>
-            </View>
-
-            {renderNodeWhen(safeSelectedCalendarItem.source === 'assignment', (
-              <>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Score</Text>
-                  <Text style={styles.detailText}>
-                    {formatScoreValue(
-                      safeSelectedCalendarItem.score,
-                      safeSelectedCalendarItem.pointsPossible
-                    )}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Submitted</Text>
-                  <Text style={styles.detailText}>
-                    {getTextWhen(
-                      safeSelectedCalendarItem.submittedAt,
-                      formatDateTime(safeSelectedCalendarItem.submittedAt),
-                      'Not submitted'
-                    )}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailMeta}>Late</Text>
-                  <Text style={styles.detailText}>
-                    {getYesNoText(safeSelectedCalendarItem.late)}
-                  </Text>
-                </View>
-                <Text style={styles.detailHeading}>Teacher comments</Text>
-                {renderNodeWhenElse(selectedCalendarDetailState.loading, (
-                  <Text style={styles.detailMuted}>Loading submission detail...</Text>
-                ), renderNodeWhenElse(selectedCalendarDetailState.error, (
-                  <Text style={styles.detailError}>
-                    Failed to load detail: {selectedCalendarDetailState.error}
-                  </Text>
-                ), renderNodeWhenElse(selectedCalendarTeacherComments.length === 0, (
-                  <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-                ), (
-                  selectedCalendarTeacherComments.map((comment, index) => (
-                    <View
-                      key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
-                      style={styles.detailRow}
-                    >
-                      <Text style={styles.detailMeta}>
-                        {formatDateTime((comment || {}).created_at)}
-                      </Text>
-                      <Text style={styles.detailText}>
-                        {(comment || {}).comment || 'No comment text'}
-                      </Text>
-                    </View>
-                  ))
-                ))))}
-              </>
-            ))}
-
-            {renderNodeWhen(safeSelectedCalendarItem.source === 'customTask', (
-              <Text style={styles.sheetDetailNote}>
-                This is your own task stored in the app and merged into the planner.
-              </Text>
-            ))}
-          </View>
-        ))}
+        {selectedCalendarDetailNode}
       </BottomSheetPicker>
     </SafeAreaView>
   );
