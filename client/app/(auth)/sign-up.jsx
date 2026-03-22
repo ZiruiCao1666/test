@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import {
   View,
   Text,
@@ -34,11 +34,6 @@ const getClerkErrorMessage = (error, fallbackMessage) => {
   return getErrorMessage(error, fallbackMessage);
 };
 
-const renderNodeWhenElse = (condition, trueNode, falseNode) => {
-  if (condition) return trueNode;
-  return falseNode;
-};
-
 const getOpacityValue = (condition) => {
   if (condition) return 0.7;
   return 1;
@@ -46,19 +41,14 @@ const getOpacityValue = (condition) => {
 
 export default function SignUpScreen() {
   const router = useRouter();
-  // Clerk: get the current session token before calling our backend.
   const { getToken } = useAuth();
-  // Clerk: email/password sign-up flow.
   const { isLoaded, signUp, setActive } = useSignUp();
-  // Clerk: browser-based SSO flow.
   const { startSSOFlow } = useSSO();
 
   const [emailAddress, setEmailAddress] = React.useState('');
   const [password, setPassword] = React.useState('');
-
   const [pendingVerification, setPendingVerification] = React.useState(false);
   const [code, setCode] = React.useState('');
-
   const [loadingSubmit, setLoadingSubmit] = React.useState(false);
   const [loadingVerify, setLoadingVerify] = React.useState(false);
   const [loadingSSO, setLoadingSSO] = React.useState(null);
@@ -68,8 +58,10 @@ export default function SignUpScreen() {
       if (!API_BASE_URL) {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
+
       const token = await getToken();
       if (!token) return;
+
       await fetch(`${API_BASE_URL}/users/sync`, {
         method: 'POST',
         headers: {
@@ -78,8 +70,8 @@ export default function SignUpScreen() {
         },
         body: JSON.stringify({}),
       });
-    } catch (e) {
-      console.log('[FE] sync error:', getErrorMessage(e, 'sync failed'));
+    } catch (error) {
+      console.log('[FE] sync error:', getErrorMessage(error, 'sync failed'));
     }
   };
 
@@ -98,8 +90,7 @@ export default function SignUpScreen() {
 
     setLoadingSubmit(true);
     try {
-      // 参考 Clerk Quickstart：https://clerk.com/docs/expo/getting-started/quickstart
-      // 官方邮箱注册流程是 create -> prepareEmailAddressVerification -> attemptEmailAddressVerification。
+      // Clerk 官方邮箱注册流程：create(...) 之后准备邮箱验证码，再完成 attemptEmailAddressVerification(...).
       await signUp.create({
         emailAddress: emailAddress.trim(),
         password,
@@ -107,10 +98,10 @@ export default function SignUpScreen() {
 
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setPendingVerification(true);
-    } catch (err) {
-      console.log('[sign-up] error:', JSON.stringify(err, null, 2));
-      const msg = getClerkErrorMessage(err, 'Unable to sign up.');
-      Alert.alert('Sign-up error', msg);
+    } catch (error) {
+      console.log('[sign-up] error:', JSON.stringify(error, null, 2));
+      const message = getClerkErrorMessage(error, 'Unable to sign up.');
+      Alert.alert('Sign-up error', message);
     } finally {
       setLoadingSubmit(false);
     }
@@ -137,9 +128,9 @@ export default function SignUpScreen() {
         console.log('[verify] not complete:', JSON.stringify(attempt, null, 2));
         Alert.alert('Verification incomplete', 'Please try again.');
       }
-    } catch (err) {
-      console.log('[verify] error:', JSON.stringify(err, null, 2));
-      Alert.alert('Verify error', getErrorMessage(err, 'Verification failed.'));
+    } catch (error) {
+      console.log('[verify] error:', JSON.stringify(error, null, 2));
+      Alert.alert('Verify error', getErrorMessage(error, 'Verification failed.'));
     } finally {
       setLoadingVerify(false);
     }
@@ -148,14 +139,9 @@ export default function SignUpScreen() {
   const onSSOPress = (strategy) => async () => {
     setLoadingSSO(strategy);
     try {
-      // 参考 Expo Linking：https://docs.expo.dev/versions/latest/sdk/linking/
-      // 参考 Clerk SSO：https://clerk.com/docs/reference/expo/use-sso
+      // Expo Linking 官方做法：用 Linking.createURL(...) 生成回跳地址，再传给 Clerk startSSOFlow。
       const redirectUrl = Linking.createURL('/sso-callback');
-      console.log('[SSO] redirectUrl =', redirectUrl);
-
       const result = await startSSOFlow({ strategy, redirectUrl });
-      console.log('[SSO] result =', JSON.stringify(result, null, 2));
-
       const { createdSessionId, setActive: setActiveFromSSO } = result;
 
       if (createdSessionId) {
@@ -169,14 +155,39 @@ export default function SignUpScreen() {
           'Finish sign-up in the opened page, then return to the app.',
         );
       }
-    } catch (err) {
-      console.log('[SSO sign-up] error =', err);
-      console.log('[SSO sign-up] error json =', JSON.stringify(err, null, 2));
-      Alert.alert('SSO error', getErrorMessage(err, 'SSO sign-up failed.'));
+    } catch (error) {
+      console.log('[SSO sign-up] error =', error);
+      console.log('[SSO sign-up] error json =', JSON.stringify(error, null, 2));
+      Alert.alert('SSO error', getErrorMessage(error, 'SSO sign-up failed.'));
     } finally {
       setLoadingSSO(null);
     }
   };
+
+  let verifyButtonNode = <Text style={{ color: '#fff', fontWeight: '700' }}>Verify</Text>;
+  if (loadingVerify) {
+    verifyButtonNode = <ActivityIndicator color="#fff" />;
+  }
+
+  let submitButtonNode = <Text style={{ color: '#fff', fontWeight: '700' }}>Continue</Text>;
+  if (loadingSubmit) {
+    submitButtonNode = <ActivityIndicator color="#fff" />;
+  }
+
+  let githubButtonNode = <Text>Continue with GitHub</Text>;
+  if (loadingSSO === 'oauth_github') {
+    githubButtonNode = <ActivityIndicator />;
+  }
+
+  let googleButtonNode = <Text>Continue with Google</Text>;
+  if (loadingSSO === 'oauth_google') {
+    googleButtonNode = <ActivityIndicator />;
+  }
+
+  let microsoftButtonNode = <Text>Continue with Microsoft</Text>;
+  if (loadingSSO === 'oauth_microsoft') {
+    microsoftButtonNode = <ActivityIndicator />;
+  }
 
   if (pendingVerification) {
     return (
@@ -210,16 +221,12 @@ export default function SignUpScreen() {
               backgroundColor: '#111827',
               height: 48,
               borderRadius: 8,
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: getOpacityValue(loadingVerify),
-          }}
-        >
-            {renderNodeWhenElse(loadingVerify, (
-              <ActivityIndicator color="#fff" />
-            ), (
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Verify</Text>
-            ))}
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: getOpacityValue(loadingVerify),
+            }}
+          >
+            {verifyButtonNode}
           </TouchableOpacity>
 
           <View style={{ height: 16 }} />
@@ -288,11 +295,7 @@ export default function SignUpScreen() {
             opacity: getOpacityValue(loadingSubmit),
           }}
         >
-          {renderNodeWhenElse(loadingSubmit, (
-            <ActivityIndicator color="#fff" />
-          ), (
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Continue</Text>
-          ))}
+          {submitButtonNode}
         </TouchableOpacity>
 
         <View style={{ height: 20 }} />
@@ -317,11 +320,7 @@ export default function SignUpScreen() {
             opacity: getOpacityValue(loadingSSO === 'oauth_github'),
           }}
         >
-          {renderNodeWhenElse(
-            loadingSSO === 'oauth_github',
-            <ActivityIndicator />,
-            <Text>Continue with GitHub</Text>
-          )}
+          {githubButtonNode}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -338,11 +337,7 @@ export default function SignUpScreen() {
             opacity: getOpacityValue(loadingSSO === 'oauth_google'),
           }}
         >
-          {renderNodeWhenElse(
-            loadingSSO === 'oauth_google',
-            <ActivityIndicator />,
-            <Text>Continue with Google</Text>
-          )}
+          {googleButtonNode}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -358,11 +353,7 @@ export default function SignUpScreen() {
             opacity: getOpacityValue(loadingSSO === 'oauth_microsoft'),
           }}
         >
-          {renderNodeWhenElse(
-            loadingSSO === 'oauth_microsoft',
-            <ActivityIndicator />,
-            <Text>Continue with microsoft</Text>
-          )}
+          {microsoftButtonNode}
         </TouchableOpacity>
 
         <View style={{ height: 16 }} />

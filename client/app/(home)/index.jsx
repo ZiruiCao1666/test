@@ -64,297 +64,57 @@ const formatTimeOnly = (value) => {
   });
 };
 
-const normalizeDateText = (value) => {
-  const safe = String(value || '').trim();
-  if (!safe) {
-    return '';
+const getTimestampNumber = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
   }
-  if (DATE_INPUT_RE.test(safe)) {
-    return safe;
-  }
-  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) {
-    return safe.slice(0, 10);
-  }
-  const parsed = new Date(safe);
-  if (Number.isNaN(parsed.getTime())) {
-    return '';
-  }
-  return parsed.toISOString().slice(0, 10);
-};
-
-const normalizeTimeText = (value) => {
-  const safe = String(value || '').trim();
-  if (!safe) {
-    return '';
-  }
-  if (TIME_INPUT_RE.test(safe)) {
-    return safe;
-  }
-  const hhmmssMatch = safe.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
-  if (hhmmssMatch) {
-    return `${hhmmssMatch[1]}:${hhmmssMatch[2]}`;
-  }
-  if (/^\d{4}-\d{2}-\d{2}T/.test(safe)) {
-    return getTimeTextFromDate(safe);
-  }
-  return '';
-};
-
-const getPlanField = (item, camelKey, snakeKey) => {
-  const safeItem = item || {};
-  if (safeItem[camelKey] !== undefined && safeItem[camelKey] !== null && safeItem[camelKey] !== '') {
-    return safeItem[camelKey];
-  }
-  if (safeItem[snakeKey] !== undefined && safeItem[snakeKey] !== null && safeItem[snakeKey] !== '') {
-    return safeItem[snakeKey];
-  }
-  return '';
-};
-
-const getTimeTextFromDate = (value) => {
-  const parsed = new Date(String(value || ''));
-  if (Number.isNaN(parsed.getTime())) return '';
-  return parsed.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-};
-
-const getDateTextFromDate = (value) => {
-  const parsed = new Date(String(value || ''));
-  if (Number.isNaN(parsed.getTime())) return '';
-  return parsed.toISOString().slice(0, 10);
-};
-
-const getCustomTimingMode = (item) => {
-  const safeItem = item || {};
-  const directMode = String(
-    getPlanField(safeItem, 'timingMode', 'timing_mode') || ''
-  ).trim().toLowerCase();
-  if (directMode === 'range') return 'range';
-  if (directMode === 'deadline') return 'deadline';
-
-  const typeText = String(safeItem.type || '').trim().toLowerCase();
-  if (typeText.includes('range')) return 'range';
-  return 'deadline';
-};
-
-const getCustomTaskDateText = (item) => {
-  const directDate = normalizeDateText(getPlanField(item, 'taskDate', 'task_date'));
-  if (DATE_INPUT_RE.test(directDate)) return directDate;
-
-  const fallbackDate = getDateTextFromDate((item || {}).date);
-  if (DATE_INPUT_RE.test(fallbackDate)) return fallbackDate;
-  return '';
-};
-
-const getCustomDueTimeText = (item) => {
-  const directTime = normalizeTimeText(getPlanField(item, 'dueTime', 'due_time'));
-  if (TIME_INPUT_RE.test(directTime)) return directTime;
-  return getTimeTextFromDate((item || {}).date);
-};
-
-const getCustomStartTimeText = (item) => {
-  const directTime = normalizeTimeText(getPlanField(item, 'startTime', 'start_time'));
-  if (TIME_INPUT_RE.test(directTime)) return directTime;
-  return getTimeTextFromDate((item || {}).date);
-};
-
-const getCustomEndTimeText = (item) => {
-  const directTime = normalizeTimeText(getPlanField(item, 'endTime', 'end_time'));
-  if (TIME_INPUT_RE.test(directTime)) return directTime;
-  return '';
-};
-
-const buildCustomScheduleText = (item) => {
-  const timingMode = getCustomTimingMode(item);
-  const taskDate = getCustomTaskDateText(item);
-  const dateLabel = formatShortDate(taskDate);
-  if (timingMode === 'range') {
-    const startTime = getCustomStartTimeText(item);
-    const endTime = getCustomEndTimeText(item);
-    return `${dateLabel} | ${formatTimeOnly(startTime)} - ${formatTimeOnly(endTime)}`;
-  }
-  const dueTime = getCustomDueTimeText(item);
-  return `${dateLabel} | Due ${formatTimeOnly(dueTime)}`;
-};
-
-const buildCustomTaskDateTime = (item) => {
-  const taskDate = getCustomTaskDateText(item);
-  if (!DATE_INPUT_RE.test(taskDate)) {
-    return '';
-  }
-
-  const timingMode = getCustomTimingMode(item);
-  let sourceTime = getCustomDueTimeText(item);
-  if (timingMode === 'range') {
-    sourceTime = getCustomStartTimeText(item);
-  }
-  if (!TIME_INPUT_RE.test(sourceTime)) {
-    sourceTime = '12:00';
-  }
-  return `${taskDate}T${sourceTime}:00`;
-};
-
-const normalizeHomePlanItem = (item) => {
-  const safeItem = item || {};
-  if (safeItem.source !== 'custom') {
-    return safeItem;
-  }
-
-  const normalized = { ...safeItem };
-  normalized.taskDate = getCustomTaskDateText(safeItem);
-  normalized.timingMode = getCustomTimingMode(safeItem);
-  normalized.dueTime = getCustomDueTimeText(safeItem);
-  normalized.startTime = getCustomStartTimeText(safeItem);
-  normalized.endTime = getCustomEndTimeText(safeItem);
-
-  if (!normalized.scheduleText) {
-    normalized.scheduleText = buildCustomScheduleText(normalized);
-  }
-
-  if (
-    (normalized.timestampMs === undefined || normalized.timestampMs === null || normalized.timestampMs === '') &&
-    normalized.taskDate
-  ) {
-    let sourceTime = normalized.dueTime;
-    if (normalized.timingMode === 'range') {
-      sourceTime = normalized.startTime;
-    }
-    if (!TIME_INPUT_RE.test(sourceTime)) {
-      sourceTime = '12:00';
-    }
-    const parsed = new Date(`${normalized.taskDate}T${sourceTime}:00`).getTime();
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
     if (Number.isFinite(parsed)) {
-      normalized.timestampMs = parsed;
+      return parsed;
     }
-  }
-
-  return normalized;
-};
-
-const mapTaskRowToHomePlanItem = (task) => {
-  const safeTask = task || {};
-  const date = buildCustomTaskDateTime(safeTask);
-  const timestamp = new Date(date).getTime();
-  let type = 'due time';
-  if (getCustomTimingMode(safeTask) === 'range') {
-    type = 'time range';
-  }
-
-  let timestampMs = null;
-  if (Number.isFinite(timestamp)) {
-    timestampMs = timestamp;
-  }
-
-  return normalizeHomePlanItem({
-    id: `custom-${String(safeTask.id || '')}`,
-    source: 'custom',
-    title: safeTask.title || 'Untitled task',
-    course: '',
-    type,
-    date,
-    timestampMs,
-    htmlUrl: '',
-    isCompleted: Boolean(safeTask.isCompleted),
-    taskDate: getCustomTaskDateText(safeTask),
-    timingMode: getCustomTimingMode(safeTask),
-    dueTime: getCustomDueTimeText(safeTask),
-    startTime: getCustomStartTimeText(safeTask),
-    endTime: getCustomEndTimeText(safeTask),
-    scheduleText: buildCustomScheduleText(safeTask),
-  });
-};
-
-const buildUpcomingCustomPlanItems = (tasks) => {
-  let safeTasks = [];
-  if (Array.isArray(tasks)) {
-    safeTasks = tasks;
-  }
-
-  const now = Date.now();
-  const end = now + HOME_PLAN_DAYS * ONE_DAY_MS;
-  const items = [];
-
-  safeTasks.forEach((task) => {
-    const item = mapTaskRowToHomePlanItem(task);
-    if (item.isCompleted) {
-      return;
-    }
-    const timestamp = getItemTimestamp(item);
-    if (timestamp === null) {
-      return;
-    }
-    if (timestamp < now || timestamp > end) {
-      return;
-    }
-    items.push(item);
-  });
-
-  items.sort((left, right) => {
-    const leftTime = getItemTimestamp(left);
-    const rightTime = getItemTimestamp(right);
-    if (leftTime === null && rightTime === null) {
-      return String(left.title || '').localeCompare(String(right.title || ''));
-    }
-    if (leftTime === null) {
-      return 1;
-    }
-    if (rightTime === null) {
-      return -1;
-    }
-    if (leftTime !== rightTime) {
-      return leftTime - rightTime;
-    }
-    return String(left.title || '').localeCompare(String(right.title || ''));
-  });
-
-  return items;
-};
-
-const getCustomTaskTimestamp = (item) => {
-  const safeItem = normalizeHomePlanItem(item);
-  const taskDate = String(safeItem.taskDate || '').trim();
-  if (!DATE_INPUT_RE.test(taskDate)) return null;
-
-  let sourceTime = String(safeItem.dueTime || '').trim();
-  if (safeItem.timingMode === 'range') {
-    sourceTime = String(safeItem.startTime || '').trim();
-  }
-  let safeTime = '12:00';
-  if (TIME_INPUT_RE.test(sourceTime)) {
-    safeTime = sourceTime;
-  }
-  const parsed = new Date(`${taskDate}T${safeTime}:00`).getTime();
-  if (Number.isFinite(parsed)) {
-    return parsed;
   }
   return null;
 };
 
 const getItemTimestamp = (item) => {
   const safeItem = item || {};
-
-  if (safeItem.source === 'custom') {
-    const customTimestamp = getCustomTaskTimestamp(safeItem);
-    if (customTimestamp !== null) return customTimestamp;
+  const timestampMs = getTimestampNumber(safeItem.timestampMs);
+  if (timestampMs !== null) {
+    return timestampMs;
   }
-
-  if (typeof safeItem.timestampMs === 'number' && Number.isFinite(safeItem.timestampMs)) {
-    return safeItem.timestampMs;
-  }
-
-  if (typeof safeItem.timestampMs === 'string' && safeItem.timestampMs.trim() !== '') {
-    const direct = Number(safeItem.timestampMs);
-    if (Number.isFinite(direct)) return direct;
-  }
-
   const parsed = new Date(safeItem.date || '').getTime();
   if (Number.isFinite(parsed)) {
     return parsed;
   }
   return null;
+};
+
+const getCustomScheduleText = (item) => {
+  const safeItem = item || {};
+  if (safeItem.scheduleText) {
+    return String(safeItem.scheduleText);
+  }
+
+  const taskDate = String(safeItem.taskDate || '').trim();
+  if (!DATE_INPUT_RE.test(taskDate)) {
+    if (safeItem.date) {
+      return String(safeItem.date);
+    }
+    return 'Time not synced';
+  }
+
+  const dateLabel = formatShortDate(taskDate);
+  const timingMode = String(safeItem.timingMode || 'deadline').trim().toLowerCase();
+
+  if (timingMode === 'range') {
+    const startTime = String(safeItem.startTime || '').trim();
+    const endTime = String(safeItem.endTime || '').trim();
+    return `${dateLabel} | ${formatTimeOnly(startTime)} - ${formatTimeOnly(endTime)}`;
+  }
+
+  const dueTime = String(safeItem.dueTime || '').trim();
+  return `${dateLabel} | Due ${formatTimeOnly(dueTime)}`;
 };
 
 const formatDaysLeft = (item) => {
@@ -384,16 +144,10 @@ const formatDaysLeft = (item) => {
 };
 
 const formatPlanDateTime = (item) => {
-  const safeItem = normalizeHomePlanItem(item);
+  const safeItem = item || {};
 
   if (safeItem.source === 'custom') {
-    if (safeItem.scheduleText) return String(safeItem.scheduleText);
-
-    const dateLabel = formatShortDate(safeItem.taskDate || '');
-    if (safeItem.timingMode === 'range') {
-      return `${dateLabel} | ${formatTimeOnly(safeItem.startTime)} - ${formatTimeOnly(safeItem.endTime)}`;
-    }
-    return `${dateLabel} | Due ${formatTimeOnly(safeItem.dueTime)}`;
+    return getCustomScheduleText(safeItem);
   }
 
   const timestamp = getItemTimestamp(safeItem);
@@ -570,7 +324,6 @@ export default function HomeScreen() {
   const [loadingSummary, setLoadingSummary] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
-  const [hasCachedSummary, setHasCachedSummary] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
@@ -632,7 +385,6 @@ export default function HomeScreen() {
       }
 
       await SecureStore.setItemAsync(summaryCacheKey, JSON.stringify(payload));
-      setHasCachedSummary(true);
     } catch (_e) {
       // Ignore cache write errors.
     }
@@ -644,16 +396,13 @@ export default function HomeScreen() {
     try {
       const raw = await SecureStore.getItemAsync(summaryCacheKey);
       if (!raw) {
-        setHasCachedSummary(false);
         return false;
       }
 
       const cached = JSON.parse(raw);
       applySummaryData(cached);
-      setHasCachedSummary(true);
       return true;
     } catch (_e) {
-      setHasCachedSummary(false);
       return false;
     }
   }, [summaryCacheKey, applySummaryData]);
@@ -758,46 +507,15 @@ export default function HomeScreen() {
         },
         timeoutMs
       );
-      const tasksRes = await fetchWithTimeout(
-        `${API_BASE_URL}/tasks`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-        timeoutMs
-      );
-
       const data = await res.json().catch(() => ({}));
-      const tasksData = await tasksRes.json().catch(() => ({}));
       if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
-      if (!tasksRes.ok) throw new Error(getApiErrorMessage(tasksData, 'Failed to load custom tasks'));
 
-      let canvasItems = [];
+      let items = [];
       if (data && Array.isArray(data.items)) {
-        canvasItems = data.items.filter((item) => {
-          const safeItem = item || {};
-          return safeItem.source !== 'custom';
-        }).map(normalizeHomePlanItem);
+        items = data.items.slice();
       }
-      const customItems = buildUpcomingCustomPlanItems(tasksData.items);
-      const mergedItems = canvasItems.concat(customItems);
-      mergedItems.sort((left, right) => {
-        const leftTime = getItemTimestamp(left);
-        const rightTime = getItemTimestamp(right);
-        if (leftTime === null && rightTime === null) {
-          return String(left.title || '').localeCompare(String(right.title || ''));
-        }
-        if (leftTime === null) {
-          return 1;
-        }
-        if (rightTime === null) {
-          return -1;
-        }
-        if (leftTime !== rightTime) {
-          return leftTime - rightTime;
-        }
-        return String(left.title || '').localeCompare(String(right.title || ''));
-      });
-      setHomePlanItems(mergedItems);
+
+      setHomePlanItems(items);
       if (data && data.canvasError) {
         setCanvasPlanWarning(String(data.canvasError).trim());
       } else {
