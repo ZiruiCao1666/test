@@ -15,13 +15,29 @@ import * as Linking from 'expo-linking';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
+const getErrorMessage = (error, fallbackMessage) => {
+  if (error instanceof Error && error.message) return error.message;
+  return fallbackMessage;
+};
+
+const getClerkErrorMessage = (error, fallbackMessage) => {
+  const safeError = error || {};
+  const errors = Array.isArray(safeError.errors) ? safeError.errors : [];
+  if (errors.length > 0) {
+    const firstError = errors[0] || {};
+    if (firstError.longMessage) return firstError.longMessage;
+    if (firstError.message) return firstError.message;
+  }
+  return getErrorMessage(error, fallbackMessage);
+};
+
 export default function SignUpScreen() {
   const router = useRouter();
-  // 参考 Clerk useAuth：https://clerk.com/docs/reference/expo/use-auth
+  // Clerk: get the current session token before calling our backend.
   const { getToken } = useAuth();
-  // 参考 Clerk sign-up 文档：https://clerk.com/docs/reference/expo/use-sign-up
+  // Clerk: email/password sign-up flow.
   const { isLoaded, signUp, setActive } = useSignUp();
-  // 参考 Clerk SSO 文档：https://clerk.com/docs/reference/expo/use-sso
+  // Clerk: browser-based SSO flow.
   const { startSSOFlow } = useSSO();
 
   const [emailAddress, setEmailAddress] = React.useState('');
@@ -50,7 +66,7 @@ export default function SignUpScreen() {
         body: JSON.stringify({}),
       });
     } catch (e) {
-      console.log('[FE] sync error:', e?.message || e);
+      console.log('[FE] sync error:', getErrorMessage(e, 'sync failed'));
     }
   };
 
@@ -80,11 +96,7 @@ export default function SignUpScreen() {
       setPendingVerification(true);
     } catch (err) {
       console.log('[sign-up] error:', JSON.stringify(err, null, 2));
-      const msg =
-        err?.errors?.[0]?.longMessage ||
-        err?.errors?.[0]?.message ||
-        err?.message ||
-        'Unable to sign up.';
+      const msg = getClerkErrorMessage(err, 'Unable to sign up.');
       Alert.alert('Sign-up error', msg);
     } finally {
       setLoadingSubmit(false);
@@ -114,7 +126,7 @@ export default function SignUpScreen() {
       }
     } catch (err) {
       console.log('[verify] error:', JSON.stringify(err, null, 2));
-      Alert.alert('Verify error', err?.message || 'Verification failed.');
+      Alert.alert('Verify error', getErrorMessage(err, 'Verification failed.'));
     } finally {
       setLoadingVerify(false);
     }
@@ -134,7 +146,9 @@ export default function SignUpScreen() {
       const { createdSessionId, setActive: setActiveFromSSO } = result;
 
       if (createdSessionId) {
-        await setActiveFromSSO?.({ session: createdSessionId });
+        if (typeof setActiveFromSSO === 'function') {
+          await setActiveFromSSO({ session: createdSessionId });
+        }
         await goHome();
       } else {
         Alert.alert(
@@ -145,7 +159,7 @@ export default function SignUpScreen() {
     } catch (err) {
       console.log('[SSO sign-up] error =', err);
       console.log('[SSO sign-up] error json =', JSON.stringify(err, null, 2));
-      Alert.alert('SSO error', err?.message || 'SSO sign-up failed.');
+      Alert.alert('SSO error', getErrorMessage(err, 'SSO sign-up failed.'));
     } finally {
       setLoadingSSO(null);
     }

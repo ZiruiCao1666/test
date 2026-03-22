@@ -21,9 +21,10 @@ const SAVE_DEBOUNCE_MS = 450;
 const normalizeBaseUrl = (value) => {
   const trimmed = value.trim();
   if (!trimmed) return '';
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
+  let withProtocol = trimmed;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    withProtocol = `https://${trimmed}`;
+  }
   return withProtocol.replace(/\/+$/, '');
 };
 
@@ -104,7 +105,8 @@ const isNewlyPublished = (assignment, nowTs) => {
 const partitionAssignments = (assignments, nowTs) => {
   const visibleItems = [];
   const collapsedItems = [];
-  (Array.isArray(assignments) ? assignments : []).forEach((assignment) => {
+  const safeAssignments = Array.isArray(assignments) ? assignments : [];
+  safeAssignments.forEach((assignment) => {
     if (isDueWithinWindow(assignment, nowTs) || isNewlyPublished(assignment, nowTs)) {
       visibleItems.push(assignment);
       return;
@@ -124,7 +126,8 @@ const getSubmissionOrderKey = (submission) => {
 };
 
 const pickLatestSubmissions = (submissions) => {
-  return (Array.isArray(submissions) ? submissions : []).reduce((acc, submission, index) => {
+  const safeSubmissions = Array.isArray(submissions) ? submissions : [];
+  return safeSubmissions.reduce((acc, submission, index) => {
     const safeSubmission = submission || {};
     const assignment = safeSubmission.assignment || {};
     let assignmentId = safeSubmission.assignment_id;
@@ -171,7 +174,10 @@ const readJsonSafely = async (response) => {
 
 const getApiErrorMessage = (data, fallbackMessage) => {
   const safeData = data || {};
-  const errors = Array.isArray(safeData.errors) ? safeData.errors : [];
+  const errors = [];
+  if (Array.isArray(safeData.errors)) {
+    safeData.errors.forEach((item) => errors.push(item));
+  }
   if (errors.length > 0) {
     const firstError = errors[0] || {};
     if (firstError.message) return firstError.message;
@@ -195,16 +201,16 @@ const normalizeUpcomingEvent = (item, index) => {
   const safeItem = item || {};
   const assignment = safeItem.assignment || {};
   const date = safeItem.due_at || safeItem.start_at || safeItem.end_at || null;
-  const rawId =
-    safeItem.id === null || safeItem.id === undefined || safeItem.id === ''
-      ? safeItem.event_id === null || safeItem.event_id === undefined || safeItem.event_id === ''
-        ? safeItem.assignment_id === null ||
-          safeItem.assignment_id === undefined ||
-          safeItem.assignment_id === ''
-          ? index
-          : safeItem.assignment_id
-        : safeItem.event_id
-      : safeItem.id;
+  let rawId = safeItem.id;
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = safeItem.event_id;
+  }
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = safeItem.assignment_id;
+  }
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = index;
+  }
   return {
     id: String(rawId),
     title: safeItem.title || safeItem.name || 'Untitled event',
@@ -213,6 +219,32 @@ const normalizeUpcomingEvent = (item, index) => {
     date,
     htmlUrl: safeItem.html_url || assignment.html_url || '',
   };
+};
+
+const getAccentColor = (item, key, fallback) => {
+  const safeItem = item || {};
+  const accent = safeItem.accent || {};
+  return accent[key] || fallback;
+};
+
+const getCalendarDetailTypeLabel = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source === 'customTask') return 'Custom task';
+  return safeItem.type || 'Calendar item';
+};
+
+const formatCalendarDetailSchedule = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source === 'customTask') {
+    return formatTaskSchedule(safeItem);
+  }
+  return `${formatShortDate(safeItem.date)} | ${formatClockTime(safeItem.date)}`;
+};
+
+const getCalendarDetailConfirmLabel = (item) => {
+  const safeItem = item || {};
+  if (safeItem.htmlUrl) return 'Open in Canvas';
+  return 'Done';
 };
 
 const buildAssignmentDetailKey = (courseId, assignmentId) =>
@@ -241,7 +273,12 @@ const MERIDIEM_OPTIONS = ['AM', 'PM'];
 
 const toSafeDate = (value) => {
   if (value === null || value === undefined || value === '') return null;
-  const date = value instanceof Date ? new Date(value) : new Date(value);
+  let date = null;
+  if (value instanceof Date) {
+    date = new Date(value);
+  } else {
+    date = new Date(value);
+  }
   if (Number.isNaN(date.getTime())) return null;
   return date;
 };
@@ -353,7 +390,10 @@ const formatClockTime = (value) => {
 };
 
 const formatHourLabel = (hour) => {
-  const period = hour >= 12 ? 'PM' : 'AM';
+  let period = 'AM';
+  if (hour >= 12) {
+    period = 'PM';
+  }
   const normalizedHour = hour % 12 || 12;
   return `${normalizedHour} ${period}`;
 };
@@ -429,7 +469,10 @@ const normalizeTaskTimeInput = (value, fallback = '') => {
 
 const normalizeCustomTask = (task, fallbackDate = new Date()) => {
   const safeTask = task || {};
-  const timingMode = safeTask.timingMode === 'range' ? 'range' : 'deadline';
+  let timingMode = 'deadline';
+  if (safeTask.timingMode === 'range') {
+    timingMode = 'range';
+  }
   return {
     ...safeTask,
     taskDate: normalizeTaskDateInput(safeTask.taskDate, fallbackDate),
@@ -503,28 +546,43 @@ const parseTimeDraft = (value) => {
   }
 
   const [rawHour, rawMinute] = safe.split(':').map((part) => Number(part));
+  let minute = '00';
+  if (MINUTE_OPTIONS.includes(String(rawMinute).padStart(2, '0'))) {
+    minute = String(rawMinute).padStart(2, '0');
+  }
+  let meridiem = 'AM';
+  if (rawHour >= 12) {
+    meridiem = 'PM';
+  }
   return {
     hour12: String(rawHour % 12 || 12),
-    minute: MINUTE_OPTIONS.includes(String(rawMinute).padStart(2, '0'))
-      ? String(rawMinute).padStart(2, '0')
-      : '00',
-    meridiem: rawHour >= 12 ? 'PM' : 'AM',
+    minute,
+    meridiem,
   };
 };
 
 const formatTimeDraftToValue = (draft) => {
-  let hour = Number(draft?.hour12 || 12);
+  const safeDraft = draft || {};
+  let hour = Number(safeDraft.hour12 || 12);
   if (!Number.isInteger(hour) || hour < 1 || hour > 12) hour = 12;
 
-  const minute = MINUTE_OPTIONS.includes(String(draft?.minute || ''))
-    ? String(draft.minute)
-    : '00';
-  const meridiem = draft?.meridiem === 'AM' ? 'AM' : 'PM';
+  let minute = '00';
+  if (MINUTE_OPTIONS.includes(String(safeDraft.minute || ''))) {
+    minute = String(safeDraft.minute);
+  }
+  let meridiem = 'PM';
+  if (safeDraft.meridiem === 'AM') {
+    meridiem = 'AM';
+  }
 
   if (meridiem === 'AM') {
-    hour = hour === 12 ? 0 : hour;
+    if (hour === 12) {
+      hour = 0;
+    }
   } else {
-    hour = hour === 12 ? 12 : hour + 12;
+    if (hour !== 12) {
+      hour += 12;
+    }
   }
 
   return `${String(hour).padStart(2, '0')}:${minute}`;
@@ -543,10 +601,13 @@ const PickerWheelColumn = ({
     const safeIndex = Math.max(0, Math.min(options.length - 1, index));
     const nextValue = options[safeIndex];
     if (nextValue !== value) onChange(nextValue);
-    scrollRef?.current?.scrollTo({
-      y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
-      animated,
-    });
+    const currentScrollRef = scrollRef && scrollRef.current ? scrollRef.current : null;
+    if (currentScrollRef && typeof currentScrollRef.scrollTo === 'function') {
+      currentScrollRef.scrollTo({
+        y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
+        animated,
+      });
+    }
   };
 
   const handleSnap = (offsetY) => {
@@ -660,7 +721,8 @@ const MiniCalendarPanel = ({
 
       <View style={styles.miniCalendarGrid}>
         {calendarDays.map((day) => {
-          const markers = dateMarkersByDate?.[buildDateKey(day.date)] || {
+          const dateKey = buildDateKey(day.date);
+          const markers = (dateMarkersByDate && dateMarkersByDate[dateKey]) || {
             count: 0,
             hasCanvas: false,
             hasCustom: false,
@@ -863,7 +925,7 @@ export default function CalendarScreen() {
   const hasPlannerContent = isConnected || customTasks.length > 0;
   const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
   const monthYearOptions = useMemo(() => {
-    const centerYear = Number(monthYearDraft?.year) || new Date().getFullYear();
+    const centerYear = Number(monthYearDraft ? monthYearDraft.year : '') || new Date().getFullYear();
     return Array.from({ length: 9 }, (_, index) => centerYear - 4 + index);
   }, [monthYearDraft]);
 
@@ -876,10 +938,13 @@ export default function CalendarScreen() {
 
     const syncWheelPosition = (ref, options, nextValue) => {
       const index = Math.max(0, options.indexOf(nextValue));
-      ref?.current?.scrollTo({
-        y: index * TIME_WHEEL_ITEM_HEIGHT,
-        animated: false,
-      });
+      const currentRef = ref && ref.current ? ref.current : null;
+      if (currentRef && typeof currentRef.scrollTo === 'function') {
+        currentRef.scrollTo({
+          y: index * TIME_WHEEL_ITEM_HEIGHT,
+          animated: false,
+        });
+      }
     };
 
     const timer = setTimeout(() => {
@@ -892,6 +957,7 @@ export default function CalendarScreen() {
   }, [timeDraft, timePickerVisible]);
 
   const getSessionToken = async () => {
+    // Clerk session token may be briefly unavailable right after sign-in, so retry a few times.
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const getToken = getTokenRef.current;
       const token = typeof getToken === 'function' ? await getToken() : '';
@@ -902,6 +968,7 @@ export default function CalendarScreen() {
   };
 
   const persistCredentialsToBackend = async (nextSchool, nextToken) => {
+    // Keep one Canvas school/token pair per logged-in app account on our backend.
     const sessionToken = await getSessionToken();
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
@@ -1626,6 +1693,7 @@ export default function CalendarScreen() {
   };
 
   const calendarFeed = useMemo(() => {
+    // Merge Canvas items and custom tasks into one timeline for day/week/month views.
     const merged = [];
     const seen = new Set();
 
@@ -1731,7 +1799,7 @@ export default function CalendarScreen() {
           hasCustom: false,
         };
         current.count += 1;
-        if (item?.source === 'customTask') current.hasCustom = true;
+        if (item && item.source === 'customTask') current.hasCustom = true;
         else current.hasCanvas = true;
         acc[key] = current;
         return acc;
@@ -1789,16 +1857,24 @@ export default function CalendarScreen() {
     const now = Date.now();
     return (
       calendarFeed.find(
-        (item) => !item?.completed && new Date(item.date).getTime() >= now
+        (item) => {
+          const safeItem = item || {};
+          return !safeItem.completed && new Date(safeItem.date).getTime() >= now;
+        }
       ) || null
     );
   }, [calendarFeed]);
 
+  const safeSelectedCalendarItem = selectedCalendarItem || null;
   const selectedCalendarDetailKey =
-    selectedCalendarItem?.source === 'assignment' &&
-    selectedCalendarItem?.courseId &&
-    selectedCalendarItem?.assignmentId
-      ? buildAssignmentDetailKey(selectedCalendarItem.courseId, selectedCalendarItem.assignmentId)
+    safeSelectedCalendarItem &&
+    safeSelectedCalendarItem.source === 'assignment' &&
+    safeSelectedCalendarItem.courseId &&
+    safeSelectedCalendarItem.assignmentId
+      ? buildAssignmentDetailKey(
+          safeSelectedCalendarItem.courseId,
+          safeSelectedCalendarItem.assignmentId
+        )
       : '';
   const selectedCalendarDetailState = selectedCalendarDetailKey
     ? submissionDetailsByAssignment[selectedCalendarDetailKey] || {}
@@ -1806,17 +1882,22 @@ export default function CalendarScreen() {
   const selectedCalendarDetailData = selectedCalendarDetailState.data || null;
   const selectedCalendarTeacherComments = useMemo(() => {
     if (!selectedCalendarDetailData) return [];
-    const detailComments = Array.isArray(selectedCalendarDetailData?.submission_comments)
+    const detailComments = Array.isArray(selectedCalendarDetailData.submission_comments)
       ? selectedCalendarDetailData.submission_comments
       : [];
+    const safeProfile = profile || {};
     const currentUserId =
-      profile?.id === null || profile?.id === undefined ? '' : String(profile.id);
+      safeProfile.id === null || safeProfile.id === undefined ? '' : String(safeProfile.id);
     return detailComments.filter(
-      (comment) =>
-        !currentUserId ||
-        String(comment?.author_id === undefined ? '' : comment.author_id) !== currentUserId
+      (comment) => {
+        const safeComment = comment || {};
+        return (
+          !currentUserId ||
+          String(safeComment.author_id === undefined ? '' : safeComment.author_id) !== currentUserId
+        );
+      }
     );
-  }, [profile?.id, selectedCalendarDetailData]);
+  }, [profile, selectedCalendarDetailData]);
 
   const changeCalendarWindow = (direction) => {
     const offsetByView = {
@@ -1833,22 +1914,27 @@ export default function CalendarScreen() {
     if (nextDate) setSelectedDate(nextDate);
   };
   const showTaskSection = selectedPanel === 'overview';
+  const safeProfile = profile || {};
+  const currentProfileId =
+    safeProfile.id === null || safeProfile.id === undefined ? '' : String(safeProfile.id);
 
   const openCalendarItemDetail = async (item) => {
-    setSelectedCalendarItem(item || null);
+    const safeItem = item || null;
+    setSelectedCalendarItem(safeItem);
     setCalendarDetailVisible(true);
 
     if (
-      item?.source !== 'assignment' ||
-      !item?.courseId ||
-      !item?.assignmentId
+      !safeItem ||
+      safeItem.source !== 'assignment' ||
+      !safeItem.courseId ||
+      !safeItem.assignmentId
     ) {
       return;
     }
 
-    const detailKey = buildAssignmentDetailKey(item.courseId, item.assignmentId);
+    const detailKey = buildAssignmentDetailKey(safeItem.courseId, safeItem.assignmentId);
     const current = submissionDetailsByAssignment[detailKey] || {};
-    if (current?.data || current?.loading) return;
+    if (current.data || current.loading) return;
 
     setSubmissionDetailsByAssignment((prev) => ({
       ...prev,
@@ -1861,7 +1947,7 @@ export default function CalendarScreen() {
     }));
 
     try {
-      const detail = await fetchSingleSubmissionDetail(item.courseId, item.assignmentId);
+      const detail = await fetchSingleSubmissionDetail(safeItem.courseId, safeItem.assignmentId);
       setSubmissionDetailsByAssignment((prev) => ({
         ...prev,
         [detailKey]: {
@@ -2129,7 +2215,7 @@ export default function CalendarScreen() {
                         <View
                           style={[
                             styles.agendaAccent,
-                            { backgroundColor: item.accent?.border || '#111827' },
+                            { backgroundColor: getAccentColor(item, 'border', '#111827') },
                           ]}
                         />
                         <View style={{ flex: 1 }}>
@@ -2207,8 +2293,8 @@ export default function CalendarScreen() {
                                   style={({ pressed }) => [
                                     styles.weekEventCard,
                                     {
-                                      backgroundColor: item.accent?.bg || '#eff6ff',
-                                      borderLeftColor: item.accent?.border || '#60a5fa',
+                                      backgroundColor: getAccentColor(item, 'bg', '#eff6ff'),
+                                      borderLeftColor: getAccentColor(item, 'border', '#60a5fa'),
                                     },
                                     pressed ? { opacity: 0.8 } : null,
                                   ]}
@@ -2216,7 +2302,7 @@ export default function CalendarScreen() {
                                   <Text
                                     style={[
                                       styles.weekEventTime,
-                                      { color: item.accent?.text || '#1d4ed8' },
+                                      { color: getAccentColor(item, 'text', '#1d4ed8') },
                                     ]}
                                   >
                                     {formatClockTime(item.date)}
@@ -2255,7 +2341,7 @@ export default function CalendarScreen() {
                         <View
                           style={[
                             styles.agendaAccent,
-                            { backgroundColor: item.accent?.border || '#111827' },
+                            { backgroundColor: getAccentColor(item, 'border', '#111827') },
                           ]}
                         />
                         <View style={{ flex: 1 }}>
@@ -2403,17 +2489,17 @@ export default function CalendarScreen() {
                         onPress={() => handleToggleTaskCompletion(task)}
                         style={({ pressed }) => [
                           styles.taskCheckBtn,
-                          task?.isCompleted ? styles.taskCheckBtnActive : null,
+                          task.isCompleted ? styles.taskCheckBtnActive : null,
                           pressed ? { opacity: 0.82 } : null,
                         ]}
                       >
                         <Text
                           style={[
                             styles.taskCheckBtnText,
-                            task?.isCompleted ? styles.taskCheckBtnTextActive : null,
+                            task.isCompleted ? styles.taskCheckBtnTextActive : null,
                           ]}
                         >
-                          {task?.isCompleted ? '\u2713' : ''}
+                          {task.isCompleted ? '\u2713' : ''}
                         </Text>
                       </Pressable>
 
@@ -2421,7 +2507,7 @@ export default function CalendarScreen() {
                         <Text
                           style={[
                             styles.taskItemTitle,
-                            task?.isCompleted ? styles.taskItemTitleDone : null,
+                            task.isCompleted ? styles.taskItemTitleDone : null,
                           ]}
                         >
                           {task.title}
@@ -2469,19 +2555,19 @@ export default function CalendarScreen() {
             <Text style={styles.empty}>No profile synced yet.</Text>
           ) : (
             <View style={styles.profileCard}>
-              <Text style={styles.profileName}>{profile?.name || 'Unknown user'}</Text>
-              {profile?.primary_email || profile?.login_id ? (
+              <Text style={styles.profileName}>{safeProfile.name || 'Unknown user'}</Text>
+              {safeProfile.primary_email || safeProfile.login_id ? (
                 <Text style={styles.profileMeta}>
                   Email/Login:
                   {' '}
-                  {profile?.primary_email || profile?.login_id}
+                  {safeProfile.primary_email || safeProfile.login_id}
                 </Text>
               ) : null}
-              {profile?.time_zone ? (
+              {safeProfile.time_zone ? (
                 <Text style={styles.profileMeta}>
                   Time zone:
                   {' '}
-                  {profile.time_zone}
+                  {safeProfile.time_zone}
                 </Text>
               ) : null}
             </View>
@@ -2495,23 +2581,27 @@ export default function CalendarScreen() {
           ) : (
             <View style={styles.events}>
               {courses.map((course, courseIndex) => {
-                const courseId = String(course.id);
+                const safeCourse = course || {};
+                const courseId = String(safeCourse.id || '');
                 const enrollment = enrollmentsByCourse[courseId];
-                const grades = enrollment?.grades || {};
-                const submissionSummary = submissionsByCourse[courseId]?.summary;
-                const termName = course?.term?.name || 'No term';
-                const completionText = formatPercent(submissionSummary?.completionRate);
-                const onTimeText = formatPercent(submissionSummary?.onTimeRate);
+                const safeEnrollment = enrollment || {};
+                const grades = safeEnrollment.grades || {};
+                const submissionEntry = submissionsByCourse[courseId] || {};
+                const submissionSummary = submissionEntry.summary || {};
+                const courseTerm = safeCourse.term || {};
+                const termName = courseTerm.name || 'No term';
+                const completionText = formatPercent(submissionSummary.completionRate);
+                const onTimeText = formatPercent(submissionSummary.onTimeRate);
 
                 return (
                   <View key={`${courseId}-grade-${courseIndex}`} style={styles.gradeCard}>
                     <Text style={styles.gradeCourseName}>
-                      {course.name || course.course_code || 'Untitled course'}
+                      {safeCourse.name || safeCourse.course_code || 'Untitled course'}
                     </Text>
                     <Text style={styles.gradeMeta}>Term: {termName}</Text>
                     <Text style={styles.gradeMeta}>Completion: {completionText}</Text>
                     <Text style={styles.gradeMeta}>On-time: {onTimeText}</Text>
-                    {grades?.html_url ? (
+                    {grades.html_url ? (
                       <Pressable
                         onPress={() => openUrl(grades.html_url)}
                         style={({ pressed }) => [
@@ -2566,10 +2656,14 @@ export default function CalendarScreen() {
             <Text style={styles.empty}>No assignment data yet.</Text>
           ) : (
             courses.map((course, courseIndex) => {
-              const courseId = String(course.id);
+              const safeCourse = course || {};
+              const courseId = String(safeCourse.id);
               const assignmentEntry = assignmentsByCourse[courseId];
-              const assignments = assignmentEntry?.items || [];
-              const submissionLookup = submissionsByCourse[courseId]?.byAssignment || {};
+              const assignments = assignmentEntry && Array.isArray(assignmentEntry.items)
+                ? assignmentEntry.items
+                : [];
+              const submissionEntry = submissionsByCourse[courseId] || {};
+              const submissionLookup = submissionEntry.byAssignment || {};
               const nowTs = Date.now();
               const { visibleItems, collapsedItems } = partitionAssignments(assignments, nowTs);
               const isExpanded = Boolean(expandedAssignmentsByCourse[courseId]);
@@ -2580,7 +2674,7 @@ export default function CalendarScreen() {
               return (
                 <View key={`${courseId}-assignment-group-${courseIndex}`} style={styles.assignmentGroup}>
                   <Text style={styles.assignmentCourseName}>
-                    {course.name || course.course_code || 'Untitled course'}
+                    {safeCourse.name || safeCourse.course_code || 'Untitled course'}
                   </Text>
                   {assignments.length === 0 ? (
                     <Text style={styles.empty}>No assignments in this course.</Text>
@@ -2592,46 +2686,48 @@ export default function CalendarScreen() {
                         </Text>
                       ) : null}
                       {displayItems.map((assignment, assignmentIndex) => {
-                        const submission =
-                          submissionLookup[String(assignment.id)] || null;
+                        const safeAssignment = assignment || {};
+                        const submission = submissionLookup[String(safeAssignment.id)] || null;
+                        const safeSubmission = submission || {};
                         const scoreText = formatScoreValue(
-                          submission?.score,
-                          assignment?.points_possible
+                          safeSubmission.score,
+                          safeAssignment.points_possible
                         );
-                        const detailKey = buildAssignmentDetailKey(courseId, assignment.id);
+                        const detailKey = buildAssignmentDetailKey(courseId, safeAssignment.id);
                         const detailState = submissionDetailsByAssignment[detailKey] || {};
                         const detailData = detailState.data || null;
-                        const detailComments = Array.isArray(detailData?.submission_comments)
+                        const detailComments = Array.isArray(detailData && detailData.submission_comments)
                           ? detailData.submission_comments
                           : [];
-                        const currentUserId =
-                          profile?.id === null || profile?.id === undefined
-                            ? ''
-                            : String(profile.id);
                         const teacherComments = detailComments.filter(
-                          (comment) =>
-                            !currentUserId ||
-                            String(comment?.author_id === undefined ? '' : comment.author_id) !==
-                              currentUserId
+                          (comment) => {
+                            const safeComment = comment || {};
+                            return (
+                              !currentProfileId ||
+                              String(
+                                safeComment.author_id === undefined ? '' : safeComment.author_id
+                              ) !== currentProfileId
+                            );
+                          }
                         );
-                        const detailHistory = Array.isArray(detailData?.submission_history)
+                        const detailHistory = Array.isArray(detailData && detailData.submission_history)
                           ? detailData.submission_history
                           : [];
                         return (
                           <View
-                            key={`${courseId}-assignment-${String(assignment.id)}-${assignmentIndex}`}
+                            key={`${courseId}-assignment-${String(safeAssignment.id)}-${assignmentIndex}`}
                             style={[
                               styles.assignmentItem,
-                              assignment?.html_url ? styles.eventClickable : null,
+                              safeAssignment.html_url ? styles.eventClickable : null,
                             ]}
                           >
                             <Text style={styles.assignmentTitle}>
-                              {assignment?.name || 'Untitled assignment'}
+                              {safeAssignment.name || 'Untitled assignment'}
                             </Text>
                             <Text style={styles.assignmentMeta}>
                               Due:
                               {' '}
-                              {formatDateTime(assignment?.due_at)}
+                              {formatDateTime(safeAssignment.due_at)}
                             </Text>
                             <Text style={styles.assignmentMeta}>
                               Score: {scoreText}
@@ -2639,12 +2735,12 @@ export default function CalendarScreen() {
                             <Text style={styles.assignmentMeta}>
                               Status:
                               {' '}
-                              {submission?.submitted_at ? 'Submitted' : 'Not submitted'}
-                              {submission?.late ? ' (Late)' : ''}
+                              {safeSubmission.submitted_at ? 'Submitted' : 'Not submitted'}
+                              {safeSubmission.late ? ' (Late)' : ''}
                             </Text>
                             <Pressable
                               onPress={() =>
-                                handleToggleSubmissionDetail(courseId, assignment.id)
+                                handleToggleSubmissionDetail(courseId, safeAssignment.id)
                               }
                               style={({ pressed }) => [
                                 styles.detailBtn,
@@ -2669,10 +2765,10 @@ export default function CalendarScreen() {
                                 {detailData ? (
                                   <>
                                     <Text style={styles.detailMeta}>
-                                      Late: {detailData?.late ? 'Yes' : 'No'}
+                                      Late: {detailData.late ? 'Yes' : 'No'}
                                     </Text>
                                     <Text style={styles.detailMeta}>
-                                      Submitted at: {formatDateTime(detailData?.submitted_at)}
+                                      Submitted at: {formatDateTime(detailData.submitted_at)}
                                     </Text>
                                     <Text style={styles.detailHeading}>Teacher comments</Text>
                                     {teacherComments.length === 0 ? (
@@ -2680,16 +2776,16 @@ export default function CalendarScreen() {
                                     ) : (
                                       teacherComments.map((comment, index) => (
                                         <View
-                                          key={`${courseId}-assignment-${String(assignment.id)}-comment-${String(comment?.id || 'x')}-${index}`}
+                                          key={`${courseId}-assignment-${String(safeAssignment.id)}-comment-${String((comment || {}).id || 'x')}-${index}`}
                                           style={styles.detailRow}
                                         >
                                           <Text style={styles.detailMeta}>
-                                            {comment?.author_name || 'Instructor'}
+                                            {(comment || {}).author_name || 'Instructor'}
                                             {' | '}
-                                            {formatDateTime(comment?.created_at)}
+                                            {formatDateTime((comment || {}).created_at)}
                                           </Text>
                                           <Text style={styles.detailText}>
-                                            {comment?.comment || '-'}
+                                            {(comment || {}).comment || '-'}
                                           </Text>
                                         </View>
                                       ))
@@ -2700,24 +2796,24 @@ export default function CalendarScreen() {
                                     ) : (
                                       detailHistory.map((attempt, index) => (
                                         <View
-                                          key={`${courseId}-assignment-${String(assignment.id)}-attempt-${String(attempt?.id || attempt?.attempt || 'x')}-${index}`}
+                                          key={`${courseId}-assignment-${String(safeAssignment.id)}-attempt-${String((attempt || {}).id || (attempt || {}).attempt || 'x')}-${index}`}
                                           style={styles.detailRow}
                                         >
                                           <Text style={styles.detailMeta}>
-                                            Attempt {attempt?.attempt ?? index + 1}
+                                            Attempt {(attempt || {}).attempt || index + 1}
                                           </Text>
                                           <Text style={styles.detailText}>
-                                            Submitted: {formatDateTime(attempt?.submitted_at)}
+                                            Submitted: {formatDateTime((attempt || {}).submitted_at)}
                                           </Text>
                                           <Text style={styles.detailText}>
-                                            Late: {attempt?.late ? 'Yes' : 'No'}
+                                            Late: {(attempt || {}).late ? 'Yes' : 'No'}
                                           </Text>
                                           <Text style={styles.detailText}>
                                             Score:
                                             {' '}
                                             {formatScoreValue(
-                                              attempt?.score,
-                                              attempt?.points_possible ?? assignment?.points_possible
+                                              (attempt || {}).score,
+                                              (attempt || {}).points_possible || safeAssignment.points_possible
                                             )}
                                           </Text>
                                         </View>
@@ -2733,9 +2829,9 @@ export default function CalendarScreen() {
                                 )}
                               </View>
                             ) : null}
-                            {assignment?.html_url ? (
+                            {safeAssignment.html_url ? (
                               <Pressable
-                                onPress={() => openUrl(assignment?.html_url)}
+                                onPress={() => openUrl(safeAssignment.html_url)}
                                 style={({ pressed }) => [
                                   styles.inlineLinkBtn,
                                   pressed ? { opacity: 0.7 } : null,
@@ -2922,28 +3018,24 @@ export default function CalendarScreen() {
           setSelectedCalendarItem(null);
         }}
         onConfirm={() => {
-          if (selectedCalendarItem?.htmlUrl) {
+          if (safeSelectedCalendarItem && safeSelectedCalendarItem.htmlUrl) {
             setCalendarDetailVisible(false);
             setSelectedCalendarItem(null);
-            openUrl(selectedCalendarItem.htmlUrl);
+            openUrl(safeSelectedCalendarItem.htmlUrl);
             return;
           }
           setCalendarDetailVisible(false);
           setSelectedCalendarItem(null);
         }}
-        title={selectedCalendarItem?.title || 'Task detail'}
+        title={(safeSelectedCalendarItem && safeSelectedCalendarItem.title) || 'Task detail'}
         subtitle={selectedCalendarItem ? formatDateTime(selectedCalendarItem.date) : ''}
-        confirmLabel={selectedCalendarItem?.htmlUrl ? 'Open in Canvas' : 'Done'}
+        confirmLabel={getCalendarDetailConfirmLabel(safeSelectedCalendarItem)}
       >
         {selectedCalendarItem ? (
           <View style={styles.sheetDetailPanel}>
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Type</Text>
-              <Text style={styles.detailText}>
-                {selectedCalendarItem.source === 'customTask'
-                  ? 'Custom task'
-                  : selectedCalendarItem.type || 'Calendar item'}
-              </Text>
+              <Text style={styles.detailText}>{getCalendarDetailTypeLabel(selectedCalendarItem)}</Text>
             </View>
 
             <View style={styles.detailRow}>
@@ -2958,11 +3050,7 @@ export default function CalendarScreen() {
 
             <View style={styles.detailRow}>
               <Text style={styles.detailMeta}>Schedule</Text>
-              <Text style={styles.detailText}>
-                {selectedCalendarItem.source === 'customTask'
-                  ? formatTaskSchedule(selectedCalendarItem)
-                  : `${formatShortDate(selectedCalendarItem.date)} | ${formatClockTime(selectedCalendarItem.date)}`}
-              </Text>
+              <Text style={styles.detailText}>{formatCalendarDetailSchedule(selectedCalendarItem)}</Text>
             </View>
 
             {selectedCalendarItem.source === 'assignment' ? (
@@ -3002,14 +3090,14 @@ export default function CalendarScreen() {
                 ) : (
                   selectedCalendarTeacherComments.map((comment, index) => (
                     <View
-                      key={`calendar-detail-comment-${String(comment?.id || index)}`}
+                      key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
                       style={styles.detailRow}
                     >
                       <Text style={styles.detailMeta}>
-                        {formatDateTime(comment?.created_at)}
+                        {formatDateTime((comment || {}).created_at)}
                       </Text>
                       <Text style={styles.detailText}>
-                        {comment?.comment || 'No comment text'}
+                        {(comment || {}).comment || 'No comment text'}
                       </Text>
                     </View>
                   ))

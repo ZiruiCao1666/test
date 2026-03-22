@@ -28,18 +28,72 @@ const CATEGORY_LABELS = {
   coupon: 'discount coupon',
 };
 
+function getErrorMessage(error, fallbackMessage) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallbackMessage;
+}
+
+function isAbortError(error) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+async function readJsonSafely(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (parseError) {
+    return {};
+  }
+}
+
 function normalizeCatalog(items) {
   if (!Array.isArray(items)) return [];
   return items
     .map((raw, index) => {
-      const pointsCost = Number(raw?.pointsCost ?? raw?.points_cost ?? raw?.points);
+      // Normalize backend field names once so the UI can read one stable shape.
+      const safeRaw = raw || {};
+      let pointsValue = safeRaw.pointsCost;
+      if (pointsValue === null || pointsValue === undefined || pointsValue === '') {
+        pointsValue = safeRaw.points_cost;
+      }
+      if (pointsValue === null || pointsValue === undefined || pointsValue === '') {
+        pointsValue = safeRaw.points;
+      }
+      const pointsCost = Number(pointsValue);
+      let rewardId = safeRaw.id;
+      if (rewardId === null || rewardId === undefined || rewardId === '') {
+        rewardId = `fallback-${index}`;
+      }
+      let title = safeRaw.title;
+      if (title === null || title === undefined || title === '') {
+        title = 'reward';
+      }
+      let category = safeRaw.category;
+      if (category === null || category === undefined || category === '') {
+        category = 'coupon';
+      }
+      let imageUrl = safeRaw.imageUrl;
+      if (imageUrl === null || imageUrl === undefined || imageUrl === '') {
+        imageUrl = safeRaw.image_url;
+      }
+      if (imageUrl === null || imageUrl === undefined) {
+        imageUrl = '';
+      }
+      let isActive = safeRaw.isActive;
+      if (isActive === null || isActive === undefined) {
+        isActive = safeRaw.is_active;
+      }
+      if (isActive === null || isActive === undefined) {
+        isActive = true;
+      }
       return {
-        id: raw?.id ?? `fallback-${index}`,
-        title: String(raw?.title ?? 'reward'),
+        id: rewardId,
+        title: String(title),
         pointsCost: Number.isFinite(pointsCost) ? pointsCost : 0,
-        category: String(raw?.category ?? 'coupon'),
-        imageUrl: String(raw?.imageUrl ?? raw?.image_url ?? ''),
-        isActive: raw?.isActive ?? raw?.is_active ?? true,
+        category: String(category),
+        imageUrl: String(imageUrl),
+        isActive,
       };
     })
     .filter((it) => it.isActive);
@@ -58,12 +112,14 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const safeUser = user || {};
+  const primaryEmailAddress = safeUser.primaryEmailAddress || {};
   const username =
-    user?.firstName ||
-    user?.fullName ||
-    user?.primaryEmailAddress?.emailAddress ||
+    safeUser.firstName ||
+    safeUser.fullName ||
+    primaryEmailAddress.emailAddress ||
     'Student';
-  const avatarUrl = user?.imageUrl || null;
+  const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
   const getTokenRef = React.useRef(getToken);
@@ -95,10 +151,12 @@ export default function RewardsScreen() {
     }
 
     try {
+      // Rewards also stay behind the current Clerk session token.
       setLoading(true);
       setError(null);
 
-      const token = await getTokenRef.current?.();
+      const getTokenFromRef = getTokenRef.current;
+      const token = typeof getTokenFromRef === 'function' ? await getTokenFromRef() : '';
       if (!token) throw new Error('No session token');
 
       if (!API_BASE_URL) {
@@ -116,23 +174,25 @@ export default function RewardsScreen() {
         }),
       ]);
 
-      const statusData = await statusRes.json().catch(() => ({}));
+      const statusData = await readJsonSafely(statusRes);
       if (statusRes.ok) {
-        setPoints(Number(statusData?.points) || 0);
+        setPoints(Number(statusData.points) || 0);
       } else {
-        throw new Error(statusData?.error || 'Failed to load points');
+        throw new Error(statusData.error || 'Failed to load points');
       }
 
       if (catalogRes.ok) {
-        const catalogData = await catalogRes.json().catch(() => ({}));
-        const normalized = normalizeCatalog(catalogData?.items);
+        const catalogData = await readJsonSafely(catalogRes);
+        const normalized = normalizeCatalog(catalogData.items);
         setCatalog(normalized.length ? normalized : FALLBACK_CATALOG);
       } else {
         setCatalog(FALLBACK_CATALOG);
       }
     } catch (e) {
       setCatalog(FALLBACK_CATALOG);
-      setError(e?.name === 'AbortError' ? 'Request timeout, please retry.' : (e?.message || 'Failed to load rewards'));
+      setError(
+        isAbortError(e) ? 'Request timeout, please retry.' : getErrorMessage(e, 'Failed to load rewards')
+      );
     } finally {
       setLoading(false);
     }
@@ -161,7 +221,8 @@ export default function RewardsScreen() {
         return;
       }
 
-      const token = await getTokenRef.current?.();
+      const getTokenFromRef = getTokenRef.current;
+      const token = typeof getTokenFromRef === 'function' ? await getTokenFromRef() : '';
       if (!token) throw new Error('No session token');
 
       const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/redeem`, {
@@ -173,17 +234,17 @@ export default function RewardsScreen() {
         body: JSON.stringify({ rewardId: item.id }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = await readJsonSafely(res);
 
       if (!res.ok) {
         if (res.status === 409) {
-          Alert.alert('Insufficient points', data?.error || 'Not enough points for this reward.');
+          Alert.alert('Insufficient points', data.error || 'Not enough points for this reward.');
           return;
         }
-        throw new Error(data?.error || 'Redeem failed');
+        throw new Error(data.error || 'Redeem failed');
       }
 
-      if (data?.remainingPoints !== undefined) {
+      if (data.remainingPoints !== undefined) {
         setPoints(Number(data.remainingPoints) || 0);
       } else {
         setPoints((prev) => Math.max(0, prev - item.pointsCost));
@@ -192,7 +253,10 @@ export default function RewardsScreen() {
       Alert.alert('Redeemed', `${item.title} redeemed successfully.`);
       loadRewards();
     } catch (e) {
-      Alert.alert('Error', e?.name === 'AbortError' ? 'Request timeout, please retry.' : (e?.message || 'Redeem failed'));
+      Alert.alert(
+        'Error',
+        isAbortError(e) ? 'Request timeout, please retry.' : getErrorMessage(e, 'Redeem failed')
+      );
     } finally {
       setRedeemingId(null);
     }

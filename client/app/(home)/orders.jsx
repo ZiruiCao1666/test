@@ -13,6 +13,25 @@ import { useFocusEffect } from '@react-navigation/native';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
+function getErrorMessage(error, fallbackMessage) {
+  if (error instanceof Error && error.message) return error.message;
+  return fallbackMessage;
+}
+
+function isAbortError(error) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+async function readJsonSafely(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (parseError) {
+    return {};
+  }
+}
+
 function formatDate(dateValue) {
   if (!dateValue) return '--';
   const d = new Date(dateValue);
@@ -49,6 +68,7 @@ export default function OrdersScreen() {
     }
 
     try {
+      // Orders are account data, so every request stays behind the current Clerk session token.
       setLoading(true);
       setError(null);
 
@@ -56,19 +76,22 @@ export default function OrdersScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL');
       }
 
-      const token = await getTokenRef.current?.();
+      const getToken = getTokenRef.current;
+      const token = typeof getToken === 'function' ? await getToken() : '';
       if (!token) throw new Error('No session token');
 
       const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/orders`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Failed to load orders');
+      const data = await readJsonSafely(res);
+      if (!res.ok) throw new Error(data.error || 'Failed to load orders');
 
-      setOrders(Array.isArray(data?.items) ? data.items : []);
+      setOrders(Array.isArray(data.items) ? data.items : []);
     } catch (e) {
-      setError(e?.name === 'AbortError' ? 'Request timeout. Please retry.' : (e?.message || 'Failed to load orders'));
+      setError(
+        isAbortError(e) ? 'Request timeout. Please retry.' : getErrorMessage(e, 'Failed to load orders')
+      );
       setOrders([]);
     } finally {
       setLoading(false);

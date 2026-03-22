@@ -64,10 +64,10 @@ const getCustomTaskTimestamp = (item) => {
   const taskDate = String(safeItem.taskDate || '').trim();
   if (!DATE_INPUT_RE.test(taskDate)) return null;
 
-  const sourceTime =
-    safeItem.timingMode === 'range'
-      ? String(safeItem.startTime || '').trim()
-      : String(safeItem.dueTime || '').trim();
+  let sourceTime = String(safeItem.dueTime || '').trim();
+  if (safeItem.timingMode === 'range') {
+    sourceTime = String(safeItem.startTime || '').trim();
+  }
   const safeTime = TIME_INPUT_RE.test(sourceTime) ? sourceTime : '12:00';
   const parsed = new Date(`${taskDate}T${safeTime}:00`).getTime();
   return Number.isFinite(parsed) ? parsed : null;
@@ -135,7 +135,8 @@ const formatPlanDateTime = (item) => {
 
   const timestamp = getItemTimestamp(safeItem);
   if (timestamp === null) {
-    return safeItem.date ? String(safeItem.date) : 'Time not synced';
+    if (safeItem.date) return String(safeItem.date);
+    return 'Time not synced';
   }
 
   return new Date(timestamp).toLocaleString(undefined, {
@@ -152,9 +153,34 @@ const getPlanDetail = (item) => {
 
   if (safeItem.source === 'canvas') {
     const parts = [safeItem.course, safeItem.type].filter(Boolean);
-    return parts.length > 0 ? parts.join(' | ') : 'Canvas item';
+    if (parts.length > 0) {
+      return parts.join(' | ');
+    }
+    return 'Canvas item';
   }
   return safeItem.type || 'Custom task';
+};
+
+const getSummaryStatusText = (hasError, checkedInToday) => {
+  if (hasError) return 'summary sync delayed';
+  if (checkedInToday) return 'today: checked';
+  return 'today: not yet';
+};
+
+const getPlanSourceLabel = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source === 'custom') {
+    return 'Custom';
+  }
+  return 'Canvas';
+};
+
+const getPlanSourceBadgeStyle = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source === 'custom') {
+    return styles.todoSourceBadgeCustom;
+  }
+  return styles.todoSourceBadgeCanvas;
 };
 
 const groupPlanItems = (items) => {
@@ -165,7 +191,8 @@ const groupPlanItems = (items) => {
     { key: '7d', title: 'Within 7 days', items: [] },
   ];
 
-  (Array.isArray(items) ? items : []).forEach((item) => {
+  const safeItems = Array.isArray(items) ? items : [];
+  safeItems.forEach((item) => {
     const timestamp = getItemTimestamp(item);
     if (timestamp === null) {
       sections[2].items.push(item);
@@ -579,7 +606,7 @@ export default function HomeScreen() {
                 Signed in for a total of {summaryReady ? totalSignedDays : '...'} days
               </Text>
               <Text style={styles.infoSub}>
-                {summaryError ? 'summary sync delayed' : (checkedInToday ? 'today: checked' : 'today: not yet')}
+                {getSummaryStatusText(Boolean(summaryError), checkedInToday)}
               </Text>
               <View style={styles.progressLine} />
             </View>
@@ -631,18 +658,16 @@ export default function HomeScreen() {
                     <View style={{ flex: 1 }}>
                       <View style={styles.todoTopRow}>
                         <Text style={styles.todoTop}>{formatDaysLeft(item)}</Text>
-                        <View
-                          style={[
-                            styles.todoSourceBadge,
-                            safeItem.source === 'custom'
-                              ? styles.todoSourceBadgeCustom
-                              : styles.todoSourceBadgeCanvas,
-                          ]}
-                        >
-                          <Text style={styles.todoSourceBadgeText}>
-                            {safeItem.source === 'custom' ? 'Custom' : 'Canvas'}
-                          </Text>
-                        </View>
+                      <View
+                        style={[
+                          styles.todoSourceBadge,
+                          getPlanSourceBadgeStyle(safeItem),
+                        ]}
+                      >
+                        <Text style={styles.todoSourceBadgeText}>
+                          {getPlanSourceLabel(safeItem)}
+                        </Text>
+                      </View>
                       </View>
                       <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
                       <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>

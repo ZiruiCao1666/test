@@ -13,32 +13,39 @@ import { Link, useRouter } from 'expo-router';
 import { useAuth, useSignIn, useSSO } from '@clerk/clerk-expo';
 import * as Linking from 'expo-linking';
 
-
-
-
-
-
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+
+const getErrorMessage = (error, fallbackMessage) => {
+  if (error instanceof Error && error.message) return error.message;
+  return fallbackMessage;
+};
+
+const getClerkErrorMessage = (error, fallbackMessage) => {
+  const safeError = error || {};
+  const errors = Array.isArray(safeError.errors) ? safeError.errors : [];
+  if (errors.length > 0) {
+    const firstError = errors[0] || {};
+    if (firstError.longMessage) return firstError.longMessage;
+    if (firstError.message) return firstError.message;
+  }
+  return getErrorMessage(error, fallbackMessage);
+};
 
 
 export default function SignInScreen() {
   const router = useRouter();
-  // 参考 Clerk useAuth：https://clerk.com/docs/reference/expo/use-auth
-  // 官网示例会在需要调用自家后端时通过 getToken() 取 session token。
+  // Clerk: get the current session token before calling our backend.
   const { getToken } = useAuth();
-  // 参考 Clerk sign-in 文档：https://clerk.com/docs/reference/expo/use-sign-in
+  // Clerk: email/password sign-in flow.
   const { signIn, setActive, isLoaded } = useSignIn();
-  // 参考 Clerk SSO 文档：https://clerk.com/docs/reference/expo/use-sso
+  // Clerk: browser-based SSO flow.
   const { startSSOFlow } = useSSO();
 
   const [emailAddress, setEmailAddress] = React.useState('');
-  
   const [password, setPassword] = React.useState('');
 
   const [loadingPwd, setLoadingPwd] = React.useState(false);
   const [loadingSSO, setLoadingSSO] = React.useState(null);
-//https://react.dev/reference/react/useState  Separately control the loading status of the two buttons
-//https://react.dev/learn/managing-state
   const syncUserToBackend = async () => {
     try {
       if (!API_BASE_URL) {
@@ -55,7 +62,7 @@ export default function SignInScreen() {
         body: JSON.stringify({}),
       });
     } catch (e) {
-      console.log('[FE] sync error:', e?.message || e);
+      console.log('[FE] sync error:', getErrorMessage(e, 'sync failed'));
     }
   };
 
@@ -63,8 +70,6 @@ export default function SignInScreen() {
     await syncUserToBackend();
     router.replace('/');
   };
-
-  //https://docs.expo.dev/router/basics/navigation
 
   const onSignInPress = async () => {
     if (!isLoaded) return;
@@ -92,11 +97,7 @@ export default function SignInScreen() {
       }
     } catch (err) {
       console.log('[sign-in] error:', JSON.stringify(err, null, 2));
-      const msg =
-        err?.errors?.[0]?.longMessage ||
-        err?.errors?.[0]?.message ||
-        err?.message ||
-        'Unable to sign in.';
+      const msg = getClerkErrorMessage(err, 'Unable to sign in.');
       Alert.alert('Login error', msg);
     } finally {
       setLoadingPwd(false);
@@ -118,7 +119,9 @@ export default function SignInScreen() {
       const { createdSessionId, setActive: setActiveFromSSO } = result;
 
       if (createdSessionId) {
-        await setActiveFromSSO?.({ session: createdSessionId });
+        if (typeof setActiveFromSSO === 'function') {
+          await setActiveFromSSO({ session: createdSessionId });
+        }
         await goHome();
       } else {
         Alert.alert(
@@ -129,8 +132,7 @@ export default function SignInScreen() {
     } catch (err) {
       console.log('[SSO sign-in] error =', err);
       console.log('[SSO sign-in] error json =', JSON.stringify(err, null, 2));
-      Alert.alert('SSO error', err?.message || 'SSO sign-in failed.');
-      //https://reactnative.dev/docs/pressable
+      Alert.alert('SSO error', getErrorMessage(err, 'SSO sign-in failed.'));
     } finally {
       setLoadingSSO(null);
     }
@@ -140,15 +142,11 @@ export default function SignInScreen() {
     <KeyboardAvoidingView
       behavior={Platform.select({ ios: 'padding', android: undefined })}
       style={{ flex: 1 }}
-      //https://reactnative.dev/docs/height-and-width
     >
       <View style={{ flex: 1, padding: 20, justifyContent: 'center' }}>
-        {/* https://reactnative.dev/docs/view
-        https://reactnative.dev/docs/flexbox(justifyContent/alignItems/flexDirection) */}
         <Text style={{ fontSize: 28, fontWeight: '800', marginBottom: 24 }}>
           Sign in
         </Text>
-{/* https://reactnative.dev/docs/text */}
         <View style={{ marginBottom: 12 }}>
           <Text style={{ fontSize: 14, marginBottom: 6 }}>Email</Text>
           <TextInput
@@ -165,8 +163,6 @@ export default function SignInScreen() {
             }}
           />
         </View>
-{/* //https://reactnative.dev/docs/scrollview */}
-
         <View style={{ marginBottom: 16 }}>
           <Text style={{ fontSize: 14, marginBottom: 6 }}>Password</Text>
           <TextInput
@@ -208,7 +204,6 @@ export default function SignInScreen() {
         <View style={{ height: 20 }} />
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        {/* https://reactnative.dev/docs/next/layout-props */}
           <View style={{ flex: 1, height: 1, backgroundColor: '#eee' }} />
           <Text style={{ color: '#888' }}>OR</Text>
           <View style={{ flex: 1, height: 1, backgroundColor: '#eee' }} />

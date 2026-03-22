@@ -6,12 +6,14 @@ import { useClerk, useUser } from '@clerk/clerk-expo';
 export default function MyProfileScreen() {
   const { signOut } = useClerk();
   const { user } = useUser();
+  const safeUser = user || {};
+  const displayName = safeUser.fullName || safeUser.firstName || 'Student';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
       <View style={{ padding: 18, gap: 12 }}>
         <Text style={{ fontSize: 20, fontWeight: '800' }}>my profile</Text>
-        <Text>{user?.fullName || user?.firstName || 'Student'}</Text>
+        <Text>{displayName}</Text>
 
         <Pressable
           onPress={() => signOut()}
