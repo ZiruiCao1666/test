@@ -778,27 +778,41 @@ const MiniCalendarPanel = ({
   footerHint,
 }) => {
   const calendarDays = useMemo(() => buildMiniCalendarDays(anchorDate), [anchorDate]);
+  let titleHintNode = null;
+  if (titleHint) {
+    titleHintNode = <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>;
+  }
+
+  let titleNode = (
+    <View style={styles.miniCalendarTitleBtn}>
+      <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
+      {titleHintNode}
+    </View>
+  );
+  if (onPressTitle) {
+    titleNode = (
+      <Pressable
+        onPress={onPressTitle}
+        style={({ pressed }) => [
+          styles.miniCalendarTitleBtn,
+          getStyleWhen(pressed, { opacity: 0.76 }),
+        ]}
+      >
+        <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
+        {titleHintNode}
+      </Pressable>
+    );
+  }
+
+  let footerHintNode = null;
+  if (footerHint) {
+    footerHintNode = <Text style={styles.miniCalendarHint}>{footerHint}</Text>;
+  }
 
   return (
     <View style={styles.miniCalendarCard}>
       <View style={styles.miniCalendarTopRow}>
-        {renderNodeWhenElse(onPressTitle, (
-          <Pressable
-            onPress={onPressTitle}
-            style={({ pressed }) => [
-              styles.miniCalendarTitleBtn,
-              getStyleWhen(pressed, { opacity: 0.76 }),
-            ]}
-          >
-            <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {renderNodeWhen(titleHint, <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>)}
-          </Pressable>
-        ), (
-          <View style={styles.miniCalendarTitleBtn}>
-            <Text style={styles.miniCalendarTitle}>{formatMonthYear(anchorDate)}</Text>
-            {renderNodeWhen(titleHint, <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>)}
-          </View>
-        ))}
+        {titleNode}
 
         <View style={styles.miniCalendarNavRow}>
           <Pressable
@@ -840,6 +854,23 @@ const MiniCalendarPanel = ({
           };
           const isSelected = isSameDay(day.date, selectedDate);
           const isToday = isSameDay(day.date, new Date());
+          let markersNode = null;
+          if (markers.count > 0) {
+            let canvasDotNode = null;
+            if (markers.hasCanvas) {
+              canvasDotNode = <View style={styles.miniCalendarDot} />;
+            }
+            let customDotNode = null;
+            if (markers.hasCustom) {
+              customDotNode = <View style={styles.miniCalendarDotCustom} />;
+            }
+            markersNode = (
+              <View style={styles.miniCalendarDotRow}>
+                {canvasDotNode}
+                {customDotNode}
+              </View>
+            );
+          }
           return (
             <Pressable
               key={day.key}
@@ -861,18 +892,13 @@ const MiniCalendarPanel = ({
               >
                 {day.date.getDate()}
               </Text>
-              {renderNodeWhen(markers.count > 0, (
-                <View style={styles.miniCalendarDotRow}>
-                  {renderNodeWhen(markers.hasCanvas, <View style={styles.miniCalendarDot} />)}
-                  {renderNodeWhen(markers.hasCustom, <View style={styles.miniCalendarDotCustom} />)}
-                </View>
-              ))}
+              {markersNode}
             </Pressable>
           );
         })}
       </View>
 
-      {renderNodeWhen(footerHint, <Text style={styles.miniCalendarHint}>{footerHint}</Text>)}
+      {footerHintNode}
     </View>
   );
 };
@@ -882,21 +908,28 @@ const TaskSelectField = ({
   value,
   hint,
   onPress,
-}) => (
-  <View style={styles.taskFieldBlock}>
-    <Text style={styles.taskFieldLabel}>{label}</Text>
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.taskFieldSelect,
-        getStyleWhen(pressed, { opacity: 0.82 }),
-      ]}
-    >
-      <Text style={styles.taskFieldSelectValue}>{value}</Text>
-      {renderNodeWhen(hint, <Text style={styles.taskFieldSelectHint}>{hint}</Text>)}
-    </Pressable>
-  </View>
-);
+}) => {
+  let hintNode = null;
+  if (hint) {
+    hintNode = <Text style={styles.taskFieldSelectHint}>{hint}</Text>;
+  }
+
+  return (
+    <View style={styles.taskFieldBlock}>
+      <Text style={styles.taskFieldLabel}>{label}</Text>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.taskFieldSelect,
+          getStyleWhen(pressed, { opacity: 0.82 }),
+        ]}
+      >
+        <Text style={styles.taskFieldSelectValue}>{value}</Text>
+        {hintNode}
+      </Pressable>
+    </View>
+  );
+};
 
 const BottomSheetPicker = ({
   visible,
@@ -910,61 +943,71 @@ const BottomSheetPicker = ({
   onLeadingPress,
   cardStyle,
   children,
-}) => (
-  <Modal
-    transparent
-    animationType="slide"
-    visible={visible}
-    onRequestClose={onClose}
-  >
-    <View style={styles.sheetOverlay}>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
-      <View style={[styles.sheetCard, cardStyle]}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetActionRow}>
-          {renderNodeWhenElse(leadingLabel && onLeadingPress, (
-            <Pressable
-              onPress={onLeadingPress}
-              style={({ pressed }) => [
-                styles.sheetGhostAction,
-                getStyleWhen(pressed, { opacity: 0.82 }),
-              ]}
-            >
-              <Text style={styles.sheetGhostActionText}>{leadingLabel}</Text>
-            </Pressable>
-          ), (
-            <View style={styles.sheetActionSpacer} />
-          ))}
+}) => {
+  let leadingActionNode = <View style={styles.sheetActionSpacer} />;
+  if (leadingLabel && onLeadingPress) {
+    leadingActionNode = (
+      <Pressable
+        onPress={onLeadingPress}
+        style={({ pressed }) => [
+          styles.sheetGhostAction,
+          getStyleWhen(pressed, { opacity: 0.82 }),
+        ]}
+      >
+        <Text style={styles.sheetGhostActionText}>{leadingLabel}</Text>
+      </Pressable>
+    );
+  }
 
-          <View style={styles.sheetActionRight}>
-            <Pressable
-              onPress={onClose}
-              style={({ pressed }) => [
-                styles.sheetGhostAction,
-                getStyleWhen(pressed, { opacity: 0.82 }),
-              ]}
-            >
-              <Text style={styles.sheetGhostActionText}>{cancelLabel}</Text>
-            </Pressable>
-            <Pressable
-              onPress={onConfirm}
-              style={({ pressed }) => [
-                styles.sheetPrimaryAction,
-                getStyleWhen(pressed, { opacity: 0.82 }),
-              ]}
-            >
-              <Text style={styles.sheetPrimaryActionText}>{confirmLabel}</Text>
-            </Pressable>
+  let subtitleNode = null;
+  if (subtitle) {
+    subtitleNode = <Text style={styles.sheetSubtitle}>{subtitle}</Text>;
+  }
+
+  return (
+    <Modal
+      transparent
+      animationType="slide"
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.sheetOverlay}>
+        <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+        <View style={[styles.sheetCard, cardStyle]}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetActionRow}>
+            {leadingActionNode}
+
+            <View style={styles.sheetActionRight}>
+              <Pressable
+                onPress={onClose}
+                style={({ pressed }) => [
+                  styles.sheetGhostAction,
+                  getStyleWhen(pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={styles.sheetGhostActionText}>{cancelLabel}</Text>
+              </Pressable>
+              <Pressable
+                onPress={onConfirm}
+                style={({ pressed }) => [
+                  styles.sheetPrimaryAction,
+                  getStyleWhen(pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={styles.sheetPrimaryActionText}>{confirmLabel}</Text>
+              </Pressable>
+            </View>
           </View>
-        </View>
 
-        <Text style={styles.sheetTitle}>{title}</Text>
-        {renderNodeWhen(subtitle, <Text style={styles.sheetSubtitle}>{subtitle}</Text>)}
-        {children}
+          <Text style={styles.sheetTitle}>{title}</Text>
+          {subtitleNode}
+          {children}
+        </View>
       </View>
-    </View>
-  </Modal>
-);
+    </Modal>
+  );
+};
 
 const createEmptyTaskForm = (seedDate = new Date()) => ({
   title: '',
@@ -2104,92 +2147,6 @@ export default function CalendarScreen() {
       </Text>
     );
   }
-  let selectedCalendarDetailNode = null;
-  if (safeSelectedCalendarItem) {
-    selectedCalendarDetailNode = (
-      <View style={styles.sheetDetailPanel}>
-        <View style={styles.detailRow}>
-          <Text style={styles.detailMeta}>Type</Text>
-          <Text style={styles.detailText}>{getCalendarDetailTypeLabel(safeSelectedCalendarItem)}</Text>
-        </View>
-
-        <View style={styles.detailRow}>
-          <Text style={styles.detailMeta}>Course</Text>
-          <Text style={styles.detailText}>{safeSelectedCalendarItem.course || 'Canvas'}</Text>
-        </View>
-
-        <View style={styles.detailRow}>
-          <Text style={styles.detailMeta}>Status</Text>
-          <Text style={styles.detailText}>{safeSelectedCalendarItem.status || 'N/A'}</Text>
-        </View>
-
-        <View style={styles.detailRow}>
-          <Text style={styles.detailMeta}>Schedule</Text>
-          <Text style={styles.detailText}>{formatCalendarDetailSchedule(safeSelectedCalendarItem)}</Text>
-        </View>
-
-        {renderNodeWhen(safeSelectedCalendarItem.source === 'assignment', (
-          <>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Score</Text>
-              <Text style={styles.detailText}>
-                {formatScoreValue(
-                  safeSelectedCalendarItem.score,
-                  safeSelectedCalendarItem.pointsPossible
-                )}
-              </Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Submitted</Text>
-              <Text style={styles.detailText}>
-                {getTextWhen(
-                  safeSelectedCalendarItem.submittedAt,
-                  formatDateTime(safeSelectedCalendarItem.submittedAt),
-                  'Not submitted'
-                )}
-              </Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailMeta}>Late</Text>
-              <Text style={styles.detailText}>
-                {getYesNoText(safeSelectedCalendarItem.late)}
-              </Text>
-            </View>
-            <Text style={styles.detailHeading}>Teacher comments</Text>
-            {renderNodeWhenElse(selectedCalendarDetailState.loading, (
-              <Text style={styles.detailMuted}>Loading submission detail...</Text>
-            ), renderNodeWhenElse(selectedCalendarDetailState.error, (
-              <Text style={styles.detailError}>
-                Failed to load detail: {selectedCalendarDetailState.error}
-              </Text>
-            ), renderNodeWhenElse(selectedCalendarTeacherComments.length === 0, (
-              <Text style={styles.detailMuted}>No teacher comments yet.</Text>
-            ), (
-              selectedCalendarTeacherComments.map((comment, index) => (
-                <View
-                  key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
-                  style={styles.detailRow}
-                >
-                  <Text style={styles.detailMeta}>
-                    {formatDateTime((comment || {}).created_at)}
-                  </Text>
-                  <Text style={styles.detailText}>
-                    {(comment || {}).comment || 'No comment text'}
-                  </Text>
-                </View>
-              ))
-            ))))}
-          </>
-        ))}
-
-        {renderNodeWhen(safeSelectedCalendarItem.source === 'customTask', (
-          <Text style={styles.sheetDetailNote}>
-            This is your own task stored in the app and merged into the planner.
-          </Text>
-        ))}
-      </View>
-    );
-  }
   const selectedCalendarTeacherComments = useMemo(() => {
     if (!selectedCalendarDetailData) return [];
     let detailComments = [];
@@ -2215,6 +2172,110 @@ export default function CalendarScreen() {
       }
     );
   }, [profile, selectedCalendarDetailData]);
+  let selectedCalendarDetailNode = null;
+  if (safeSelectedCalendarItem) {
+    let assignmentDetailSectionNode = null;
+    if (safeSelectedCalendarItem.source === 'assignment') {
+      let teacherCommentsNode = null;
+      if (selectedCalendarDetailState.loading) {
+        teacherCommentsNode = (
+          <Text style={styles.detailMuted}>Loading submission detail...</Text>
+        );
+      } else if (selectedCalendarDetailState.error) {
+        teacherCommentsNode = (
+          <Text style={styles.detailError}>
+            Failed to load detail: {selectedCalendarDetailState.error}
+          </Text>
+        );
+      } else if (selectedCalendarTeacherComments.length === 0) {
+        teacherCommentsNode = (
+          <Text style={styles.detailMuted}>No teacher comments yet.</Text>
+        );
+      } else {
+        teacherCommentsNode = selectedCalendarTeacherComments.map((comment, index) => (
+          <View
+            key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
+            style={styles.detailRow}
+          >
+            <Text style={styles.detailMeta}>
+              {formatDateTime((comment || {}).created_at)}
+            </Text>
+            <Text style={styles.detailText}>
+              {(comment || {}).comment || 'No comment text'}
+            </Text>
+          </View>
+        ));
+      }
+
+      assignmentDetailSectionNode = (
+        <>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailMeta}>Score</Text>
+            <Text style={styles.detailText}>
+              {formatScoreValue(
+                safeSelectedCalendarItem.score,
+                safeSelectedCalendarItem.pointsPossible
+              )}
+            </Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailMeta}>Submitted</Text>
+            <Text style={styles.detailText}>
+              {getTextWhen(
+                safeSelectedCalendarItem.submittedAt,
+                formatDateTime(safeSelectedCalendarItem.submittedAt),
+                'Not submitted'
+              )}
+            </Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailMeta}>Late</Text>
+            <Text style={styles.detailText}>
+              {getYesNoText(safeSelectedCalendarItem.late)}
+            </Text>
+          </View>
+          <Text style={styles.detailHeading}>Teacher comments</Text>
+          {teacherCommentsNode}
+        </>
+      );
+    }
+
+    let customTaskNoteNode = null;
+    if (safeSelectedCalendarItem.source === 'customTask') {
+      customTaskNoteNode = (
+        <Text style={styles.sheetDetailNote}>
+          This is your own task stored in the app and merged into the planner.
+        </Text>
+      );
+    }
+
+    selectedCalendarDetailNode = (
+      <View style={styles.sheetDetailPanel}>
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Type</Text>
+          <Text style={styles.detailText}>{getCalendarDetailTypeLabel(safeSelectedCalendarItem)}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Course</Text>
+          <Text style={styles.detailText}>{safeSelectedCalendarItem.course || 'Canvas'}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Status</Text>
+          <Text style={styles.detailText}>{safeSelectedCalendarItem.status || 'N/A'}</Text>
+        </View>
+
+        <View style={styles.detailRow}>
+          <Text style={styles.detailMeta}>Schedule</Text>
+          <Text style={styles.detailText}>{formatCalendarDetailSchedule(safeSelectedCalendarItem)}</Text>
+        </View>
+
+        {assignmentDetailSectionNode}
+        {customTaskNoteNode}
+      </View>
+    );
+  }
 
   const changeCalendarWindow = (direction) => {
     const offsetByView = {
@@ -2296,6 +2357,139 @@ export default function CalendarScreen() {
     }
   };
 
+  let connectButtonContentNode = (
+    <Text style={styles.primaryBtnText}>
+      {getCanvasConnectButtonText(isConnected)}
+    </Text>
+  );
+  if (loading) {
+    connectButtonContentNode = <ActivityIndicator color="#fff" />;
+  }
+
+  let cardErrorNode = null;
+  if (error) {
+    cardErrorNode = <Text style={styles.error}>{error}</Text>;
+  }
+
+  let profileOverviewNode = <Text style={styles.empty}>No profile synced yet.</Text>;
+  if (profile) {
+    let profileEmailNode = null;
+    if (safeProfile.primary_email || safeProfile.login_id) {
+      profileEmailNode = (
+        <Text style={styles.profileMeta}>
+          Email/Login:
+          {' '}
+          {safeProfile.primary_email || safeProfile.login_id}
+        </Text>
+      );
+    }
+
+    let profileTimeZoneNode = null;
+    if (safeProfile.time_zone) {
+      profileTimeZoneNode = (
+        <Text style={styles.profileMeta}>
+          Time zone:
+          {' '}
+          {safeProfile.time_zone}
+        </Text>
+      );
+    }
+
+    profileOverviewNode = (
+      <View style={styles.profileCard}>
+        <Text style={styles.profileName}>{safeProfile.name || 'Unknown user'}</Text>
+        {profileEmailNode}
+        {profileTimeZoneNode}
+      </View>
+    );
+  }
+
+  let courseGradesOverviewNode = <Text style={styles.empty}>No courses synced.</Text>;
+  if (courses.length > 0) {
+    courseGradesOverviewNode = (
+      <View style={styles.events}>
+        {courses.map((course, courseIndex) => {
+          const safeCourse = course || {};
+          const courseId = String(safeCourse.id || '');
+          const enrollment = enrollmentsByCourse[courseId];
+          const safeEnrollment = enrollment || {};
+          const grades = safeEnrollment.grades || {};
+          const submissionEntry = submissionsByCourse[courseId] || {};
+          const submissionSummary = submissionEntry.summary || {};
+          const courseTerm = safeCourse.term || {};
+          const termName = courseTerm.name || 'No term';
+          const completionText = formatPercent(submissionSummary.completionRate);
+          const onTimeText = formatPercent(submissionSummary.onTimeRate);
+          let gradeLinkNode = null;
+          if (grades.html_url) {
+            gradeLinkNode = (
+              <Pressable
+                onPress={() => openUrl(grades.html_url)}
+                style={({ pressed }) => [
+                  styles.inlineLinkBtn,
+                  getStyleWhen(pressed, { opacity: 0.7 }),
+                ]}
+              >
+                <Text style={styles.inlineLinkText}>Open grade page</Text>
+              </Pressable>
+            );
+          }
+
+          return (
+            <View key={`${courseId}-grade-${courseIndex}`} style={styles.gradeCard}>
+              <Text style={styles.gradeCourseName}>
+                {safeCourse.name || safeCourse.course_code || 'Untitled course'}
+              </Text>
+              <Text style={styles.gradeMeta}>Term: {termName}</Text>
+              <Text style={styles.gradeMeta}>Completion: {completionText}</Text>
+              <Text style={styles.gradeMeta}>On-time: {onTimeText}</Text>
+              {gradeLinkNode}
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
+  let dueSoonOverviewNode = <Text style={styles.empty}>No upcoming events.</Text>;
+  if (events.length > 0) {
+    dueSoonOverviewNode = (
+      <View style={styles.events}>
+        {events.map((event, eventIndex) => {
+          let eventCourseNode = null;
+          if (event.course) {
+            eventCourseNode = <Text style={styles.eventCourse}>{event.course}</Text>;
+          }
+          let eventLinkNode = null;
+          if (event.htmlUrl) {
+            eventLinkNode = <Text style={styles.eventLink}>Open in Canvas</Text>;
+          }
+          return (
+            <Pressable
+              key={`${String(event.id)}-event-${eventIndex}`}
+              onPress={() => openUrl(event.htmlUrl)}
+              style={({ pressed }) => [
+                styles.eventItem,
+                getStyleWhen(event.htmlUrl, styles.eventClickable),
+                getStyleWhen(pressed, { opacity: 0.7 }),
+              ]}
+            >
+              <View style={styles.eventTag}>
+                <Text style={styles.eventTagText}>{event.type}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eventTitle}>{event.title}</Text>
+                {eventCourseNode}
+                <Text style={styles.eventDate}>{formatDateTime(event.date)}</Text>
+                {eventLinkNode}
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
@@ -2345,13 +2539,7 @@ export default function CalendarScreen() {
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              {renderNodeWhenElse(loading, (
-                <ActivityIndicator color="#fff" />
-              ), (
-                <Text style={styles.primaryBtnText}>
-                  {getCanvasConnectButtonText(isConnected)}
-                </Text>
-              ))}
+              {connectButtonContentNode}
             </Pressable>
 
             <Pressable
@@ -2368,7 +2556,7 @@ export default function CalendarScreen() {
           <Text style={styles.helper}>
             {getCanvasStorageHelperText(canPersistToBackend)}
           </Text>
-          {renderNodeWhen(error, <Text style={styles.error}>{error}</Text>)}
+          {cardErrorNode}
           {lastSyncNode}
         </View>
 
@@ -2864,103 +3052,17 @@ export default function CalendarScreen() {
           <>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Profile</Text>
-          {renderNodeWhenElse(!profile, (
-            <Text style={styles.empty}>No profile synced yet.</Text>
-          ), (
-            <View style={styles.profileCard}>
-              <Text style={styles.profileName}>{safeProfile.name || 'Unknown user'}</Text>
-              {renderNodeWhen(safeProfile.primary_email || safeProfile.login_id, (
-                <Text style={styles.profileMeta}>
-                  Email/Login:
-                  {' '}
-                  {safeProfile.primary_email || safeProfile.login_id}
-                </Text>
-              ))}
-              {renderNodeWhen(safeProfile.time_zone, (
-                <Text style={styles.profileMeta}>
-                  Time zone:
-                  {' '}
-                  {safeProfile.time_zone}
-                </Text>
-              ))}
-            </View>
-          ))}
+          {profileOverviewNode}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Course Grades</Text>
-          {renderNodeWhenElse(courses.length === 0, (
-            <Text style={styles.empty}>No courses synced.</Text>
-          ), (
-            <View style={styles.events}>
-              {courses.map((course, courseIndex) => {
-                const safeCourse = course || {};
-                const courseId = String(safeCourse.id || '');
-                const enrollment = enrollmentsByCourse[courseId];
-                const safeEnrollment = enrollment || {};
-                const grades = safeEnrollment.grades || {};
-                const submissionEntry = submissionsByCourse[courseId] || {};
-                const submissionSummary = submissionEntry.summary || {};
-                const courseTerm = safeCourse.term || {};
-                const termName = courseTerm.name || 'No term';
-                const completionText = formatPercent(submissionSummary.completionRate);
-                const onTimeText = formatPercent(submissionSummary.onTimeRate);
-
-                return (
-                  <View key={`${courseId}-grade-${courseIndex}`} style={styles.gradeCard}>
-                    <Text style={styles.gradeCourseName}>
-                      {safeCourse.name || safeCourse.course_code || 'Untitled course'}
-                    </Text>
-                    <Text style={styles.gradeMeta}>Term: {termName}</Text>
-                    <Text style={styles.gradeMeta}>Completion: {completionText}</Text>
-                    <Text style={styles.gradeMeta}>On-time: {onTimeText}</Text>
-                    {renderNodeWhen(grades.html_url, (
-                      <Pressable
-                        onPress={() => openUrl(grades.html_url)}
-                        style={({ pressed }) => [
-                          styles.inlineLinkBtn,
-                          getStyleWhen(pressed, { opacity: 0.7 }),
-                        ]}
-                      >
-                        <Text style={styles.inlineLinkText}>Open grade page</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                );
-              })}
-            </View>
-          ))}
+          {courseGradesOverviewNode}
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Due Soon</Text>
-          {renderNodeWhenElse(events.length === 0, (
-            <Text style={styles.empty}>No upcoming events.</Text>
-          ), (
-            <View style={styles.events}>
-              {events.map((event, eventIndex) => (
-                <Pressable
-                  key={`${String(event.id)}-event-${eventIndex}`}
-                  onPress={() => openUrl(event.htmlUrl)}
-                  style={({ pressed }) => [
-                    styles.eventItem,
-                    getStyleWhen(event.htmlUrl, styles.eventClickable),
-                    getStyleWhen(pressed, { opacity: 0.7 }),
-                  ]}
-                >
-                  <View style={styles.eventTag}>
-                    <Text style={styles.eventTagText}>{event.type}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.eventTitle}>{event.title}</Text>
-                    {renderNodeWhen(event.course, <Text style={styles.eventCourse}>{event.course}</Text>)}
-                    <Text style={styles.eventDate}>{formatDateTime(event.date)}</Text>
-                    {renderNodeWhen(event.htmlUrl, <Text style={styles.eventLink}>Open in Canvas</Text>)}
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          ))}
+          {dueSoonOverviewNode}
         </View>
 
         <View style={styles.section}>
