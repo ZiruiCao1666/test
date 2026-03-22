@@ -154,6 +154,23 @@ const buildCustomScheduleText = (item) => {
   return `${dateLabel} | Due ${formatTimeOnly(dueTime)}`;
 };
 
+const buildCustomTaskDateTime = (item) => {
+  const taskDate = getCustomTaskDateText(item);
+  if (!DATE_INPUT_RE.test(taskDate)) {
+    return '';
+  }
+
+  const timingMode = getCustomTimingMode(item);
+  let sourceTime = getCustomDueTimeText(item);
+  if (timingMode === 'range') {
+    sourceTime = getCustomStartTimeText(item);
+  }
+  if (!TIME_INPUT_RE.test(sourceTime)) {
+    sourceTime = '12:00';
+  }
+  return `${taskDate}T${sourceTime}:00`;
+};
+
 const normalizeHomePlanItem = (item) => {
   const safeItem = item || {};
   if (safeItem.source !== 'custom') {
@@ -189,6 +206,85 @@ const normalizeHomePlanItem = (item) => {
   }
 
   return normalized;
+};
+
+const mapTaskRowToHomePlanItem = (task) => {
+  const safeTask = task || {};
+  const date = buildCustomTaskDateTime(safeTask);
+  const timestamp = new Date(date).getTime();
+  let type = 'due time';
+  if (getCustomTimingMode(safeTask) === 'range') {
+    type = 'time range';
+  }
+
+  let timestampMs = null;
+  if (Number.isFinite(timestamp)) {
+    timestampMs = timestamp;
+  }
+
+  return normalizeHomePlanItem({
+    id: `custom-${String(safeTask.id || '')}`,
+    source: 'custom',
+    title: safeTask.title || 'Untitled task',
+    course: '',
+    type,
+    date,
+    timestampMs,
+    htmlUrl: '',
+    isCompleted: Boolean(safeTask.isCompleted),
+    taskDate: getCustomTaskDateText(safeTask),
+    timingMode: getCustomTimingMode(safeTask),
+    dueTime: getCustomDueTimeText(safeTask),
+    startTime: getCustomStartTimeText(safeTask),
+    endTime: getCustomEndTimeText(safeTask),
+    scheduleText: buildCustomScheduleText(safeTask),
+  });
+};
+
+const buildUpcomingCustomPlanItems = (tasks) => {
+  let safeTasks = [];
+  if (Array.isArray(tasks)) {
+    safeTasks = tasks;
+  }
+
+  const now = Date.now();
+  const end = now + HOME_PLAN_DAYS * ONE_DAY_MS;
+  const items = [];
+
+  safeTasks.forEach((task) => {
+    const item = mapTaskRowToHomePlanItem(task);
+    if (item.isCompleted) {
+      return;
+    }
+    const timestamp = getItemTimestamp(item);
+    if (timestamp === null) {
+      return;
+    }
+    if (timestamp < now || timestamp > end) {
+      return;
+    }
+    items.push(item);
+  });
+
+  items.sort((left, right) => {
+    const leftTime = getItemTimestamp(left);
+    const rightTime = getItemTimestamp(right);
+    if (leftTime === null && rightTime === null) {
+      return String(left.title || '').localeCompare(String(right.title || ''));
+    }
+    if (leftTime === null) {
+      return 1;
+    }
+    if (rightTime === null) {
+      return -1;
+    }
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return String(left.title || '').localeCompare(String(right.title || ''));
+  });
+
+  return items;
 };
 
 const getCustomTaskTimestamp = (item) => {
@@ -636,15 +732,46 @@ export default function HomeScreen() {
         },
         timeoutMs
       );
+      const tasksRes = await fetchWithTimeout(
+        `${API_BASE_URL}/tasks`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+        timeoutMs
+      );
 
       const data = await res.json().catch(() => ({}));
+      const tasksData = await tasksRes.json().catch(() => ({}));
       if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
+      if (!tasksRes.ok) throw new Error(getApiErrorMessage(tasksData, 'Failed to load custom tasks'));
 
+      let canvasItems = [];
       if (data && Array.isArray(data.items)) {
-        setHomePlanItems(data.items.map(normalizeHomePlanItem));
-      } else {
-        setHomePlanItems([]);
+        canvasItems = data.items.filter((item) => {
+          const safeItem = item || {};
+          return safeItem.source !== 'custom';
+        }).map(normalizeHomePlanItem);
       }
+      const customItems = buildUpcomingCustomPlanItems(tasksData.items);
+      const mergedItems = canvasItems.concat(customItems);
+      mergedItems.sort((left, right) => {
+        const leftTime = getItemTimestamp(left);
+        const rightTime = getItemTimestamp(right);
+        if (leftTime === null && rightTime === null) {
+          return String(left.title || '').localeCompare(String(right.title || ''));
+        }
+        if (leftTime === null) {
+          return 1;
+        }
+        if (rightTime === null) {
+          return -1;
+        }
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return String(left.title || '').localeCompare(String(right.title || ''));
+      });
+      setHomePlanItems(mergedItems);
       if (data && data.canvasError) {
         setCanvasPlanWarning(String(data.canvasError).trim());
       } else {
