@@ -29,7 +29,9 @@ const CATEGORY_LABELS = {
 };
 
 function getErrorMessage(error, fallbackMessage) {
-  if (error instanceof Error && error.message) return error.message;
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
   return fallbackMessage;
 }
 
@@ -38,32 +40,44 @@ function isAbortError(error) {
 }
 
 function getStyleWhen(condition, style) {
-  if (condition) return style;
+  if (condition) {
+    return style;
+  }
   return null;
 }
 
 function renderNodeWhen(condition, node) {
-  if (!condition) return null;
+  if (!condition) {
+    return null;
+  }
   return node;
 }
 
 function renderNodeWhenElse(condition, trueNode, falseNode) {
-  if (condition) return trueNode;
+  if (condition) {
+    return trueNode;
+  }
   return falseNode;
 }
 
 function getRefreshText(loading) {
-  if (loading) return 'loading';
+  if (loading) {
+    return 'loading';
+  }
   return 'refresh';
 }
 
 function getRedeemButtonText(disabled) {
-  if (disabled) return 'redeeming...';
+  if (disabled) {
+    return 'redeeming...';
+  }
   return 'redeem';
 }
 
 function getPointsText(loading, points) {
-  if (loading) return '...';
+  if (loading) {
+    return '...';
+  }
   return points;
 }
 
@@ -111,7 +125,7 @@ function normalizeCatalog(items) {
       const pointsCost = Number(pointsValue);
       let rewardId = safeRaw.id;
       if (rewardId === null || rewardId === undefined || rewardId === '') {
-        rewardId = `fallback-${index}`;
+        rewardId = 'fallback-' + String(index);
       }
       let title = safeRaw.title;
       if (title === null || title === undefined || title === '') {
@@ -218,7 +232,9 @@ export default function RewardsScreen() {
       if (typeof getTokenFromRef === 'function') {
         token = await getTokenFromRef();
       }
-      if (!token) throw new Error('No session token');
+      if (!token) {
+        throw new Error('No session token');
+      }
 
       if (!API_BASE_URL) {
         setCatalog(FALLBACK_CATALOG);
@@ -227,11 +243,11 @@ export default function RewardsScreen() {
       }
 
       const [statusRes, catalogRes] = await Promise.all([
-        fetchWithTimeout(`${API_BASE_URL}/checkins/status`, {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout(API_BASE_URL + '/checkins/status', {
+          headers: { Authorization: 'Bearer ' + token },
         }),
-        fetchWithTimeout(`${API_BASE_URL}/rewards/catalog`, {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout(API_BASE_URL + '/rewards/catalog', {
+          headers: { Authorization: 'Bearer ' + token },
         }),
       ]);
 
@@ -272,7 +288,9 @@ export default function RewardsScreen() {
   );
 
   const onRedeem = async (item) => {
-    if (redeemingId) return;
+    if (redeemingId) {
+      return;
+    }
 
     if (points < item.pointsCost) {
       Alert.alert('Insufficient points', 'You do not have enough points for this reward.');
@@ -284,7 +302,7 @@ export default function RewardsScreen() {
 
       if (!API_BASE_URL) {
         setPoints((prev) => Math.max(0, prev - item.pointsCost));
-        Alert.alert('Redeemed', `${item.title} redeemed (local mode).`);
+        Alert.alert('Redeemed', String(item.title) + ' redeemed (local mode).');
         return;
       }
 
@@ -293,13 +311,15 @@ export default function RewardsScreen() {
       if (typeof getTokenFromRef === 'function') {
         token = await getTokenFromRef();
       }
-      if (!token) throw new Error('No session token');
+      if (!token) {
+        throw new Error('No session token');
+      }
 
-      const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/redeem`, {
+      const res = await fetchWithTimeout(API_BASE_URL + '/rewards/redeem', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: 'Bearer ' + token,
         },
         body: JSON.stringify({ rewardId: item.id }),
       });
@@ -320,7 +340,7 @@ export default function RewardsScreen() {
         setPoints((prev) => Math.max(0, prev - item.pointsCost));
       }
 
-      Alert.alert('Redeemed', `${item.title} redeemed successfully.`);
+      Alert.alert('Redeemed', String(item.title) + ' redeemed successfully.');
       loadRewards();
     } catch (e) {
       if (isAbortError(e)) {

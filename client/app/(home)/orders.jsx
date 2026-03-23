@@ -14,7 +14,9 @@ import { useFocusEffect } from '@react-navigation/native';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 function getErrorMessage(error, fallbackMessage) {
-  if (error instanceof Error && error.message) return error.message;
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
   return fallbackMessage;
 }
 
@@ -23,17 +25,23 @@ function isAbortError(error) {
 }
 
 function getStyleWhen(condition, style) {
-  if (condition) return style;
+  if (condition) {
+    return style;
+  }
   return null;
 }
 
 function renderNodeWhen(condition, node) {
-  if (!condition) return null;
+  if (!condition) {
+    return null;
+  }
   return node;
 }
 
 function getRefreshText(loading) {
-  if (loading) return 'loading';
+  if (loading) {
+    return 'loading';
+  }
   return 'refresh';
 }
 
@@ -96,14 +104,18 @@ export default function OrdersScreen() {
       if (typeof getToken === 'function') {
         token = await getToken();
       }
-      if (!token) throw new Error('No session token');
+      if (!token) {
+        throw new Error('No session token');
+      }
 
-      const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/orders`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetchWithTimeout(API_BASE_URL + '/rewards/orders', {
+        headers: { Authorization: 'Bearer ' + token },
       });
 
       const data = await readJsonSafely(res);
-      if (!res.ok) throw new Error(data.error || 'Failed to load orders');
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to load orders');
+      }
 
       if (Array.isArray(data.items)) {
         setOrders(data.items);

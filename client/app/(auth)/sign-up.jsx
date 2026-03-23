@@ -16,7 +16,9 @@ import * as Linking from 'expo-linking';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const getErrorMessage = (error, fallbackMessage) => {
-  if (error instanceof Error && error.message) return error.message;
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
   return fallbackMessage;
 };
 
@@ -28,14 +30,20 @@ const getClerkErrorMessage = (error, fallbackMessage) => {
   }
   if (errors.length > 0) {
     const firstError = errors[0] || {};
-    if (firstError.longMessage) return firstError.longMessage;
-    if (firstError.message) return firstError.message;
+    if (firstError.longMessage) {
+      return firstError.longMessage;
+    }
+    if (firstError.message) {
+      return firstError.message;
+    }
   }
   return getErrorMessage(error, fallbackMessage);
 };
 
 const getOpacityValue = (condition) => {
-  if (condition) return 0.7;
+  if (condition) {
+    return 0.7;
+  }
   return 1;
 };
 
@@ -60,13 +68,15 @@ export default function SignUpScreen() {
       }
 
       const token = await getToken();
-      if (!token) return;
+      if (!token) {
+        return;
+      }
 
-      await fetch(`${API_BASE_URL}/users/sync`, {
+      await fetch(API_BASE_URL + '/users/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: 'Bearer ' + token,
         },
         body: JSON.stringify({}),
       });
@@ -81,7 +91,9 @@ export default function SignUpScreen() {
   };
 
   const onSignUpPress = async () => {
-    if (!isLoaded) return;
+    if (!isLoaded) {
+      return;
+    }
 
     if (!emailAddress.trim() || !password) {
       Alert.alert('Missing info', 'Please enter your email and password.');
@@ -108,7 +120,9 @@ export default function SignUpScreen() {
   };
 
   const onVerifyPress = async () => {
-    if (!isLoaded) return;
+    if (!isLoaded) {
+      return;
+    }
 
     if (!code.trim()) {
       Alert.alert('Missing code', 'Please enter the verification code.');

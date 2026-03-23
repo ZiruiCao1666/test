@@ -199,7 +199,7 @@ function decryptCanvasToken(cipherText, iv, authTag) {
 function normalizeCanvasBaseUrl(value) {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
-  let withProtocol = `https://${trimmed}`
+  let withProtocol = 'https://' + trimmed
   if (/^https?:\/\//i.test(trimmed)) {
     withProtocol = trimmed
   }
@@ -212,7 +212,7 @@ function buildCanvasBaseUrl(value) {
   if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
     return normalizeCanvasBaseUrl(trimmed)
   }
-  return `https://${trimmed}.instructure.com`
+  return 'https://' + trimmed + '.instructure.com'
 }
 
 function buildAbsoluteCanvasUrl(baseUrl, value) {
@@ -220,9 +220,9 @@ function buildAbsoluteCanvasUrl(baseUrl, value) {
   if (!trimmed) return ''
   if (/^https?:\/\//i.test(trimmed)) return trimmed
   if (trimmed.startsWith('/')) {
-    return `${baseUrl}${trimmed}`
+    return baseUrl + trimmed
   }
-  return `${baseUrl}/${trimmed}`
+  return baseUrl + '/' + trimmed
 }
 
 function parseLinkHeader(header) {
@@ -237,13 +237,13 @@ function parseLinkHeader(header) {
 }
 
 async function fetchCanvasPage(baseUrl, token, pathOrUrl) {
-  let url = `${baseUrl}${pathOrUrl}`
+  let url = baseUrl + pathOrUrl
   if (/^https?:\/\//i.test(pathOrUrl)) {
     url = pathOrUrl
   }
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: 'Bearer ' + token,
       Accept: 'application/json',
     },
   })
@@ -271,7 +271,7 @@ async function fetchCanvasPage(baseUrl, token, pathOrUrl) {
       (firstError && firstError.message) ||
       (data && data.message) ||
       response.statusText
-    throw new Error(`Canvas ${response.status} ${message}`)
+    throw new Error('Canvas ' + String(response.status) + ' ' + message)
   }
 
   const links = parseLinkHeader(response.headers.get('link'))
@@ -339,14 +339,14 @@ function buildCustomTaskDateTime(task) {
   if (!date) return ''
 
   if (safeTask.timingMode === TASK_MODE_RANGE && trimTaskTime(safeTask.startTime)) {
-    return `${date}T${trimTaskTime(safeTask.startTime)}:00`
+    return date + 'T' + trimTaskTime(safeTask.startTime) + ':00'
   }
 
   if (trimTaskTime(safeTask.dueTime)) {
-    return `${date}T${trimTaskTime(safeTask.dueTime)}:00`
+    return date + 'T' + trimTaskTime(safeTask.dueTime) + ':00'
   }
 
-  return `${date}T12:00:00`
+  return date + 'T12:00:00'
 }
 
 function formatHomeTaskSchedule(task) {
@@ -358,7 +358,7 @@ function formatHomeTaskSchedule(task) {
   const taskDate = String(safeTask.taskDate || '').trim()
   if (!taskDate) return 'Date not set'
 
-  const parsed = new Date(`${taskDate}T00:00:00`)
+  const parsed = new Date(taskDate + 'T00:00:00')
   let dateLabel = taskDate
   if (!Number.isNaN(parsed.getTime())) {
     dateLabel = parsed.toLocaleDateString('en-GB', {
@@ -370,10 +370,10 @@ function formatHomeTaskSchedule(task) {
   if (safeTask.timingMode === TASK_MODE_RANGE) {
     const start = trimTaskTime(safeTask.startTime)
     const end = trimTaskTime(safeTask.endTime)
-    return `${dateLabel} | ${start || '--:--'} - ${end || '--:--'}`
+    return dateLabel + ' | ' + (start || '--:--') + ' - ' + (end || '--:--')
   }
 
-  return `${dateLabel} | Due ${trimTaskTime(safeTask.dueTime) || '--:--'}`
+  return dateLabel + ' | Due ' + (trimTaskTime(safeTask.dueTime) || '--:--')
 }
 
 function getCanvasPlanDate(item) {
@@ -469,7 +469,7 @@ function mapCustomTaskToPlanItem(task) {
   }
 
   return {
-    id: `custom-${String(safeTask.id)}`,
+    id: 'custom-' + String(safeTask.id),
     source: 'custom',
     title: safeTask.title || 'Untitled task',
     course: '',
@@ -502,7 +502,7 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
   if (Number.isNaN(sortTs)) return null
 
   return {
-    id: `canvas-${String(safeItem.id || safeItem.event_id || safeItem.assignment_id || index)}`,
+    id: 'canvas-' + String(safeItem.id || safeItem.event_id || safeItem.assignment_id || index),
     source: 'canvas',
     title: getCanvasPlanTitle(safeItem),
     course: getCanvasPlanCourse(safeItem, courseNameById),
@@ -911,7 +911,11 @@ app.get('/home/plan', async (req, res) => {
           fetchCanvasPaged(
             baseUrl,
             stored.token,
-            `/api/v1/planner/items?start_date=${encodeURIComponent(startIso)}&end_date=${encodeURIComponent(endIso)}&filter=incomplete_items&per_page=50`,
+            '/api/v1/planner/items?start_date=' +
+              encodeURIComponent(startIso) +
+              '&end_date=' +
+              encodeURIComponent(endIso) +
+              '&filter=incomplete_items&per_page=50',
           ),
         ])
 
@@ -1546,5 +1550,5 @@ app.post('/checkins/today', async (req, res) => {
 
 // Render 必须：绑定 0.0.0.0，并监听 PORT
 app.listen(port, '0.0.0.0', () => {
-  console.log(`Backend listening on port ${port}`)
+  console.log('Backend listening on port ' + String(port))
 })
