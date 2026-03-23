@@ -1183,6 +1183,7 @@ export default function CalendarScreen() {
   const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskDeletingId, setTaskDeletingId] = useState('');
+  const [taskTogglingId, setTaskTogglingId] = useState('');
   const [editingTaskId, setEditingTaskId] = useState('');
   const [selectedPanel, setSelectedPanel] = useState('calendar');
   const [selectedView, setSelectedView] = useState('week');
@@ -2014,8 +2015,13 @@ export default function CalendarScreen() {
   };
 
   const handleToggleTaskCompletion = async (task) => {
+    const safeTask = task || {};
+    if (!safeTask.id) {
+      return;
+    }
+
     try {
-      const safeTask = task || {};
+      setTaskTogglingId(String(safeTask.id));
       let timingMode = 'deadline';
       if (safeTask.timingMode === 'range') {
         timingMode = 'range';
@@ -2038,6 +2044,8 @@ export default function CalendarScreen() {
       } else {
         setTasksError('Failed to update task.');
       }
+    } finally {
+      setTaskTogglingId('');
     }
   };
 
@@ -3284,24 +3292,31 @@ export default function CalendarScreen() {
       <View style={styles.taskList}>
         {customTasks.map((task) => {
           const isDeleting = taskDeletingId === String(task.id);
+          const isToggling = taskTogglingId === String(task.id);
           return (
             <View key={'task-' + String(task.id)} style={styles.taskItemCard}>
               <Pressable
                 onPress={() => handleToggleTaskCompletion(task)}
+                disabled={isToggling}
                 style={({ pressed }) => [
                   styles.taskCheckBtn,
                   getStyleWhen(task.isCompleted, styles.taskCheckBtnActive),
+                  getStyleWhen(isToggling, { opacity: 0.6 }),
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
-                <Text
-                  style={[
-                    styles.taskCheckBtnText,
-                    getStyleWhen(task.isCompleted, styles.taskCheckBtnTextActive),
-                  ]}
-                >
-                  {getTextWhen(task.isCompleted, '\u2713', '')}
-                </Text>
+                {isToggling ? (
+                  <ActivityIndicator size="small" color={task.isCompleted ? '#fff' : '#2563eb'} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.taskCheckBtnText,
+                      getStyleWhen(task.isCompleted, styles.taskCheckBtnTextActive),
+                    ]}
+                  >
+                    {getTextWhen(task.isCompleted, '\u2713', '')}
+                  </Text>
+                )}
               </Pressable>
 
               <View style={styles.taskItemBody}>
