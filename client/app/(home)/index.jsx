@@ -428,6 +428,43 @@ const getCheckInAlertText = (gained) => {
 
 const getPlanEmptyMessage = () => 'No Canvas or custom tasks in the next seven days.';
 
+const getReviewEmptyMessage = () => 'No Canvas or custom tasks in the previous seven days.';
+
+const getReviewStatusText = (item) => {
+  const safeItem = item || {};
+  if (safeItem.isCompleted) {
+    return 'Completed';
+  }
+  return 'Not completed';
+};
+
+const getReviewSummaryText = (summary, items) => {
+  const safeSummary = summary || {};
+  let totalCount = 0;
+  if (typeof safeSummary.totalCount === 'number' && Number.isFinite(safeSummary.totalCount)) {
+    totalCount = safeSummary.totalCount;
+  } else if (Array.isArray(items)) {
+    totalCount = items.length;
+  }
+
+  let completedCount = 0;
+  if (
+    typeof safeSummary.completedCount === 'number' &&
+    Number.isFinite(safeSummary.completedCount)
+  ) {
+    completedCount = safeSummary.completedCount;
+  } else if (Array.isArray(items)) {
+    items.forEach((item) => {
+      const safeItem = item || {};
+      if (safeItem.isCompleted) {
+        completedCount += 1;
+      }
+    });
+  }
+
+  return 'Completed ' + String(completedCount) + ' of ' + String(totalCount) + ' tasks';
+};
+
 const buildPlanRowProps = (item, openPlanItem) => {
   const safeItem = item || {};
   if (safeItem.htmlUrl) {
@@ -523,6 +560,11 @@ export default function HomeScreen() {
   const [checkingIn, setCheckingIn] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
   const [homePlanItems, setHomePlanItems] = React.useState([]);
+  const [recentPlanItems, setRecentPlanItems] = React.useState([]);
+  const [recentPlanSummary, setRecentPlanSummary] = React.useState({
+    totalCount: 0,
+    completedCount: 0,
+  });
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
@@ -730,7 +772,42 @@ export default function HomeScreen() {
         items = data.items.slice();
       }
 
+      let recentItems = [];
+      if (data && Array.isArray(data.recentItems)) {
+        recentItems = data.recentItems.slice();
+      }
+
+      let nextRecentSummary = {
+        totalCount: 0,
+        completedCount: 0,
+      };
+      if (data && data.recentSummary) {
+        const safeSummary = data.recentSummary;
+        let totalCount = 0;
+        if (
+          typeof safeSummary.totalCount === 'number' &&
+          Number.isFinite(safeSummary.totalCount)
+        ) {
+          totalCount = safeSummary.totalCount;
+        }
+
+        let completedCount = 0;
+        if (
+          typeof safeSummary.completedCount === 'number' &&
+          Number.isFinite(safeSummary.completedCount)
+        ) {
+          completedCount = safeSummary.completedCount;
+        }
+
+        nextRecentSummary = {
+          totalCount,
+          completedCount,
+        };
+      }
+
       setHomePlanItems(items);
+      setRecentPlanItems(recentItems);
+      setRecentPlanSummary(nextRecentSummary);
       if (data && data.canvasError) {
         setCanvasPlanWarning(String(data.canvasError).trim());
       } else {
@@ -738,6 +815,11 @@ export default function HomeScreen() {
       }
     } catch (e) {
       setHomePlanItems([]);
+      setRecentPlanItems([]);
+      setRecentPlanSummary({
+        totalCount: 0,
+        completedCount: 0,
+      });
       setCanvasPlanWarning('');
       setHomePlanError(getErrorMessage(e, 'Failed to load seven-day plan'));
       console.log('[Home] loadHomePlan error:', getErrorMessage(e, 'Unknown error'));
@@ -824,6 +906,9 @@ export default function HomeScreen() {
 
   const lastingDays = streakDays || totalSignedDays;
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
+  const recentReviewSummaryText = React.useMemo(() => {
+    return getReviewSummaryText(recentPlanSummary, recentPlanItems);
+  }, [recentPlanSummary, recentPlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
     const safeItem = item || {};
     if (!safeItem.htmlUrl) {
@@ -903,6 +988,11 @@ export default function HomeScreen() {
   let homePlanEmptyNode = null;
   if (!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0) {
     homePlanEmptyNode = <Text style={styles.todoEmpty}>{getPlanEmptyMessage()}</Text>;
+  }
+
+  let recentReviewEmptyNode = null;
+  if (!loadingHomePlan && !homePlanError && recentPlanItems.length === 0) {
+    recentReviewEmptyNode = <Text style={styles.todoEmpty}>{getReviewEmptyMessage()}</Text>;
   }
 
   return (
@@ -1020,6 +1110,53 @@ export default function HomeScreen() {
               })}
             </View>
           ))}
+
+          <View style={styles.todoDivider} />
+          <View style={styles.todoSection}>
+            <Text style={styles.todoSectionTitle}>Review the previous seven days</Text>
+            <Text style={styles.todoReviewSummary}>{recentReviewSummaryText}</Text>
+            {recentReviewEmptyNode}
+
+            {recentPlanItems.map((item) => {
+              const safeItem = item || {};
+              let Row = View;
+              if (safeItem.htmlUrl) {
+                Row = Pressable;
+              }
+              const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+              let todoLinkHintNode = null;
+              if (safeItem.htmlUrl) {
+                todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
+              }
+
+              return (
+                <Row key={safeItem.id} {...rowProps}>
+                  {renderTodoAvatarNode(avatarUrl, avatarInitial)}
+
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.todoTopRow}>
+                      <Text style={styles.todoTop}>{getReviewStatusText(safeItem)}</Text>
+                      <View
+                        style={[
+                          styles.todoSourceBadge,
+                          getPlanSourceBadgeStyle(safeItem),
+                        ]}
+                      >
+                        <Text style={styles.todoSourceBadgeText}>
+                          {getPlanSourceLabel(safeItem)}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
+                    <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
+                    <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
+                    {todoLinkHintNode}
+                    <View style={styles.todoLine} />
+                  </View>
+                </Row>
+              );
+            })}
+          </View>
         </View>
 
         <View style={{ height: 24 }} />
@@ -1108,5 +1245,7 @@ const styles = StyleSheet.create({
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
+  todoReviewSummary: { fontSize: 11, color: '#6b7280', marginBottom: 6 },
+  todoDivider: { marginTop: 10, marginBottom: 4, height: 1, backgroundColor: '#e5e7eb' },
   todoLine: { marginTop: 8, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '88%' },
 });

@@ -489,9 +489,11 @@ function mapCustomTaskToPlanItem(task) {
 }
 
 function mapCanvasEventToPlanItem(item, index, options = {}) {
-  // 把 Canvas Planner API 的返回结果也转换成同一套结构，
-  // 这样前端不用分别写两套渲染逻辑。
   const { baseUrl = '', courseNameById = {} } = options
+  let completed = false
+  if (options && options.isCompleted) {
+    completed = true
+  }
   const safeItem = item || {}
   const plannable = safeItem.plannable || {}
   const assignment = safeItem.assignment || {}
@@ -513,8 +515,67 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
       baseUrl,
       safeItem.html_url || plannable.html_url || assignment.html_url || '',
     ),
-    isCompleted: false,
+    isCompleted: completed,
     sortTs,
+  }
+}
+
+function sortPlanItemsAscending(items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items.slice()
+  }
+  safeItems.sort((left, right) => {
+    if (left.sortTs !== right.sortTs) {
+      return left.sortTs - right.sortTs
+    }
+    return String(left.title || '').localeCompare(String(right.title || ''))
+  })
+  return safeItems
+}
+
+function sortPlanItemsDescending(items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items.slice()
+  }
+  safeItems.sort((left, right) => {
+    if (left.sortTs !== right.sortTs) {
+      return right.sortTs - left.sortTs
+    }
+    return String(left.title || '').localeCompare(String(right.title || ''))
+  })
+  return safeItems
+}
+
+function stripPlanSortTs(items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items
+  }
+  return safeItems.map((item) => {
+    const nextItem = { ...item }
+    delete nextItem.sortTs
+    return nextItem
+  })
+}
+
+function buildReviewSummary(items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items
+  }
+  const totalCount = safeItems.length
+  let completedCount = 0
+  safeItems.forEach((item) => {
+    const safeItem = item || {}
+    if (safeItem.isCompleted) {
+      completedCount += 1
+    }
+  })
+  return {
+    totalCount,
+    completedCount,
   }
 }
 
@@ -839,7 +900,7 @@ app.delete('/canvas/credentials', async (req, res) => {
 
 /**
  * GET /home/plan
- * Return the current user's next N days of custom tasks + Canvas items.
+ * Return the current user's next N days and previous N days of custom tasks + Canvas items.
  */
 app.get('/home/plan', async (req, res) => {
   try {
@@ -855,8 +916,11 @@ app.get('/home/plan', async (req, res) => {
       days = Math.min(Math.max(rawDays, 1), 30)
     }
 
-    // Step 1: load incomplete custom tasks for the next N days.
-    const customTaskResult = await pool.query(
+    const nowTs = Date.now()
+    const futureEndTs = nowTs + days * 24 * 60 * 60 * 1000
+    const pastStartTs = nowTs - days * 24 * 60 * 60 * 1000
+
+    const upcomingTaskResult = await pool.query(
       `
       SELECT
         id,
@@ -879,12 +943,38 @@ app.get('/home/plan', async (req, res) => {
       [userId, days],
     )
 
-    const customItems = customTaskResult.rows
+    const recentTaskResult = await pool.query(
+      `
+      SELECT
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      FROM app_custom_tasks
+      WHERE clerk_user_id = $1
+        AND task_date >= ((NOW() AT TIME ZONE 'Europe/London')::date - $2::int)
+        AND task_date < (NOW() AT TIME ZONE 'Europe/London')::date
+      ORDER BY task_date DESC, COALESCE(start_time, due_time) DESC NULLS LAST, created_at DESC
+      `,
+      [userId, days],
+    )
+
+    const customUpcomingItems = upcomingTaskResult.rows
       .map(mapCustomTaskRow)
       .map(mapCustomTaskToPlanItem)
 
-    // Step 2: if Canvas credentials exist, load official Canvas planner items.
-    let canvasItems = []
+    const customRecentItems = recentTaskResult.rows
+      .map(mapCustomTaskRow)
+      .map(mapCustomTaskToPlanItem)
+
+    let canvasUpcomingItems = []
+    let canvasRecentItems = []
     let canvasConnected = false
     let canvasError = ''
 
@@ -894,15 +984,12 @@ app.get('/home/plan', async (req, res) => {
 
       if (canvasConnected) {
         const baseUrl = buildCanvasBaseUrl(stored.school)
-        const nowTs = Date.now()
-        const endTs = nowTs + days * 24 * 60 * 60 * 1000
-        const startIso = new Date(nowTs).toISOString()
-        const endIso = new Date(endTs).toISOString()
+        const futureStartIso = new Date(nowTs).toISOString()
+        const futureEndIso = new Date(futureEndTs).toISOString()
+        const recentStartIso = new Date(pastStartTs).toISOString()
+        const recentEndIso = new Date(nowTs).toISOString()
 
-        // Load both course names and planner items.
-        // - Courses let us map course_id to a readable course name.
-        // - Planner items give the official upcoming study items.
-        const [rawCourses, rawCanvasItems] = await Promise.all([
+        const [rawCourses, rawUpcomingCanvasItems, rawRecentCompletedCanvasItems, rawRecentIncompleteCanvasItems] = await Promise.all([
           fetchCanvasPaged(
             baseUrl,
             stored.token,
@@ -912,9 +999,27 @@ app.get('/home/plan', async (req, res) => {
             baseUrl,
             stored.token,
             '/api/v1/planner/items?start_date=' +
-              encodeURIComponent(startIso) +
+              encodeURIComponent(futureStartIso) +
               '&end_date=' +
-              encodeURIComponent(endIso) +
+              encodeURIComponent(futureEndIso) +
+              '&filter=incomplete_items&per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            '/api/v1/planner/items?start_date=' +
+              encodeURIComponent(recentStartIso) +
+              '&end_date=' +
+              encodeURIComponent(recentEndIso) +
+              '&filter=complete_items&per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            '/api/v1/planner/items?start_date=' +
+              encodeURIComponent(recentStartIso) +
+              '&end_date=' +
+              encodeURIComponent(recentEndIso) +
               '&filter=incomplete_items&per_page=50',
           ),
         ])
@@ -932,18 +1037,61 @@ app.get('/home/plan', async (req, res) => {
           return acc
         }, {})
 
-        let safeCanvasItems = []
-        if (Array.isArray(rawCanvasItems)) {
-          safeCanvasItems = rawCanvasItems
+        let safeUpcomingCanvasItems = []
+        if (Array.isArray(rawUpcomingCanvasItems)) {
+          safeUpcomingCanvasItems = rawUpcomingCanvasItems
         }
-        canvasItems = safeCanvasItems
+        let safeRecentCompletedCanvasItems = []
+        if (Array.isArray(rawRecentCompletedCanvasItems)) {
+          safeRecentCompletedCanvasItems = rawRecentCompletedCanvasItems
+        }
+        let safeRecentIncompleteCanvasItems = []
+        if (Array.isArray(rawRecentIncompleteCanvasItems)) {
+          safeRecentIncompleteCanvasItems = rawRecentIncompleteCanvasItems
+        }
+
+        canvasUpcomingItems = safeUpcomingCanvasItems
           .map((item, index) =>
             mapCanvasEventToPlanItem(item, index, {
               baseUrl,
               courseNameById,
+              isCompleted: false,
             }),
           )
-          .filter((item) => item && item.sortTs >= nowTs && item.sortTs <= endTs)
+          .filter((item) => item && item.sortTs >= nowTs && item.sortTs <= futureEndTs)
+
+        const recentCompletedCanvasItems = safeRecentCompletedCanvasItems
+          .map((item, index) =>
+            mapCanvasEventToPlanItem(item, index, {
+              baseUrl,
+              courseNameById,
+              isCompleted: true,
+            }),
+          )
+          .filter((item) => item && item.sortTs >= pastStartTs && item.sortTs <= nowTs)
+
+        const recentIncompleteCanvasItems = safeRecentIncompleteCanvasItems
+          .map((item, index) =>
+            mapCanvasEventToPlanItem(item, index, {
+              baseUrl,
+              courseNameById,
+              isCompleted: false,
+            }),
+          )
+          .filter((item) => item && item.sortTs >= pastStartTs && item.sortTs <= nowTs)
+
+        const recentCanvasItemMap = {}
+        recentCompletedCanvasItems.forEach((item) => {
+          if (item && item.id) {
+            recentCanvasItemMap[item.id] = item
+          }
+        })
+        recentIncompleteCanvasItems.forEach((item) => {
+          if (item && item.id && !recentCanvasItemMap[item.id]) {
+            recentCanvasItemMap[item.id] = item
+          }
+        })
+        canvasRecentItems = Object.values(recentCanvasItemMap)
       }
     } catch (canvasLoadError) {
       if (canvasLoadError instanceof Error) {
@@ -954,27 +1102,18 @@ app.get('/home/plan', async (req, res) => {
       console.error('[BE] /home/plan canvas error:', canvasLoadError)
     }
 
-    // Step 3: merge custom tasks and Canvas tasks, then sort by time.
-    const mergedItems = customItems.concat(canvasItems)
-    mergedItems.sort((left, right) => {
-      if (left.sortTs !== right.sortTs) {
-        return left.sortTs - right.sortTs
-      }
-      return String(left.title || '').localeCompare(String(right.title || ''))
-    })
-
-    const items = mergedItems.map((item) => {
-      const nextItem = { ...item }
-      delete nextItem.sortTs
-      return nextItem
-    })
+    const upcomingItems = sortPlanItemsAscending(customUpcomingItems.concat(canvasUpcomingItems))
+    const recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
+    const recentSummary = buildReviewSummary(recentItems)
 
     return res.json({
       ok: true,
       days,
       canvasConnected,
       canvasError,
-      items,
+      items: stripPlanSortTs(upcomingItems),
+      recentItems: stripPlanSortTs(recentItems),
+      recentSummary,
     })
   } catch (e) {
     console.error('[BE] /home/plan error:', e)
