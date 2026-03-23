@@ -37,9 +37,7 @@ const getApiErrorMessage = (data, fallback) => {
 };
 
 const getStyleWhen = (condition, style) => {
-  if (condition) {
-    return style;
-  }
+  if (condition) return style;
   return null;
 };
 
@@ -61,24 +59,10 @@ const formatShortDate = (value) => {
 };
 
 const formatTimeOnly = (value) => {
-  let safe = '';
-  if (value !== undefined && value !== null) {
-    safe = String(value).trim();
-  }
-
-  if (!TIME_INPUT_RE.test(safe)) {
-    if (safe) {
-      return safe;
-    }
-    return '--:--';
-  }
-
-  const rawDateTime = '2000-01-01T' + safe + ':00';
-  const date = new Date(rawDateTime);
-  if (Number.isNaN(date.getTime())) {
-    return safe;
-  }
-
+  const safe = String(value || '').trim();
+  if (!TIME_INPUT_RE.test(safe)) return safe || '--:--';
+  const date = new Date(`2000-01-01T${safe}:00`);
+  if (Number.isNaN(date.getTime())) return safe;
   return date.toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -130,7 +114,7 @@ const getTimeFromAnyValue = (value) => {
   if (hhmmssMatch) {
     const hourPart = hhmmssMatch[1];
     const minutePart = hhmmssMatch[2];
-    return hourPart + ':' + minutePart;
+    return `${hourPart}:${minutePart}`;
   }
 
   const parsed = new Date(safe);
@@ -259,7 +243,7 @@ const getCustomScheduleText = (item) => {
       const endTime = getTimeFromAnyValue(safeItem.endTime);
       const startText = formatTimeOnly(startTime);
       const endText = formatTimeOnly(endTime);
-      return dateLabel + ' ' + startText + ' - ' + endText;
+      return `${dateLabel} ${startText} - ${endText}`;
     }
 
     let dueTime = getTimeFromAnyValue(safeItem.dueTime);
@@ -268,14 +252,14 @@ const getCustomScheduleText = (item) => {
     }
 
     const dueText = formatTimeOnly(dueTime);
-    return dateLabel + ' ' + dueText;
+    return `${dateLabel} ${dueText}`;
   }
 
   if (safeItem.date) {
     const fallbackDate = getDateFromAnyValue(safeItem.date);
     const fallbackTime = getTimeFromAnyValue(safeItem.date);
     if (fallbackDate && fallbackTime) {
-      return fallbackDate + ' ' + fallbackTime;
+      return `${fallbackDate} ${fallbackTime}`;
     }
   }
   if (safeItem.scheduleText) {
@@ -297,7 +281,7 @@ const formatDaysLeft = (item) => {
 
   if (diffMs <= ONE_DAY_MS) {
     const hoursLeft = Math.max(1, Math.ceil(diffMs / (60 * 60 * 1000)));
-    return String(hoursLeft) + 'h left';
+    return `${hoursLeft}h left`;
   }
 
   const date = new Date(timestamp);
@@ -318,7 +302,7 @@ const formatDaysLeft = (item) => {
     return '1 day left';
   }
 
-  return String(diffDays) + ' days left';
+  return `${diffDays} days left`;
 };
 
 const formatPlanDateTime = (item) => {
@@ -360,12 +344,8 @@ const getPlanDetail = (item) => {
 };
 
 const getSummaryStatusText = (hasError, checkedInToday) => {
-  if (hasError) {
-    return 'summary sync delayed';
-  }
-  if (checkedInToday) {
-    return 'today: checked';
-  }
+  if (hasError) return 'summary sync delayed';
+  if (checkedInToday) return 'today: checked';
   return 'today: not yet';
 };
 
@@ -393,36 +373,24 @@ const getPrimaryEmail = (safeUser) => {
 };
 
 const getUserDisplayName = (safeUser, primaryEmail) => {
-  if (safeUser.firstName) {
-    return safeUser.firstName;
-  }
-  if (safeUser.fullName) {
-    return safeUser.fullName;
-  }
-  if (primaryEmail) {
-    return primaryEmail;
-  }
+  if (safeUser.firstName) return safeUser.firstName;
+  if (safeUser.fullName) return safeUser.fullName;
+  if (primaryEmail) return primaryEmail;
   return 'Student';
 };
 
 const getSummaryValueText = (summaryReady, value) => {
-  if (summaryReady) {
-    return value;
-  }
+  if (summaryReady) return value;
   return '...';
 };
 
 const getCheckInButtonText = (checkedInToday) => {
-  if (checkedInToday) {
-    return 'Checked in\ntoday';
-  }
+  if (checkedInToday) return 'Checked in\ntoday';
   return 'Click to\ncheck in';
 };
 
 const getCheckInAlertText = (gained) => {
-  if (gained > 0) {
-    return 'Checked in for today (+' + String(gained) + ' points)';
-  }
+  if (gained > 0) return `Checked in for today (+${gained} points)`;
   return 'Already checked in today';
 };
 
@@ -546,10 +514,8 @@ export default function HomeScreen() {
   }, []);
 
   const summaryCacheKey = React.useMemo(() => {
-    if (!userId) {
-      return null;
-    }
-    return SUMMARY_CACHE_PREFIX + ':' + userId;
+    if (!userId) return null;
+    return `${SUMMARY_CACHE_PREFIX}:${userId}`;
   }, [userId]);
 
   const applySummaryData = React.useCallback((data = {}) => {
@@ -568,9 +534,7 @@ export default function HomeScreen() {
   }, []);
 
   const persistSummaryToCache = React.useCallback(async (data = {}) => {
-    if (!summaryCacheKey) {
-      return;
-    }
+    if (!summaryCacheKey) return;
 
     try {
       const safeData = data || {};
@@ -592,9 +556,7 @@ export default function HomeScreen() {
   }, [summaryCacheKey]);
 
   const hydrateSummaryFromCache = React.useCallback(async () => {
-    if (!summaryCacheKey) {
-      return false;
-    }
+    if (!summaryCacheKey) return false;
 
     try {
       const raw = await SecureStore.getItemAsync(summaryCacheKey);
@@ -617,9 +579,7 @@ export default function HomeScreen() {
       if (tokenGetter) {
         token = await tokenGetter();
       }
-      if (token) {
-        return token;
-      }
+      if (token) return token;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     return '';
@@ -638,18 +598,13 @@ export default function HomeScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
 
-      if (!authLoaded || !isSignedIn || !userLoaded || !userId) {
-        return;
-      }
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return;
 
       const token = await getSessionToken();
-      if (!token) {
-        return;
-      }
+      if (!token) return;
 
-      const statusUrl = API_BASE_URL + '/checkins/status';
-      const res = await fetchWithTimeout(statusUrl, {
-        headers: { Authorization: 'Bearer ' + token },
+      const res = await fetchWithTimeout(`${API_BASE_URL}/checkins/status`, {
+        headers: { Authorization: `Bearer ${token}` },
       }, timeoutMs);
 
       const data = await res.json().catch(() => ({}));
@@ -674,7 +629,7 @@ export default function HomeScreen() {
 
       console.log('[Home] loadSummary error:', getErrorMessage(e, 'Unknown error'));
       console.log('[Home] API_BASE_URL =', API_BASE_URL);
-      console.log('[Home] URL =', API_BASE_URL + '/checkins/status');
+      console.log('[Home] URL =', `${API_BASE_URL}/checkins/status`);
     } finally {
       if (!silent) {
         setLoadingSummary(false);
@@ -705,20 +660,15 @@ export default function HomeScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
 
-      if (!authLoaded || !isSignedIn || !userLoaded || !userId) {
-        return;
-      }
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return;
 
       const token = await getSessionToken();
-      if (!token) {
-        return;
-      }
+      if (!token) return;
 
-      const homePlanUrl = API_BASE_URL + '/home/plan?days=' + String(HOME_PLAN_DAYS);
       const res = await fetchWithTimeout(
-        homePlanUrl,
+        `${API_BASE_URL}/home/plan?days=${HOME_PLAN_DAYS}`,
         {
-          headers: { Authorization: 'Bearer ' + token },
+          headers: { Authorization: `Bearer ${token}` },
         },
         timeoutMs
       );
@@ -750,17 +700,13 @@ export default function HomeScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      if (!authLoaded || !isSignedIn || !userLoaded || !userId) {
-        return undefined;
-      }
+      if (!authLoaded || !isSignedIn || !userLoaded || !userId) return undefined;
 
       let alive = true;
 
       (async () => {
         const hasCache = await hydrateSummaryFromCache();
-        if (!alive) {
-          return;
-        }
+        if (!alive) return;
         await Promise.allSettled([
           loadSummary({ silent: hasCache, timeoutMs: 25000 }),
           loadHomePlan({ timeoutMs: 25000 }),
@@ -782,9 +728,7 @@ export default function HomeScreen() {
   );
 
   const onCheckIn = async () => {
-    if (checkingIn) {
-      return;
-    }
+    if (checkingIn) return;
 
     try {
       setCheckingIn(true);
@@ -800,10 +744,9 @@ export default function HomeScreen() {
       const token = await getSessionToken();
       if (!token) throw new Error('No session token');
 
-      const checkInUrl = API_BASE_URL + '/checkins/today';
-      const res = await fetch(checkInUrl, {
+      const res = await fetch(`${API_BASE_URL}/checkins/today`, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + token },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = await res.json().catch(() => ({}));
@@ -826,9 +769,7 @@ export default function HomeScreen() {
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
     const safeItem = item || {};
-    if (!safeItem.htmlUrl) {
-      return;
-    }
+    if (!safeItem.htmlUrl) return;
     try {
       await Linking.openURL(safeItem.htmlUrl);
     } catch (_error) {

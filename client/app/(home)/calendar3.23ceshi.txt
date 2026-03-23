@@ -20,72 +20,52 @@ const SAVE_DEBOUNCE_MS = 450;
 
 const normalizeBaseUrl = (value) => {
   const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
+  if (!trimmed) return '';
   let withProtocol = trimmed;
   if (!/^https?:\/\//i.test(trimmed)) {
-    withProtocol = 'https://' + trimmed;
+    withProtocol = `https://${trimmed}`;
   }
   return withProtocol.replace(/\/+$/, '');
 };
 
 const buildBaseUrl = (value) => {
   const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
+  if (!trimmed) return '';
   if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
     return normalizeBaseUrl(trimmed);
   }
-  return 'https://' + trimmed + '.instructure.com';
+  return `https://${trimmed}.instructure.com`;
 };
 
 const formatDateTime = (isoString) => {
-  if (!isoString) {
-    return 'No due date';
-  }
+  if (!isoString) return 'No due date';
   const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) {
-    return isoString;
-  }
+  if (Number.isNaN(date.getTime())) return isoString;
   return date.toLocaleString();
 };
 
 const formatPercent = (value) => {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 'N/A';
-  }
-  return String(Math.round(value * 100)) + '%';
+  if (typeof value !== 'number' || Number.isNaN(value)) return 'N/A';
+  return `${Math.round(value * 100)}%`;
 };
 
 const parseNumber = (value) => {
   const parsed = Number(value);
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
+  if (Number.isFinite(parsed)) return parsed;
   return null;
 };
 
 const formatScoreValue = (score, pointsPossible) => {
   const safeScore = parseNumber(score);
   const safePoints = parseNumber(pointsPossible);
-  if (safeScore === null && safePoints === null) {
-    return 'N/A';
-  }
-  if (safeScore !== null && safePoints !== null) {
-    return String(safeScore) + ' / ' + String(safePoints);
-  }
-  if (safeScore !== null) {
-    return String(safeScore) + ' / N/A';
-  }
-  return 'N/A / ' + String(safePoints);
+  if (safeScore === null && safePoints === null) return 'N/A';
+  if (safeScore !== null && safePoints !== null) return `${safeScore} / ${safePoints}`;
+  if (safeScore !== null) return `${safeScore} / N/A`;
+  return `N/A / ${safePoints}`;
 };
 
 const parseLinkHeader = (header) => {
-  if (!header) {
-    return {};
-  }
+  if (!header) return {};
   return header.split(',').reduce((acc, part) => {
     const match = part.match(/<([^>]+)>\s*;\s*rel="([^"]+)"/);
     if (match) {
@@ -98,27 +78,17 @@ const parseLinkHeader = (header) => {
 const sortByDueAt = (a, b) => {
   const left = a || {};
   const right = b || {};
-  if (!left.due_at && !right.due_at) {
-    return 0;
-  }
-  if (!left.due_at) {
-    return 1;
-  }
-  if (!right.due_at) {
-    return -1;
-  }
+  if (!left.due_at && !right.due_at) return 0;
+  if (!left.due_at) return 1;
+  if (!right.due_at) return -1;
   return new Date(a.due_at) - new Date(b.due_at);
 };
 
 const isDueWithinWindow = (assignment, nowTs) => {
   const safeAssignment = assignment || {};
-  if (!safeAssignment.due_at) {
-    return false;
-  }
+  if (!safeAssignment.due_at) return false;
   const dueTs = new Date(safeAssignment.due_at).getTime();
-  if (Number.isNaN(dueTs)) {
-    return false;
-  }
+  if (Number.isNaN(dueTs)) return false;
   return dueTs >= nowTs - 7 * ONE_DAY_MS;
 };
 
@@ -126,13 +96,9 @@ const isNewlyPublished = (assignment, nowTs) => {
   const safeAssignment = assignment || {};
   const publishedAt =
     safeAssignment.published_at || safeAssignment.created_at || safeAssignment.unlock_at;
-  if (!publishedAt) {
-    return false;
-  }
+  if (!publishedAt) return false;
   const publishedTs = new Date(publishedAt).getTime();
-  if (Number.isNaN(publishedTs)) {
-    return false;
-  }
+  if (Number.isNaN(publishedTs)) return false;
   return publishedTs >= nowTs - 14 * ONE_DAY_MS;
 };
 
@@ -175,7 +141,7 @@ const pickLatestSubmissions = (submissions) => {
       assignmentId = assignment.id;
     }
     if (assignmentId === null || assignmentId === undefined || assignmentId === '') {
-      assignmentId = 'idx_' + String(index);
+      assignmentId = `idx_${index}`;
     }
     const assignmentKey = String(assignmentId);
     const current = acc[assignmentKey];
@@ -198,17 +164,13 @@ const pickLatestSubmissions = (submissions) => {
 };
 
 const getErrorMessage = (error, fallbackMessage) => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
+  if (error instanceof Error && error.message) return error.message;
   return fallbackMessage;
 };
 
 const readJsonSafely = async (response) => {
   const raw = await response.text();
-  if (!raw) {
-    return {};
-  }
+  if (!raw) return {};
   try {
     return JSON.parse(raw);
   } catch (parseError) {
@@ -224,16 +186,10 @@ const getApiErrorMessage = (data, fallbackMessage) => {
   }
   if (errors.length > 0) {
     const firstError = errors[0] || {};
-    if (firstError.message) {
-      return firstError.message;
-    }
+    if (firstError.message) return firstError.message;
   }
-  if (safeData.error) {
-    return safeData.error;
-  }
-  if (safeData.message) {
-    return safeData.message;
-  }
+  if (safeData.error) return safeData.error;
+  if (safeData.message) return safeData.message;
   return fallbackMessage;
 };
 
@@ -279,9 +235,7 @@ const getAccentColor = (item, key, fallback) => {
 
 const getCalendarDetailTypeLabel = (item) => {
   const safeItem = item || {};
-  if (safeItem.source === 'customTask') {
-    return 'Custom task';
-  }
+  if (safeItem.source === 'customTask') return 'Custom task';
   return safeItem.type || 'Calendar item';
 };
 
@@ -290,35 +244,27 @@ const formatCalendarDetailSchedule = (item) => {
   if (safeItem.source === 'customTask') {
     return formatTaskSchedule(safeItem);
   }
-  return formatShortDate(safeItem.date) + ' | ' + formatClockTime(safeItem.date);
+  return `${formatShortDate(safeItem.date)} | ${formatClockTime(safeItem.date)}`;
 };
 
 const getCalendarDetailConfirmLabel = (item) => {
   const safeItem = item || {};
-  if (safeItem.htmlUrl) {
-    return 'Open in Canvas';
-  }
+  if (safeItem.htmlUrl) return 'Open in Canvas';
   return 'Done';
 };
 
 const getStyleWhen = (condition, style) => {
-  if (condition) {
-    return style;
-  }
+  if (condition) return style;
   return null;
 };
 
 const getTextWhen = (condition, trueText, falseText) => {
-  if (condition) {
-    return trueText;
-  }
+  if (condition) return trueText;
   return falseText;
 };
 
 const getCanvasConnectButtonText = (isConnected) => {
-  if (isConnected) {
-    return 'Resync Canvas';
-  }
+  if (isConnected) return 'Resync Canvas';
   return 'Connect Canvas';
 };
 
@@ -330,16 +276,12 @@ const getCanvasStorageHelperText = (canPersistToBackend) => {
 };
 
 const getPreviewEyebrowText = (isConnected) => {
-  if (isConnected) {
-    return 'SYNCED CALENDAR';
-  }
+  if (isConnected) return 'SYNCED CALENDAR';
   return 'TASK PLANNER';
 };
 
 const getPreviewTitleText = (isConnected) => {
-  if (isConnected) {
-    return 'Canvas planner';
-  }
+  if (isConnected) return 'Canvas planner';
   return 'Personal planner';
 };
 
@@ -352,15 +294,13 @@ const getPreviewSubtitleText = (isConnected) => {
 
 const getNextUpcomingLabel = (nextUpcomingItem) => {
   if (nextUpcomingItem && nextUpcomingItem.title) {
-    return 'Next: ' + String(nextUpcomingItem.title);
+    return `Next: ${nextUpcomingItem.title}`;
   }
   return 'Next: No synced task yet';
 };
 
 const getTaskSaveButtonText = (editingTaskId) => {
-  if (editingTaskId) {
-    return 'Save changes';
-  }
+  if (editingTaskId) return 'Save changes';
   return 'Add task';
 };
 
@@ -371,56 +311,42 @@ const getSubmissionStatusText = (submission) => {
     statusText = 'Submitted';
   }
   if (safeSubmission.late) {
-    statusText = statusText + ' (Late)';
+    statusText = `${statusText} (Late)`;
   }
   return statusText;
 };
 
 const getSubmissionDetailButtonText = (detailState) => {
   const safeDetailState = detailState || {};
-  if (safeDetailState.loading) {
-    return 'Loading detail...';
-  }
-  if (safeDetailState.expanded) {
-    return 'Hide submission detail';
-  }
+  if (safeDetailState.loading) return 'Loading detail...';
+  if (safeDetailState.expanded) return 'Hide submission detail';
   return 'View submission detail';
 };
 
 const getDetailFallbackText = (detailState) => {
   const safeDetailState = detailState || {};
-  if (safeDetailState.loading) {
-    return 'Loading detail...';
-  }
+  if (safeDetailState.loading) return 'Loading detail...';
   return 'No detail loaded yet.';
 };
 
 const getCollapseAssignmentsText = (isExpanded, count) => {
-  if (isExpanded) {
-    return 'Collapse old or no-due assignments';
-  }
-  return 'Show ' + String(count) + ' old or no-due assignments';
+  if (isExpanded) return 'Collapse old or no-due assignments';
+  return `Show ${count} old or no-due assignments`;
 };
 
 const getTimePickerTitle = (activeTimeField) => {
-  if (activeTimeField === 'dueTime') {
-    return 'Choose due time';
-  }
-  if (activeTimeField === 'startTime') {
-    return 'Choose start time';
-  }
+  if (activeTimeField === 'dueTime') return 'Choose due time';
+  if (activeTimeField === 'startTime') return 'Choose start time';
   return 'Choose end time';
 };
 
 const getYesNoText = (value) => {
-  if (value) {
-    return 'Yes';
-  }
+  if (value) return 'Yes';
   return 'No';
 };
 
 const buildAssignmentDetailKey = (courseId, assignmentId) =>
-  String(courseId) + ':' + String(assignmentId);
+  `${String(courseId)}:${String(assignmentId)}`;
 
 const WEEK_HOUR_START = 7;
 const WEEK_HOUR_END = 17;
@@ -444,44 +370,34 @@ const MINUTE_OPTIONS = ['00', '15', '30', '45'];
 const MERIDIEM_OPTIONS = ['AM', 'PM'];
 
 const toSafeDate = (value) => {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
+  if (value === null || value === undefined || value === '') return null;
   let date = null;
   if (value instanceof Date) {
     date = new Date(value);
   } else {
     date = new Date(value);
   }
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
+  if (Number.isNaN(date.getTime())) return null;
   return date;
 };
 
 const startOfDay = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return null;
-  }
+  if (!date) return null;
   date.setHours(0, 0, 0, 0);
   return date;
 };
 
 const addDays = (value, amount) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return null;
-  }
+  if (!date) return null;
   date.setDate(date.getDate() + amount);
   return date;
 };
 
 const addMonths = (value, amount) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return null;
-  }
+  if (!date) return null;
   const targetDay = date.getDate();
   const nextDate = new Date(date.getFullYear(), date.getMonth() + amount, 1);
   const lastDayOfTargetMonth = new Date(
@@ -495,9 +411,7 @@ const addMonths = (value, amount) => {
 
 const startOfWeek = (value) => {
   const date = startOfDay(value);
-  if (!date) {
-    return null;
-  }
+  if (!date) return null;
   date.setDate(date.getDate() - date.getDay());
   return date;
 };
@@ -505,18 +419,14 @@ const startOfWeek = (value) => {
 const isSameDay = (left, right) => {
   const leftDate = startOfDay(left);
   const rightDate = startOfDay(right);
-  if (!leftDate || !rightDate) {
-    return false;
-  }
+  if (!leftDate || !rightDate) return false;
   return leftDate.getTime() === rightDate.getTime();
 };
 
 const isSameMonth = (left, right) => {
   const leftDate = toSafeDate(left);
   const rightDate = toSafeDate(right);
-  if (!leftDate || !rightDate) {
-    return false;
-  }
+  if (!leftDate || !rightDate) return false;
   return (
     leftDate.getFullYear() === rightDate.getFullYear() &&
     leftDate.getMonth() === rightDate.getMonth()
@@ -525,9 +435,7 @@ const isSameMonth = (left, right) => {
 
 const buildDateKey = (value) => {
   const date = startOfDay(value);
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, '0'),
@@ -537,9 +445,7 @@ const buildDateKey = (value) => {
 
 const formatMonthYear = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return date.toLocaleDateString(undefined, {
     month: 'long',
     year: 'numeric',
@@ -548,9 +454,7 @@ const formatMonthYear = (value) => {
 
 const formatShortDate = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return date.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -559,9 +463,7 @@ const formatShortDate = (value) => {
 
 const formatDayMonth = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return date.toLocaleDateString(undefined, {
     day: 'numeric',
     month: 'short',
@@ -570,9 +472,7 @@ const formatDayMonth = (value) => {
 
 const formatWeekday = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return date.toLocaleDateString(undefined, {
     weekday: 'short',
   }).toUpperCase();
@@ -580,9 +480,7 @@ const formatWeekday = (value) => {
 
 const formatClockTime = (value) => {
   const date = toSafeDate(value);
-  if (!date) {
-    return 'All day';
-  }
+  if (!date) return 'All day';
   return date.toLocaleTimeString([], {
     hour: 'numeric',
     minute: '2-digit',
@@ -595,7 +493,7 @@ const formatHourLabel = (hour) => {
     period = 'PM';
   }
   const normalizedHour = hour % 12 || 12;
-  return String(normalizedHour) + ' ' + period;
+  return `${normalizedHour} ${period}`;
 };
 
 const buildMiniCalendarDays = (anchor) => {
@@ -605,7 +503,7 @@ const buildMiniCalendarDays = (anchor) => {
   return Array.from({ length: 42 }, (_, index) => {
     const date = addDays(gridStart, index);
     return {
-      key: buildDateKey(date) + '-' + String(index),
+      key: `${buildDateKey(date)}-${index}`,
       date,
       inCurrentMonth: isSameMonth(date, current),
     };
@@ -623,9 +521,7 @@ const pickPreviewAccent = (seed) => {
 
 const formatInputDate = (value) => {
   const date = startOfDay(value) || startOfDay(new Date());
-  if (!date) {
-    return '';
-  }
+  if (!date) return '';
   return [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, '0'),
@@ -643,9 +539,7 @@ const isQuarterHourTimeInput = (value) => {
 
 const parseDateInput = (value) => {
   const safe = String(value || '').trim();
-  if (!isValidDateInput(safe)) {
-    return null;
-  }
+  if (!isValidDateInput(safe)) return null;
   const [year, month, day] = safe.split('-').map((part) => Number(part));
   const date = new Date(year, month - 1, day);
   if (
@@ -667,10 +561,8 @@ const normalizeTaskDateInput = (value, fallback = new Date()) => {
 const normalizeTaskTimeInput = (value, fallback = '') => {
   const safe = String(value || '').trim();
   const match = safe.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
-  if (!match) {
-    return fallback;
-  }
-  return match[1] + ':' + match[2];
+  if (!match) return fallback;
+  return `${match[1]}:${match[2]}`;
 };
 
 const normalizeCustomTask = (task, fallbackDate = new Date()) => {
@@ -690,24 +582,10 @@ const normalizeCustomTask = (task, fallbackDate = new Date()) => {
 };
 
 const formatTimeOnly = (value) => {
-  let safe = '';
-  if (value !== undefined && value !== null) {
-    safe = String(value).trim();
-  }
-
-  if (!isValidTimeInput(safe)) {
-    if (safe) {
-      return safe;
-    }
-    return 'N/A';
-  }
-
-  const rawDateTime = '2000-01-01T' + safe + ':00';
-  const date = toSafeDate(rawDateTime);
-  if (!date) {
-    return safe;
-  }
-
+  const safe = String(value || '').trim();
+  if (!isValidTimeInput(safe)) return safe || 'N/A';
+  const date = toSafeDate(`2000-01-01T${safe}:00`);
+  if (!date) return safe;
   return date.toLocaleTimeString([], {
     hour: 'numeric',
     minute: '2-digit',
@@ -717,35 +595,28 @@ const formatTimeOnly = (value) => {
 const buildTaskDateTimeIso = (task) => {
   const safeTask = task || {};
   const taskDate = String(safeTask.taskDate || '').trim();
-  if (!isValidDateInput(taskDate)) {
-    return '';
-  }
+  if (!isValidDateInput(taskDate)) return '';
   if (safeTask.timingMode === 'range' && isValidTimeInput(safeTask.startTime)) {
-    return taskDate + 'T' + String(safeTask.startTime).trim() + ':00';
+    return `${taskDate}T${String(safeTask.startTime).trim()}:00`;
   }
   if (isValidTimeInput(safeTask.dueTime)) {
-    return taskDate + 'T' + String(safeTask.dueTime).trim() + ':00';
+    return `${taskDate}T${String(safeTask.dueTime).trim()}:00`;
   }
-  return taskDate + 'T12:00:00';
+  return `${taskDate}T12:00:00`;
 };
 
 const formatTaskSchedule = (task) => {
   const safeTask = task || {};
   const dateLabel = formatShortDate(safeTask.taskDate || '');
   if (safeTask.timingMode === 'range') {
-    const startText = formatTimeOnly(safeTask.startTime);
-    const endText = formatTimeOnly(safeTask.endTime);
-    return dateLabel + ' | ' + startText + ' - ' + endText;
+    return `${dateLabel} | ${formatTimeOnly(safeTask.startTime)} - ${formatTimeOnly(safeTask.endTime)}`;
   }
-  const dueText = formatTimeOnly(safeTask.dueTime);
-  return dateLabel + ' | Due ' + dueText;
+  return `${dateLabel} | Due ${formatTimeOnly(safeTask.dueTime)}`;
 };
 
 const formatPickerDateLabel = (value) => {
   const date = parseDateInput(value) || toSafeDate(value);
-  if (!date) {
-    return 'Pick a date';
-  }
+  if (!date) return 'Pick a date';
   return date.toLocaleDateString(undefined, {
     weekday: 'short',
     day: 'numeric',
@@ -812,7 +683,7 @@ const formatTimeDraftToValue = (draft) => {
     }
   }
 
-  return String(hour).padStart(2, '0') + ':' + minute;
+  return `${String(hour).padStart(2, '0')}:${minute}`;
 };
 
 const PickerWheelColumn = ({
@@ -865,7 +736,7 @@ const PickerWheelColumn = ({
             const active = option === value;
             return (
               <Pressable
-                key={label + '-' + String(option)}
+                key={`${label}-${option}`}
                 onPress={() => snapToOption(index)}
                 style={styles.timeWheelItem}
               >
@@ -957,7 +828,7 @@ const MiniCalendarPanel = ({
 
       <View style={styles.miniCalendarWeekdays}>
         {MINI_CALENDAR_LABELS.map((label, index) => (
-          <Text key={label + '-' + String(index)} style={styles.miniCalendarWeekdayText}>
+          <Text key={`${label}-${index}`} style={styles.miniCalendarWeekdayText}>
             {label}
           </Text>
         ))}
@@ -1220,9 +1091,7 @@ export default function CalendarScreen() {
   }, [getToken]);
 
   useEffect(() => {
-    if (!timePickerVisible) {
-      return undefined;
-    }
+    if (!timePickerVisible) return undefined;
 
     const syncWheelPosition = (ref, options, nextValue) => {
       const index = Math.max(0, options.indexOf(nextValue));
@@ -1255,9 +1124,7 @@ export default function CalendarScreen() {
       if (typeof getToken === 'function') {
         token = await getToken();
       }
-      if (token) {
-        return token;
-      }
+      if (token) return token;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     return '';
@@ -1269,10 +1136,10 @@ export default function CalendarScreen() {
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
-    const response = await fetch(API_BASE_URL + '/canvas/credentials', {
+    const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
       method: 'PUT',
       headers: {
-        Authorization: 'Bearer ' + sessionToken,
+        Authorization: `Bearer ${sessionToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -1283,7 +1150,7 @@ export default function CalendarScreen() {
     const data = await readJsonSafely(response);
     if (!response.ok) {
       throw new Error(
-        getApiErrorMessage(data, 'Failed to save credentials (HTTP ' + String(response.status) + ')')
+        getApiErrorMessage(data, `Failed to save credentials (HTTP ${response.status})`)
       );
     }
   };
@@ -1306,20 +1173,18 @@ export default function CalendarScreen() {
         if (!sessionToken) {
           throw new Error('No Clerk session token available yet');
         }
-        const response = await fetch(API_BASE_URL + '/canvas/credentials', {
+        const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
           headers: {
-            Authorization: 'Bearer ' + sessionToken,
+            Authorization: `Bearer ${sessionToken}`,
           },
         });
         const data = await readJsonSafely(response);
         if (!response.ok) {
           throw new Error(
-            getApiErrorMessage(data, 'Failed to load saved credentials (HTTP ' + String(response.status) + ')')
+            getApiErrorMessage(data, `Failed to load saved credentials (HTTP ${response.status})`)
           );
         }
-        if (!mounted) {
-          return;
-        }
+        if (!mounted) return;
         const nextSchool = String(data.school || '');
         const nextToken = String(data.token || '');
         setSchoolInput(nextSchool);
@@ -1332,10 +1197,10 @@ export default function CalendarScreen() {
       } catch (loadError) {
         if (mounted) {
           setError(
-            'Failed to load saved token from backend: ' + getErrorMessage(
+            `Failed to load saved token from backend: ${getErrorMessage(
               loadError,
               'Unknown backend error'
-            )
+            )}`
           );
         }
       } finally {
@@ -1351,9 +1216,7 @@ export default function CalendarScreen() {
   }, [canPersistToBackend]);
 
   useEffect(() => {
-    if (!credentialsHydrated || !canPersistToBackend || !credentialLoadReady) {
-      return;
-    }
+    if (!credentialsHydrated || !canPersistToBackend || !credentialLoadReady) return;
     const nextSchool = schoolInput.trim();
     const nextToken = tokenInput.trim();
     if (
@@ -1373,7 +1236,7 @@ export default function CalendarScreen() {
           setError('');
         } catch (saveError) {
           if (saveError instanceof Error) {
-            setError('Failed to save token to backend: ' + saveError.message);
+            setError(`Failed to save token to backend: ${saveError.message}`);
           } else {
             setError('Failed to save token to backend.');
           }
@@ -1390,23 +1253,21 @@ export default function CalendarScreen() {
   ]);
 
   const fetchCustomTasks = async ({ silent = false } = {}) => {
-    if (!canPersistToBackend || !API_BASE_URL) {
-      return;
-    }
+    if (!canPersistToBackend || !API_BASE_URL) return;
     try {
       if (!silent) setTasksLoading(true);
       const sessionToken = await getSessionToken();
       if (!sessionToken) {
         throw new Error('No Clerk session token available');
       }
-      const response = await fetch(API_BASE_URL + '/tasks', {
+      const response = await fetch(`${API_BASE_URL}/tasks`, {
         headers: {
-          Authorization: 'Bearer ' + sessionToken,
+          Authorization: `Bearer ${sessionToken}`,
         },
       });
       const data = await readJsonSafely(response);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to load tasks (HTTP ' + String(response.status) + ')'));
+        throw new Error(getApiErrorMessage(data, `Failed to load tasks (HTTP ${response.status})`));
       }
       let items = [];
       if (Array.isArray(data.items)) {
@@ -1431,16 +1292,14 @@ export default function CalendarScreen() {
   }, [canPersistToBackend]);
 
   const buildCanvasUrl = (pathOrUrl) => {
-    if (/^https?:\/\//i.test(pathOrUrl)) {
-      return pathOrUrl;
-    }
-    return baseUrl + pathOrUrl;
+    if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+    return `${baseUrl}${pathOrUrl}`;
   };
 
   const fetchCanvasPage = async (pathOrUrl) => {
     const response = await fetch(buildCanvasUrl(pathOrUrl), {
       headers: {
-        Authorization: 'Bearer ' + tokenInput.trim(),
+        Authorization: `Bearer ${tokenInput.trim()}`,
         Accept: 'application/json',
       },
     });
@@ -1449,7 +1308,7 @@ export default function CalendarScreen() {
 
     if (!response.ok) {
       const message = getApiErrorMessage(data, response.statusText);
-      throw new Error(String(response.status) + ' ' + message);
+      throw new Error(`${response.status} ${message}`);
     }
 
     const links = parseLinkHeader(response.headers.get('Link'));
@@ -1466,9 +1325,7 @@ export default function CalendarScreen() {
       visited.add(nextUrl);
 
       const { data, nextUrl: newNextUrl } = await fetchCanvasPage(nextUrl);
-      if (!Array.isArray(data)) {
-        return data;
-      }
+      if (!Array.isArray(data)) return data;
 
       aggregated.push(...data);
       nextUrl = newNextUrl;
@@ -1483,9 +1340,7 @@ export default function CalendarScreen() {
   };
 
   const openUrl = async (url) => {
-    if (!url) {
-      return;
-    }
+    if (!url) return;
     try {
       await Linking.openURL(url);
     } catch (linkError) {
@@ -1526,31 +1381,27 @@ export default function CalendarScreen() {
     setSelectedCalendarItem(null);
     setCalendarDetailVisible(false);
     try {
-      if (!canPersistToBackend) {
-        return;
-      }
+      if (!canPersistToBackend) return;
       const sessionToken = await getSessionToken();
-      if (!sessionToken) {
-        return;
-      }
-      const response = await fetch(API_BASE_URL + '/canvas/credentials', {
+      if (!sessionToken) return;
+      const response = await fetch(`${API_BASE_URL}/canvas/credentials`, {
         method: 'DELETE',
         headers: {
-          Authorization: 'Bearer ' + sessionToken,
+          Authorization: `Bearer ${sessionToken}`,
         },
       });
       const data = await readJsonSafely(response);
       if (!response.ok) {
         throw new Error(
-          getApiErrorMessage(data, 'Failed to clear credentials (HTTP ' + String(response.status) + ')')
+          getApiErrorMessage(data, `Failed to clear credentials (HTTP ${response.status})`)
         );
       }
     } catch (clearError) {
       setError(
-        'Failed to clear saved token from backend: ' + getErrorMessage(
+        `Failed to clear saved token from backend: ${getErrorMessage(
           clearError,
           'Unknown backend error'
-        )
+        )}`
       );
     }
   };
@@ -1560,7 +1411,7 @@ export default function CalendarScreen() {
     params.append('include[]', 'submission_comments');
     params.append('include[]', 'submission_history');
     return fetchCanvasObject(
-      '/api/v1/courses/' + courseId + '/assignments/' + assignmentId + '/submissions/self?' + params.toString()
+      `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/self?${params.toString()}`
     );
   };
 
@@ -1643,7 +1494,7 @@ export default function CalendarScreen() {
         };
       } catch (persistError) {
         if (persistError instanceof Error) {
-          setError('Cannot save token before sync: ' + persistError.message);
+          setError(`Cannot save token before sync: ${persistError.message}`);
         } else {
           setError('Cannot save token before sync.');
         }
@@ -1658,9 +1509,9 @@ export default function CalendarScreen() {
       const [profileData, coursesData, eventsData] = await Promise.all([
         fetchCanvasObject('/api/v1/users/self/profile'),
         fetchCanvasPaged(
-          '/api/v1/courses?enrollment_type=student&enrollment_state=active&include[]=term&per_page=' + String(PAGE_SIZE)
+          `/api/v1/courses?enrollment_type=student&enrollment_state=active&include[]=term&per_page=${PAGE_SIZE}`
         ),
-        fetchCanvasPaged('/api/v1/users/self/upcoming_events?per_page=' + String(PAGE_SIZE)),
+        fetchCanvasPaged(`/api/v1/users/self/upcoming_events?per_page=${PAGE_SIZE}`),
       ]);
 
       let safeCourses = [];
@@ -1678,11 +1529,11 @@ export default function CalendarScreen() {
           try {
             const [enrollmentList, assignmentList, submissionList] = await Promise.all([
               fetchCanvasPaged(
-                '/api/v1/courses/' + courseId + '/enrollments?user_id=self&type[]=StudentEnrollment&state[]=active&include[]=current_points&per_page=' + String(PAGE_SIZE)
+                `/api/v1/courses/${courseId}/enrollments?user_id=self&type[]=StudentEnrollment&state[]=active&include[]=current_points&per_page=${PAGE_SIZE}`
               ),
-              fetchCanvasPaged('/api/v1/courses/' + courseId + '/assignments?per_page=' + String(PAGE_SIZE)),
+              fetchCanvasPaged(`/api/v1/courses/${courseId}/assignments?per_page=${PAGE_SIZE}`),
               fetchCanvasPaged(
-                '/api/v1/courses/' + courseId + '/students/submissions?student_ids[]=self&include[]=assignment&per_page=' + String(PAGE_SIZE)
+                `/api/v1/courses/${courseId}/students/submissions?student_ids[]=self&include[]=assignment&per_page=${PAGE_SIZE}`
               ),
             ]);
 
@@ -1760,15 +1611,9 @@ export default function CalendarScreen() {
       const normalizedEvents = safeEvents
         .map((item, index) => normalizeUpcomingEvent(item, index))
         .sort((a, b) => {
-          if (!a.date && !b.date) {
-            return 0;
-          }
-          if (!a.date) {
-            return 1;
-          }
-          if (!b.date) {
-            return -1;
-          }
+          if (!a.date && !b.date) return 0;
+          if (!a.date) return 1;
+          if (!b.date) return -1;
           return new Date(a.date) - new Date(b.date);
         });
 
@@ -1795,7 +1640,7 @@ export default function CalendarScreen() {
       });
     } catch (err) {
       if (err instanceof Error) {
-        setError('Connection failed: ' + err.message);
+        setError(`Connection failed: ${err.message}`);
       } else {
         setError('Connection failed. Check network and token.');
       }
@@ -1819,14 +1664,10 @@ export default function CalendarScreen() {
   };
 
   useEffect(() => {
-    if (editingTaskId) {
-      return;
-    }
+    if (editingTaskId) return;
     const nextDate = formatInputDate(selectedDate);
     setTaskForm((prev) => {
-      if (prev.taskDate === nextDate) {
-        return prev;
-      }
+      if (prev.taskDate === nextDate) return prev;
       return {
         ...prev,
         taskDate: nextDate,
@@ -1924,9 +1765,9 @@ export default function CalendarScreen() {
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
-    let requestUrl = API_BASE_URL + '/tasks';
+    let requestUrl = `${API_BASE_URL}/tasks`;
     if (taskId) {
-      requestUrl = API_BASE_URL + '/tasks/' + String(taskId);
+      requestUrl = `${API_BASE_URL}/tasks/${String(taskId)}`;
     }
     let requestMethod = 'POST';
     if (taskId) {
@@ -1937,7 +1778,7 @@ export default function CalendarScreen() {
       {
         method: requestMethod,
         headers: {
-          Authorization: 'Bearer ' + sessionToken,
+          Authorization: `Bearer ${sessionToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -1945,7 +1786,7 @@ export default function CalendarScreen() {
     );
     const data = await readJsonSafely(response);
     if (!response.ok) {
-      throw new Error(getApiErrorMessage(data, 'Failed to save task (HTTP ' + String(response.status) + ')'));
+      throw new Error(getApiErrorMessage(data, `Failed to save task (HTTP ${response.status})`));
     }
     return data.item || null;
   };
@@ -2042,24 +1883,22 @@ export default function CalendarScreen() {
   };
 
   const handleDeleteTask = async (taskId) => {
-    if (!taskId) {
-      return;
-    }
+    if (!taskId) return;
     try {
       setTaskDeletingId(String(taskId));
       const sessionToken = await getSessionToken();
       if (!sessionToken) {
         throw new Error('No Clerk session token available');
       }
-      const response = await fetch(API_BASE_URL + '/tasks/' + String(taskId), {
+      const response = await fetch(`${API_BASE_URL}/tasks/${String(taskId)}`, {
         method: 'DELETE',
         headers: {
-          Authorization: 'Bearer ' + sessionToken,
+          Authorization: `Bearer ${sessionToken}`,
         },
       });
       const data = await readJsonSafely(response);
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to delete task (HTTP ' + String(response.status) + ')'));
+        throw new Error(getApiErrorMessage(data, `Failed to delete task (HTTP ${response.status})`));
       }
       setCustomTasks((prev) => prev.filter((item) => String(item.id) !== String(taskId)));
       if (String(editingTaskId) === String(taskId)) {
@@ -2085,18 +1924,14 @@ export default function CalendarScreen() {
     const pushItem = (item) => {
       const safeItem = item || {};
       const date = toSafeDate(safeItem.date);
-      if (!date) {
-        return;
-      }
+      if (!date) return;
       const dedupeKey = [
         String(safeItem.htmlUrl || ''),
         String(safeItem.title || ''),
         String(safeItem.course || ''),
         date.toISOString(),
       ].join('|');
-      if (seen.has(dedupeKey)) {
-        return;
-      }
+      if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
       merged.push({
         ...safeItem,
@@ -2107,7 +1942,7 @@ export default function CalendarScreen() {
     events.forEach((event) => {
       const safeEvent = event || {};
       pushItem({
-        id: 'event-' + String(safeEvent.id || ''),
+        id: `event-${String(safeEvent.id || '')}`,
         title: safeEvent.title || 'Untitled event',
         course: safeEvent.course || '',
         source: 'event',
@@ -2140,7 +1975,7 @@ export default function CalendarScreen() {
           submissionStatus = 'Submitted';
         }
         pushItem({
-          id: 'assignment-' + courseId + '-' + String(safeAssignment.id || ''),
+          id: `assignment-${courseId}-${String(safeAssignment.id || '')}`,
           title: safeAssignment.name || 'Untitled assignment',
           course: courseName,
           source: 'assignment',
@@ -2174,7 +2009,7 @@ export default function CalendarScreen() {
         normalizedTimingMode = 'range';
       }
       pushItem({
-        id: 'custom-task-' + String(safeTask.id || ''),
+        id: `custom-task-${String(safeTask.id || '')}`,
         title: safeTask.title || 'Untitled task',
         course: 'My task',
         source: 'customTask',
@@ -2183,7 +2018,7 @@ export default function CalendarScreen() {
         status: taskStatus,
         htmlUrl: '',
         date: buildTaskDateTimeIso(safeTask),
-        accent: pickPreviewAccent('custom-' + String(safeTask.timingMode || 'deadline')),
+        accent: pickPreviewAccent(`custom-${safeTask.timingMode || 'deadline'}`),
         completed: Boolean(safeTask.isCompleted),
         taskDate: String(safeTask.taskDate || ''),
         dueTime: String(safeTask.dueTime || ''),
@@ -2200,9 +2035,7 @@ export default function CalendarScreen() {
     () =>
       calendarFeed.reduce((acc, item) => {
         const key = buildDateKey(item.date);
-        if (!key) {
-          return acc;
-        }
+        if (!key) return acc;
         const current = acc[key] || {
           count: 0,
           hasCanvas: false,
@@ -2232,9 +2065,7 @@ export default function CalendarScreen() {
     () =>
       calendarFeed.filter((item) => {
         const date = toSafeDate(item.date);
-        if (!date) {
-          return false;
-        }
+        if (!date) return false;
         return (
           date.getFullYear() === selectedDate.getFullYear() &&
           date.getMonth() === selectedDate.getMonth()
@@ -2249,15 +2080,11 @@ export default function CalendarScreen() {
 
     calendarFeed.forEach((item) => {
       const date = toSafeDate(item.date);
-      if (!date || !weekStart || !weekEnd) {
-        return;
-      }
-      if (date < weekStart || date >= weekEnd) {
-        return;
-      }
+      if (!date || !weekStart || !weekEnd) return;
+      if (date < weekStart || date >= weekEnd) return;
 
       const hour = Math.min(Math.max(date.getHours(), WEEK_HOUR_START), WEEK_HOUR_END);
-      const key = String(date.getDay()) + '-' + String(hour);
+      const key = `${date.getDay()}-${hour}`;
       if (!grid[key]) grid[key] = [];
       grid[key].push(item);
     });
@@ -2310,9 +2137,7 @@ export default function CalendarScreen() {
     );
   }
   const selectedCalendarTeacherComments = useMemo(() => {
-    if (!selectedCalendarDetailData) {
-      return [];
-    }
+    if (!selectedCalendarDetailData) return [];
     let detailComments = [];
     if (Array.isArray(selectedCalendarDetailData.submission_comments)) {
       detailComments = selectedCalendarDetailData.submission_comments;
@@ -2358,7 +2183,7 @@ export default function CalendarScreen() {
       } else {
         teacherCommentsNode = selectedCalendarTeacherComments.map((comment, index) => (
           <View
-            key={'calendar-detail-comment-' + String((comment || {}).id || index)}
+            key={`calendar-detail-comment-${String((comment || {}).id || index)}`}
             style={styles.detailRow}
           >
             <Text style={styles.detailMeta}>
@@ -2482,9 +2307,7 @@ export default function CalendarScreen() {
 
     const detailKey = buildAssignmentDetailKey(safeItem.courseId, safeItem.assignmentId);
     const current = submissionDetailsByAssignment[detailKey] || {};
-    if (current.data || current.loading) {
-      return;
-    }
+    if (current.data || current.loading) return;
 
     setSubmissionDetailsByAssignment((prev) => ({
       ...prev,
@@ -2602,7 +2425,7 @@ export default function CalendarScreen() {
           }
 
           return (
-            <View key={courseId + '-grade-' + String(courseIndex)} style={styles.gradeCard}>
+            <View key={`${courseId}-grade-${courseIndex}`} style={styles.gradeCard}>
               <Text style={styles.gradeCourseName}>
                 {safeCourse.name || safeCourse.course_code || 'Untitled course'}
               </Text>
@@ -2632,7 +2455,7 @@ export default function CalendarScreen() {
           }
           return (
             <Pressable
-              key={String(event.id) + '-event-' + String(eventIndex)}
+              key={`${String(event.id)}-event-${eventIndex}`}
               onPress={() => openUrl(event.htmlUrl)}
               style={({ pressed }) => [
                 styles.eventItem,
@@ -2739,7 +2562,7 @@ export default function CalendarScreen() {
                 const safeComment = comment || {};
                 return (
                   <View
-                    key={courseId + '-assignment-' + String(safeAssignment.id) + '-comment-' + String(safeComment.id || 'x') + '-' + String(index)}
+                    key={`${courseId}-assignment-${String(safeAssignment.id)}-comment-${String(safeComment.id || 'x')}-${index}`}
                     style={styles.detailRow}
                   >
                     <Text style={styles.detailMeta}>
@@ -2765,7 +2588,7 @@ export default function CalendarScreen() {
                 const safeAttempt = attempt || {};
                 return (
                   <View
-                    key={courseId + '-assignment-' + String(safeAssignment.id) + '-attempt-' + String(safeAttempt.id || safeAttempt.attempt || 'x') + '-' + String(index)}
+                    key={`${courseId}-assignment-${String(safeAssignment.id)}-attempt-${String(safeAttempt.id || safeAttempt.attempt || 'x')}-${index}`}
                     style={styles.detailRow}
                   >
                     <Text style={styles.detailMeta}>
@@ -2841,7 +2664,7 @@ export default function CalendarScreen() {
 
           return (
             <View
-              key={courseId + '-assignment-' + String(safeAssignment.id) + '-' + String(assignmentIndex)}
+              key={`${courseId}-assignment-${String(safeAssignment.id)}-${assignmentIndex}`}
               style={[
                 styles.assignmentItem,
                 getStyleWhen(safeAssignment.html_url, styles.eventClickable),
@@ -2912,7 +2735,7 @@ export default function CalendarScreen() {
       }
 
       return (
-        <View key={courseId + '-assignment-group-' + String(courseIndex)} style={styles.assignmentGroup}>
+        <View key={`${courseId}-assignment-group-${courseIndex}`} style={styles.assignmentGroup}>
           <Text style={styles.assignmentCourseName}>
             {safeCourse.name || safeCourse.course_code || 'Untitled course'}
           </Text>
@@ -2957,7 +2780,7 @@ export default function CalendarScreen() {
     if (selectedDayItems.length > 0) {
       dayContentNode = selectedDayItems.map((item, index) => (
         <Pressable
-          key={String(item.id) + '-day-' + String(index)}
+          key={`${item.id}-day-${index}`}
           onPress={() => openCalendarItemDetail(item)}
           style={({ pressed }) => [
             styles.agendaCard,
@@ -3024,13 +2847,13 @@ export default function CalendarScreen() {
           </View>
 
           {TIME_SLOTS.map((hour) => (
-            <View key={'hour-' + String(hour)} style={styles.weekGridRow}>
+            <View key={`hour-${hour}`} style={styles.weekGridRow}>
               <View style={styles.weekTimeCell}>
                 <Text style={styles.weekTimeText}>{formatHourLabel(hour)}</Text>
               </View>
 
               {weekDays.map((day) => {
-                const cellItems = weekGridItems[String(day.getDay()) + '-' + String(hour)] || [];
+                const cellItems = weekGridItems[`${day.getDay()}-${hour}`] || [];
                 let moreItemsNode = null;
                 if (cellItems.length > 2) {
                   moreItemsNode = (
@@ -3039,7 +2862,7 @@ export default function CalendarScreen() {
                 }
                 return (
                   <Pressable
-                    key={buildDateKey(day) + '-' + String(hour)}
+                    key={`${buildDateKey(day)}-${hour}`}
                     onPress={() => setSelectedDate(day)}
                     style={[
                       styles.weekGridCell,
@@ -3049,7 +2872,7 @@ export default function CalendarScreen() {
                   >
                     {cellItems.slice(0, 2).map((item, itemIndex) => (
                       <Pressable
-                        key={String(item.id) + '-week-' + String(itemIndex)}
+                        key={`${item.id}-week-${itemIndex}`}
                         onPress={() => openCalendarItemDetail(item)}
                         style={({ pressed }) => [
                           styles.weekEventCard,
@@ -3090,7 +2913,7 @@ export default function CalendarScreen() {
     if (monthItems.length > 0) {
       monthContentNode = monthItems.slice(0, 12).map((item, index) => (
         <Pressable
-          key={String(item.id) + '-month-' + String(index)}
+          key={`${item.id}-month-${index}`}
           onPress={() => openCalendarItemDetail(item)}
           style={({ pressed }) => [
             styles.agendaCard,
@@ -3285,7 +3108,7 @@ export default function CalendarScreen() {
         {customTasks.map((task) => {
           const isDeleting = taskDeletingId === String(task.id);
           return (
-            <View key={'task-' + String(task.id)} style={styles.taskItemCard}>
+            <View key={`task-${String(task.id)}`} style={styles.taskItemCard}>
               <Pressable
                 onPress={() => handleToggleTaskCompletion(task)}
                 style={({ pressed }) => [
@@ -3621,7 +3444,7 @@ export default function CalendarScreen() {
         onClose={() => setMonthYearPickerVisible(false)}
         onConfirm={confirmMonthYearPicker}
         title="Choose month"
-        subtitle={MONTH_LABELS[monthYearDraft.month] + ' ' + String(monthYearDraft.year)}
+        subtitle={`${MONTH_LABELS[monthYearDraft.month]} ${monthYearDraft.year}`}
       >
         <Text style={styles.monthYearSectionTitle}>Year</Text>
         <ScrollView
@@ -3633,7 +3456,7 @@ export default function CalendarScreen() {
             const active = year === monthYearDraft.year;
             return (
               <Pressable
-                key={'year-' + String(year)}
+                key={`year-${year}`}
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, year }))}
                 style={({ pressed }) => [
                   styles.monthYearYearChip,
@@ -3660,7 +3483,7 @@ export default function CalendarScreen() {
             const active = index === monthYearDraft.month;
             return (
               <Pressable
-                key={'month-' + String(label)}
+                key={`month-${label}`}
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, month: index }))}
                 style={({ pressed }) => [
                   styles.monthYearCell,
@@ -4733,4 +4556,3 @@ const styles = StyleSheet.create({
   },
   collapseBtnText: { fontSize: 11, fontWeight: '700', color: '#111827' },
 });
-
