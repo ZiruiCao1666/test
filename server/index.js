@@ -42,6 +42,16 @@ const CANVAS_IV_BYTES = 12
 const CANVAS_TOKEN_SECRET = process.env.CANVAS_TOKEN_SECRET || ''
 const TASK_MODE_DEADLINE = 'deadline'
 const TASK_MODE_RANGE = 'range'
+const DAY_MS = 24 * 60 * 60 * 1000
+const HOME_REVIEW_WINDOWS = [
+  { key: '7d', days: 7 },
+  { key: '30d', days: 30 },
+  { key: 'semester', days: 120 },
+  { key: '1y', days: 365 },
+]
+const HOME_MAX_REVIEW_DAYS = HOME_REVIEW_WINDOWS.reduce((maxDays, window) => {
+  return Math.max(maxDays, window.days)
+}, 0)
 
 function mapRewardRow(row) {
   return {
@@ -579,6 +589,30 @@ function buildReviewSummary(items) {
   }
 }
 
+function filterPlanItemsByTimeRange(items, startTs, endTs) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items
+  }
+  return safeItems.filter((item) => {
+    const safeItem = item || {}
+    return Number.isFinite(safeItem.sortTs) && safeItem.sortTs >= startTs && safeItem.sortTs <= endTs
+  })
+}
+
+function buildHomeReviewSections(items, nowTs) {
+  return HOME_REVIEW_WINDOWS.map((window) => {
+    const startTs = nowTs - window.days * DAY_MS
+    const windowItems = filterPlanItemsByTimeRange(items, startTs, nowTs)
+    return {
+      key: window.key,
+      days: window.days,
+      items: stripPlanSortTs(windowItems),
+      summary: buildReviewSummary(windowItems),
+    }
+  })
+}
+
 async function getStreakDays(db, userId, today) {
   const r = await db.query(
     `
@@ -900,7 +934,7 @@ app.delete('/canvas/credentials', async (req, res) => {
 
 /**
  * GET /home/plan
- * Return the current user's next N days and previous N days of custom tasks + Canvas items.
+ * Return the current user's next N days plus fixed review windows of custom tasks + Canvas items.
  */
 app.get('/home/plan', async (req, res) => {
   try {
@@ -913,12 +947,13 @@ app.get('/home/plan', async (req, res) => {
     const rawDays = Number(safeQuery.days)
     let days = 7
     if (Number.isInteger(rawDays)) {
-      days = Math.min(Math.max(rawDays, 1), 30)
+      days = Math.min(Math.max(rawDays, 1), HOME_MAX_REVIEW_DAYS)
     }
 
     const nowTs = Date.now()
-    const futureEndTs = nowTs + days * 24 * 60 * 60 * 1000
-    const pastStartTs = nowTs - days * 24 * 60 * 60 * 1000
+    const futureEndTs = nowTs + days * DAY_MS
+    const requestedPastStartTs = nowTs - days * DAY_MS
+    const maxReviewStartTs = nowTs - HOME_MAX_REVIEW_DAYS * DAY_MS
 
     const upcomingTaskResult = await pool.query(
       `
@@ -962,7 +997,7 @@ app.get('/home/plan', async (req, res) => {
         AND task_date < (NOW() AT TIME ZONE 'Europe/London')::date
       ORDER BY task_date DESC, COALESCE(start_time, due_time) DESC NULLS LAST, created_at DESC
       `,
-      [userId, days],
+      [userId, HOME_MAX_REVIEW_DAYS],
     )
 
     const customUpcomingItems = upcomingTaskResult.rows
@@ -986,7 +1021,7 @@ app.get('/home/plan', async (req, res) => {
         const baseUrl = buildCanvasBaseUrl(stored.school)
         const futureStartIso = new Date(nowTs).toISOString()
         const futureEndIso = new Date(futureEndTs).toISOString()
-        const recentStartIso = new Date(pastStartTs).toISOString()
+        const recentStartIso = new Date(maxReviewStartTs).toISOString()
         const recentEndIso = new Date(nowTs).toISOString()
 
         const [rawCourses, rawUpcomingCanvasItems, rawRecentCompletedCanvasItems, rawRecentIncompleteCanvasItems] = await Promise.all([
@@ -1068,7 +1103,7 @@ app.get('/home/plan', async (req, res) => {
               isCompleted: true,
             }),
           )
-          .filter((item) => item && item.sortTs >= pastStartTs && item.sortTs <= nowTs)
+          .filter((item) => item && item.sortTs >= maxReviewStartTs && item.sortTs <= nowTs)
 
         const recentIncompleteCanvasItems = safeRecentIncompleteCanvasItems
           .map((item, index) =>
@@ -1078,7 +1113,7 @@ app.get('/home/plan', async (req, res) => {
               isCompleted: false,
             }),
           )
-          .filter((item) => item && item.sortTs >= pastStartTs && item.sortTs <= nowTs)
+          .filter((item) => item && item.sortTs >= maxReviewStartTs && item.sortTs <= nowTs)
 
         const recentCanvasItemMap = {}
         recentCompletedCanvasItems.forEach((item) => {
@@ -1103,8 +1138,10 @@ app.get('/home/plan', async (req, res) => {
     }
 
     const upcomingItems = sortPlanItemsAscending(customUpcomingItems.concat(canvasUpcomingItems))
-    const recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
+    const allRecentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
+    const recentItems = filterPlanItemsByTimeRange(allRecentItems, requestedPastStartTs, nowTs)
     const recentSummary = buildReviewSummary(recentItems)
+    const reviewSections = buildHomeReviewSections(allRecentItems, nowTs)
 
     return res.json({
       ok: true,
@@ -1114,6 +1151,7 @@ app.get('/home/plan', async (req, res) => {
       items: stripPlanSortTs(upcomingItems),
       recentItems: stripPlanSortTs(recentItems),
       recentSummary,
+      reviewSections,
     })
   } catch (e) {
     console.error('[BE] /home/plan error:', e)

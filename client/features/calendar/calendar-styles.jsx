@@ -1,4 +1,8 @@
 import { StyleSheet } from 'react-native';
+import {
+  TIME_WHEEL_ITEM_HEIGHT,
+  TIME_WHEEL_SIDE_ROWS,
+} from './calendar-helpers';
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
