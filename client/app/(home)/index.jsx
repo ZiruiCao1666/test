@@ -497,6 +497,48 @@ const getReviewSummaryText = (summary, items) => {
   return 'Completed ' + String(completedCount) + ' of ' + String(totalCount) + ' tasks';
 };
 
+const getReviewScoreText = (item) => {
+  const safeItem = item || {};
+  const rawScore = Number(safeItem.score);
+  const rawPoints = Number(safeItem.pointsPossible);
+  const hasScore = Number.isFinite(rawScore);
+  const hasPoints = Number.isFinite(rawPoints);
+
+  if (!hasScore && !hasPoints) {
+    return '';
+  }
+  if (hasScore && hasPoints) {
+    return 'Score: ' + String(rawScore) + ' / ' + String(rawPoints);
+  }
+  if (hasScore) {
+    return 'Score: ' + String(rawScore);
+  }
+  return 'Points possible: ' + String(rawPoints);
+};
+
+const formatReviewCommentTime = (value) => {
+  let safe = '';
+  if (value !== undefined && value !== null) {
+    safe = String(value).trim();
+  }
+  if (!safe) {
+    return '';
+  }
+
+  const parsed = new Date(safe);
+  if (Number.isNaN(parsed.getTime())) {
+    return safe;
+  }
+
+  return parsed.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
 const getReviewRangeByKey = (key) => {
   const matchedRange = REVIEW_RANGE_OPTIONS.find((range) => range.key === key);
   if (matchedRange) {
@@ -1206,9 +1248,46 @@ export default function HomeScreen() {
                 Row = Pressable;
               }
               const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+              const reviewScoreText = getReviewScoreText(safeItem);
+              let reviewScoreNode = null;
+              if (reviewScoreText) {
+                reviewScoreNode = <Text style={styles.todoScoreText}>{reviewScoreText}</Text>;
+              }
               let todoLinkHintNode = null;
               if (safeItem.htmlUrl) {
                 todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
+              }
+              let teacherCommentsNode = null;
+              if (Array.isArray(safeItem.teacherComments) && safeItem.teacherComments.length > 0) {
+                teacherCommentsNode = (
+                  <View style={styles.todoCommentList}>
+                    {safeItem.teacherComments.map((comment, index) => {
+                      const safeComment = comment || {};
+                      const commentTime = formatReviewCommentTime(safeComment.createdAt);
+                      let commentMetaNode = null;
+                      if (safeComment.authorName || commentTime) {
+                        commentMetaNode = (
+                          <Text style={styles.todoCommentMeta}>
+                            {String(safeComment.authorName || 'Teacher')}
+                            {commentTime ? ' | ' + commentTime : ''}
+                          </Text>
+                        );
+                      }
+
+                      return (
+                        <View
+                          key={String(safeComment.id || 'comment-' + String(index))}
+                          style={styles.todoCommentCard}
+                        >
+                          {commentMetaNode}
+                          <Text style={styles.todoCommentText}>
+                            {String(safeComment.comment || '')}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
               }
 
               return (
@@ -1232,6 +1311,8 @@ export default function HomeScreen() {
                     <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
                     <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
                     <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
+                    {reviewScoreNode}
+                    {teacherCommentsNode}
                     {todoLinkHintNode}
                     <View style={styles.todoLine} />
                   </View>
@@ -1323,6 +1404,18 @@ const styles = StyleSheet.create({
   todoText: { marginTop: 4, fontSize: 13, color: '#6b7280' },
   todoMeta: { marginTop: 4, fontSize: 11, color: '#9ca3af' },
   todoMetaStrong: { marginTop: 3, fontSize: 11, fontWeight: '700', color: '#374151' },
+  todoScoreText: { marginTop: 4, fontSize: 11, fontWeight: '700', color: '#111827' },
+  todoCommentList: { marginTop: 8, gap: 6 },
+  todoCommentCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  todoCommentMeta: { fontSize: 10, fontWeight: '700', color: '#6b7280', marginBottom: 3 },
+  todoCommentText: { fontSize: 11, lineHeight: 16, color: '#374151' },
   todoLinkHint: { marginTop: 4, fontSize: 10, fontWeight: '700', color: '#2563eb' },
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },

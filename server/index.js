@@ -449,6 +449,71 @@ function getCanvasPlanCourse(item, courseNameById) {
   )
 }
 
+function getCanvasPlanCourseId(item) {
+  const safeItem = item || {}
+  const assignment = safeItem.assignment || {}
+  const plannable = safeItem.plannable || {}
+  const courseId =
+    safeItem.course_id || safeItem.context_id || assignment.course_id || plannable.course_id || ''
+  if (!courseId) {
+    return ''
+  }
+  return String(courseId)
+}
+
+function getCanvasPlanAssignmentId(item) {
+  const safeItem = item || {}
+  const assignment = safeItem.assignment || {}
+  const plannable = safeItem.plannable || {}
+  let assignmentId = safeItem.assignment_id || assignment.id || ''
+  if (!assignmentId && String(safeItem.plannable_type || '').toLowerCase() === 'assignment') {
+    assignmentId = plannable.id || ''
+  }
+  if (!assignmentId) {
+    return ''
+  }
+  return String(assignmentId)
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value)
+  if (Number.isFinite(parsed)) {
+    return parsed
+  }
+  return null
+}
+
+function normalizeTeacherComments(submission) {
+  const safeSubmission = submission || {}
+  let safeComments = []
+  if (Array.isArray(safeSubmission.submission_comments)) {
+    safeComments = safeSubmission.submission_comments
+  }
+  const currentUserId = String(safeSubmission.user_id || '')
+
+  return safeComments
+    .filter((comment) => {
+      const safeComment = comment || {}
+      const commentText = String(safeComment.comment || '').trim()
+      if (!commentText) {
+        return false
+      }
+      if (!currentUserId) {
+        return true
+      }
+      return String(safeComment.author_id || '') !== currentUserId
+    })
+    .map((comment, index) => {
+      const safeComment = comment || {}
+      return {
+        id: String(safeComment.id || 'comment-' + String(index)),
+        authorName: String(safeComment.author_name || 'Teacher'),
+        comment: String(safeComment.comment || '').trim(),
+        createdAt: String(safeComment.created_at || ''),
+      }
+    })
+}
+
 function mapCustomTaskToPlanItem(task) {
   // 把数据库里的自定义任务转换成首页 /home/plan 能直接使用的统一结构。
   // 统一后，首页就能把 custom task 和 Canvas task 一起排序展示。
@@ -508,6 +573,8 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
     source: 'canvas',
     title: getCanvasPlanTitle(safeItem),
     course: getCanvasPlanCourse(safeItem, courseNameById),
+    courseId: getCanvasPlanCourseId(safeItem),
+    assignmentId: getCanvasPlanAssignmentId(safeItem),
     type: getCanvasPlanType(safeItem),
     date,
     timestampMs: sortTs,
@@ -516,8 +583,109 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
       safeItem.html_url || plannable.html_url || assignment.html_url || '',
     ),
     isCompleted: completed,
+    score: null,
+    pointsPossible: null,
+    teacherComments: [],
     sortTs,
   }
+}
+
+async function fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, assignmentIds) {
+  let safeAssignmentIds = []
+  if (Array.isArray(assignmentIds)) {
+    safeAssignmentIds = assignmentIds
+      .map((assignmentId) => String(assignmentId || '').trim())
+      .filter(Boolean)
+  }
+  if (!courseId || safeAssignmentIds.length === 0) {
+    return []
+  }
+
+  const params = new URLSearchParams()
+  params.append('student_ids[]', 'self')
+  safeAssignmentIds.forEach((assignmentId) => {
+    params.append('assignment_ids[]', assignmentId)
+  })
+  params.append('include[]', 'submission_comments')
+  params.append('include[]', 'assignment')
+  params.append('per_page', String(Math.max(50, safeAssignmentIds.length)))
+
+  const path =
+    '/api/v1/courses/' + encodeURIComponent(courseId) + '/students/submissions?' + params.toString()
+
+  return fetchCanvasPaged(baseUrl, token, path)
+}
+
+async function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items.slice()
+  }
+  const assignmentIdsByCourse = {}
+
+  safeItems.forEach((item) => {
+    const safeItem = item || {}
+    if (safeItem.source !== 'canvas' || !safeItem.courseId || !safeItem.assignmentId) {
+      return
+    }
+    if (!assignmentIdsByCourse[safeItem.courseId]) {
+      assignmentIdsByCourse[safeItem.courseId] = new Set()
+    }
+    assignmentIdsByCourse[safeItem.courseId].add(String(safeItem.assignmentId))
+  })
+
+  const submissionByKey = {}
+
+  await Promise.all(
+    Object.entries(assignmentIdsByCourse).map(async ([courseId, assignmentIdsSet]) => {
+      try {
+        const details = await fetchCanvasSubmissionDetailsForCourse(
+          baseUrl,
+          token,
+          courseId,
+          Array.from(assignmentIdsSet),
+        )
+        let safeDetails = []
+        if (Array.isArray(details)) {
+          safeDetails = details
+        }
+        safeDetails.forEach((detail) => {
+          const safeDetail = detail || {}
+          const assignmentId = String(safeDetail.assignment_id || (safeDetail.assignment || {}).id || '')
+          if (!assignmentId) {
+            return
+          }
+          submissionByKey[String(courseId) + ':' + assignmentId] = safeDetail
+        })
+      } catch (detailError) {
+        console.error('[BE] /home/plan submission detail error:', detailError)
+      }
+    }),
+  )
+
+  return safeItems.map((item) => {
+    const safeItem = item || {}
+    if (safeItem.source !== 'canvas' || !safeItem.courseId || !safeItem.assignmentId) {
+      return safeItem
+    }
+    const detailKey = String(safeItem.courseId) + ':' + String(safeItem.assignmentId)
+    const detail = submissionByKey[detailKey]
+    if (!detail) {
+      return safeItem
+    }
+
+    const assignment = detail.assignment || {}
+    const score = toFiniteNumber(detail.score)
+    const pointsPossible =
+      toFiniteNumber(assignment.points_possible) ?? toFiniteNumber(detail.points_possible)
+
+    return {
+      ...safeItem,
+      score,
+      pointsPossible,
+      teacherComments: normalizeTeacherComments(detail),
+    }
+  })
 }
 
 function sortPlanItemsAscending(items) {
@@ -1096,7 +1264,11 @@ app.get('/home/plan', async (req, res) => {
             recentCanvasItemMap[item.id] = item
           }
         })
-        canvasRecentItems = Object.values(recentCanvasItemMap)
+        canvasRecentItems = await enrichPlanItemsWithSubmissionDetails(
+          baseUrl,
+          stored.token,
+          Object.values(recentCanvasItemMap),
+        )
       }
     } catch (canvasLoadError) {
       if (canvasLoadError instanceof Error) {
