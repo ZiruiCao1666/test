@@ -457,10 +457,19 @@ const getCheckInAlertText = (gained) => {
   return 'Already checked in today';
 };
 
-const getPlanEmptyMessage = () => 'No Canvas or custom tasks in the next seven days.';
+const getPlanEmptyMessage = (canvasConnected) => {
+  if (canvasConnected) {
+    return 'No Canvas or custom tasks in the next seven days.';
+  }
+  return 'No custom tasks in the next seven days.';
+};
 
-const getReviewEmptyMessage = (label = 'the previous seven days') =>
-  'No Canvas or custom tasks in ' + label + '.';
+const getReviewEmptyMessage = (label = 'the previous seven days', canvasConnected = true) => {
+  if (canvasConnected) {
+    return 'No Canvas or custom tasks in ' + label + '.';
+  }
+  return 'No custom tasks in ' + label + '.';
+};
 
 const getReviewStatusText = (item) => {
   const safeItem = item || {};
@@ -495,56 +504,6 @@ const getReviewSummaryText = (summary, items) => {
   }
 
   return 'Completed ' + String(completedCount) + ' of ' + String(totalCount) + ' tasks';
-};
-
-const getReviewScoreText = (item) => {
-  const safeItem = item || {};
-  const rawScore = Number(safeItem.score);
-  const rawPoints = Number(safeItem.pointsPossible);
-  const hasScore = Number.isFinite(rawScore);
-  const hasPoints = Number.isFinite(rawPoints);
-
-  if (!hasScore && !hasPoints) {
-    return '';
-  }
-  if (hasScore && hasPoints) {
-    return 'Score: ' + String(rawScore) + ' / ' + String(rawPoints);
-  }
-  if (hasScore) {
-    return 'Score: ' + String(rawScore);
-  }
-  return 'Points possible: ' + String(rawPoints);
-};
-
-const formatReviewCommentTime = (value) => {
-  let safe = '';
-  if (value !== undefined && value !== null) {
-    safe = String(value).trim();
-  }
-  if (!safe) {
-    return '';
-  }
-
-  const parsed = new Date(safe);
-  if (Number.isNaN(parsed.getTime())) {
-    return safe;
-  }
-
-  return parsed.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-};
-
-const getReviewRangeByKey = (key) => {
-  const matchedRange = REVIEW_RANGE_OPTIONS.find((range) => range.key === key);
-  if (matchedRange) {
-    return matchedRange;
-  }
-  return REVIEW_RANGE_OPTIONS[0];
 };
 
 const filterReviewItemsByDays = (items, days) => {
@@ -678,12 +637,12 @@ export default function HomeScreen() {
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
-  const [selectedReviewRangeKey, setSelectedReviewRangeKey] = React.useState('7d');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
+  const [homeCanvasConnected, setHomeCanvasConnected] = React.useState(false);
 
   const summaryRetryRef = React.useRef(0);
   const getTokenRef = React.useRef(getToken);
@@ -898,14 +857,16 @@ export default function HomeScreen() {
         recentItems = data.recentItems.slice();
       }
 
+      setHomeCanvasConnected(Boolean(data && data.canvasConnected));
       setHomePlanItems(items);
       setRecentPlanItems(recentItems);
-      if (data && data.canvasError) {
+      if (data && data.canvasConnected && data.canvasError) {
         setCanvasPlanWarning(String(data.canvasError).trim());
       } else {
         setCanvasPlanWarning('');
       }
     } catch (e) {
+      setHomeCanvasConnected(false);
       setHomePlanItems([]);
       setRecentPlanItems([]);
       setCanvasPlanWarning('');
@@ -994,18 +955,19 @@ export default function HomeScreen() {
 
   const lastingDays = streakDays || totalSignedDays;
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
-  const selectedReviewRange = React.useMemo(() => {
-    return getReviewRangeByKey(selectedReviewRangeKey);
-  }, [selectedReviewRangeKey]);
-  const filteredRecentPlanItems = React.useMemo(() => {
-    return filterReviewItemsByDays(recentPlanItems, selectedReviewRange.days);
-  }, [recentPlanItems, selectedReviewRange]);
-  const filteredRecentPlanSummary = React.useMemo(() => {
-    return buildReviewSummary(filteredRecentPlanItems);
-  }, [filteredRecentPlanItems]);
-  const recentReviewSummaryText = React.useMemo(() => {
-    return getReviewSummaryText(filteredRecentPlanSummary, filteredRecentPlanItems);
-  }, [filteredRecentPlanSummary, filteredRecentPlanItems]);
+  const reviewSections = React.useMemo(() => {
+    return REVIEW_RANGE_OPTIONS.map((range) => {
+      const items = filterReviewItemsByDays(recentPlanItems, range.days);
+      const summary = buildReviewSummary(items);
+      return {
+        key: range.key,
+        title: range.title,
+        emptyLabel: range.emptyLabel,
+        items,
+        summaryText: getReviewSummaryText(summary, items),
+      };
+    });
+  }, [recentPlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
     const safeItem = item || {};
     if (!safeItem.htmlUrl) {
@@ -1084,16 +1046,10 @@ export default function HomeScreen() {
 
   let homePlanEmptyNode = null;
   if (!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0) {
-    homePlanEmptyNode = <Text style={styles.todoEmpty}>{getPlanEmptyMessage()}</Text>;
-  }
-
-  let recentReviewEmptyNode = null;
-  if (!loadingHomePlan && !homePlanError && filteredRecentPlanItems.length === 0) {
-    recentReviewEmptyNode = (
-      <Text style={styles.todoEmpty}>{getReviewEmptyMessage(selectedReviewRange.emptyLabel)}</Text>
+    homePlanEmptyNode = (
+      <Text style={styles.todoEmpty}>{getPlanEmptyMessage(homeCanvasConnected)}</Text>
     );
   }
-
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -1210,116 +1166,67 @@ export default function HomeScreen() {
             </View>
           ))}
 
-          <View style={styles.todoDivider} />
-          <View style={styles.todoSection}>
-            <Text style={styles.todoSectionTitle}>{selectedReviewRange.title}</Text>
-            <View style={styles.reviewRangeRow}>
-              {REVIEW_RANGE_OPTIONS.map((range) => {
-                const active = range.key === selectedReviewRange.key;
-                return (
-                  <Pressable
-                    key={range.key}
-                    onPress={() => setSelectedReviewRangeKey(range.key)}
-                    style={({ pressed }) => [
-                      styles.reviewRangeChip,
-                      getStyleWhen(active, styles.reviewRangeChipActive),
-                      getStyleWhen(pressed, { opacity: 0.82 }),
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.reviewRangeChipText,
-                        getStyleWhen(active, styles.reviewRangeChipTextActive),
-                      ]}
-                    >
-                      {range.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Text style={styles.todoReviewSummary}>{recentReviewSummaryText}</Text>
-            {recentReviewEmptyNode}
-
-            {filteredRecentPlanItems.map((item) => {
-              const safeItem = item || {};
-              let Row = View;
-              if (safeItem.htmlUrl) {
-                Row = Pressable;
-              }
-              const rowProps = buildPlanRowProps(safeItem, openPlanItem);
-              const reviewScoreText = getReviewScoreText(safeItem);
-              let reviewScoreNode = null;
-              if (reviewScoreText) {
-                reviewScoreNode = <Text style={styles.todoScoreText}>{reviewScoreText}</Text>;
-              }
-              let todoLinkHintNode = null;
-              if (safeItem.htmlUrl) {
-                todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
-              }
-              let teacherCommentsNode = null;
-              if (Array.isArray(safeItem.teacherComments) && safeItem.teacherComments.length > 0) {
-                teacherCommentsNode = (
-                  <View style={styles.todoCommentList}>
-                    {safeItem.teacherComments.map((comment, index) => {
-                      const safeComment = comment || {};
-                      const commentTime = formatReviewCommentTime(safeComment.createdAt);
-                      let commentMetaNode = null;
-                      if (safeComment.authorName || commentTime) {
-                        commentMetaNode = (
-                          <Text style={styles.todoCommentMeta}>
-                            {String(safeComment.authorName || 'Teacher')}
-                            {commentTime ? ' | ' + commentTime : ''}
-                          </Text>
-                        );
-                      }
-
-                      return (
-                        <View
-                          key={String(safeComment.id || 'comment-' + String(index))}
-                          style={styles.todoCommentCard}
-                        >
-                          {commentMetaNode}
-                          <Text style={styles.todoCommentText}>
-                            {String(safeComment.comment || '')}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                );
-              }
-
-              return (
-                <Row key={safeItem.id} {...rowProps}>
-                  {renderTodoAvatarNode(avatarUrl, avatarInitial)}
-
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.todoTopRow}>
-                      <Text style={styles.todoTop}>{getReviewStatusText(safeItem)}</Text>
-                      <View
-                        style={[
-                          styles.todoSourceBadge,
-                          getPlanSourceBadgeStyle(safeItem),
-                        ]}
-                      >
-                        <Text style={styles.todoSourceBadgeText}>
-                          {getPlanSourceLabel(safeItem)}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
-                    <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
-                    <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
-                    {reviewScoreNode}
-                    {teacherCommentsNode}
-                    {todoLinkHintNode}
-                    <View style={styles.todoLine} />
-                  </View>
-                </Row>
+          {reviewSections.map((section) => {
+            let currentReviewEmptyNode = null;
+            if (!loadingHomePlan && !homePlanError && section.items.length === 0) {
+              currentReviewEmptyNode = (
+                <Text style={styles.todoEmpty}>
+                  {getReviewEmptyMessage(section.emptyLabel, homeCanvasConnected)}
+                </Text>
               );
-            })}
-          </View>
+            }
+
+            return (
+              <React.Fragment key={section.key}>
+                <View style={styles.todoDivider} />
+                <View style={styles.todoSection}>
+                  <Text style={styles.todoSectionTitle}>{section.title}</Text>
+                  <Text style={styles.todoReviewSummary}>{section.summaryText}</Text>
+                  {currentReviewEmptyNode}
+
+                  {section.items.map((item) => {
+                    const safeItem = item || {};
+                    let Row = View;
+                    if (safeItem.htmlUrl) {
+                      Row = Pressable;
+                    }
+                    const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+                    let todoLinkHintNode = null;
+                    if (safeItem.htmlUrl) {
+                      todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
+                    }
+
+                    return (
+                      <Row key={safeItem.id} {...rowProps}>
+                        {renderTodoAvatarNode(avatarUrl, avatarInitial)}
+
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.todoTopRow}>
+                            <Text style={styles.todoTop}>{getReviewStatusText(safeItem)}</Text>
+                            <View
+                              style={[
+                                styles.todoSourceBadge,
+                                getPlanSourceBadgeStyle(safeItem),
+                              ]}
+                            >
+                              <Text style={styles.todoSourceBadgeText}>
+                                {getPlanSourceLabel(safeItem)}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
+                          <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
+                          <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
+                          {todoLinkHintNode}
+                          <View style={styles.todoLine} />
+                        </View>
+                      </Row>
+                    );
+                  })}
+                </View>
+              </React.Fragment>
+            );
+          })}
         </View>
 
         <View style={{ height: 24 }} />
@@ -1404,44 +1311,11 @@ const styles = StyleSheet.create({
   todoText: { marginTop: 4, fontSize: 13, color: '#6b7280' },
   todoMeta: { marginTop: 4, fontSize: 11, color: '#9ca3af' },
   todoMetaStrong: { marginTop: 3, fontSize: 11, fontWeight: '700', color: '#374151' },
-  todoScoreText: { marginTop: 4, fontSize: 11, fontWeight: '700', color: '#111827' },
-  todoCommentList: { marginTop: 8, gap: 6 },
-  todoCommentCard: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  todoCommentMeta: { fontSize: 10, fontWeight: '700', color: '#6b7280', marginBottom: 3 },
-  todoCommentText: { fontSize: 11, lineHeight: 16, color: '#374151' },
   todoLinkHint: { marginTop: 4, fontSize: 10, fontWeight: '700', color: '#2563eb' },
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
   todoReviewSummary: { fontSize: 11, color: '#6b7280', marginBottom: 6 },
-  reviewRangeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-  reviewRangeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-  },
-  reviewRangeChipActive: {
-    borderColor: '#111827',
-    backgroundColor: '#111827',
-  },
-  reviewRangeChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6b7280',
-  },
-  reviewRangeChipTextActive: {
-    color: '#ffffff',
-  },
   todoDivider: { marginTop: 10, marginBottom: 4, height: 1, backgroundColor: '#e5e7eb' },
   todoLine: { marginTop: 8, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '88%' },
 });

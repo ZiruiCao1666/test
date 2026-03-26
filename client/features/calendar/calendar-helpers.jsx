@@ -15,11 +15,42 @@ export const normalizeBaseUrl = (value) => {
   return withProtocol.replace(/\/+$/, '');
 };
 
+const getKnownCanvasBaseUrl = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const normalized = normalizeBaseUrl(trimmed).toLowerCase();
+  if (normalized === 'https://canvas.hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk';
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (lower === 'hull') {
+    return 'https://canvas.hull.ac.uk';
+  }
+  if (lower === 'hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk';
+  }
+  if (lower === 'canvas.hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk';
+  }
+
+  return '';
+};
+
 export const buildBaseUrl = (value) => {
   const trimmed = value.trim();
   if (!trimmed) {
     return '';
   }
+
+  const knownBaseUrl = getKnownCanvasBaseUrl(trimmed);
+  if (knownBaseUrl) {
+    return knownBaseUrl;
+  }
+
   if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
     return normalizeBaseUrl(trimmed);
   }

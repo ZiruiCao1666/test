@@ -67,6 +67,7 @@ const styles = StyleSheet.create({
   },
   ghostBtnText: { color: '#111827', fontWeight: '700', fontSize: 13 },
   helper: { marginTop: 10, fontSize: 11, color: '#9ca3af' },
+  helperMuted: { marginTop: 6, fontSize: 11, color: '#9ca3af' },
   error: { marginTop: 8, fontSize: 12, color: '#ef4444' },
   sync: { marginTop: 8, fontSize: 11, color: '#6b7280' },
 

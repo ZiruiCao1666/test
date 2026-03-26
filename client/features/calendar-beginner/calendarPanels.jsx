@@ -250,6 +250,7 @@ export function CalendarDetailContent({
 
 export function CalendarOverviewPanel({
   selectedPanel,
+  isConnected,
   profile,
   courses,
   enrollmentsByCourse,

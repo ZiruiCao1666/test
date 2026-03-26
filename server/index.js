@@ -206,9 +206,36 @@ function normalizeCanvasBaseUrl(value) {
   return withProtocol.replace(/\/+$/, '')
 }
 
+function getKnownCanvasBaseUrl(value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+
+  const normalized = normalizeCanvasBaseUrl(trimmed).toLowerCase()
+  if (normalized === 'https://canvas.hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk'
+  }
+
+  const lower = trimmed.toLowerCase()
+  if (lower === 'hull') {
+    return 'https://canvas.hull.ac.uk'
+  }
+  if (lower === 'hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk'
+  }
+  if (lower === 'canvas.hull.ac.uk') {
+    return 'https://canvas.hull.ac.uk'
+  }
+
+  return ''
+}
+
 function buildCanvasBaseUrl(value) {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
+  const knownBaseUrl = getKnownCanvasBaseUrl(trimmed)
+  if (knownBaseUrl) {
+    return knownBaseUrl
+  }
   if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
     return normalizeCanvasBaseUrl(trimmed)
   }
@@ -1275,6 +1302,13 @@ app.get('/home/plan', async (req, res) => {
         canvasError = canvasLoadError.message
       } else {
         canvasError = 'Failed to load Canvas items'
+      }
+      const normalizedCanvasError = String(canvasError || '').toLowerCase()
+      if (
+        normalizedCanvasError.includes('401') &&
+        normalizedCanvasError.includes('invalid access token')
+      ) {
+        canvasConnected = false
       }
       console.error('[BE] /home/plan canvas error:', canvasLoadError)
     }
