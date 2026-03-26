@@ -900,7 +900,7 @@ app.delete('/canvas/credentials', async (req, res) => {
 
 /**
  * GET /home/plan
- * Return the current user's next N days and previous N days of custom tasks + Canvas items.
+ * Return the current user's next N days and previous M days of custom tasks + Canvas items.
  */
 app.get('/home/plan', async (req, res) => {
   try {
@@ -911,14 +911,19 @@ app.get('/home/plan', async (req, res) => {
 
     const safeQuery = req.query || {}
     const rawDays = Number(safeQuery.days)
+    const rawRecentDays = Number(safeQuery.recentDays)
     let days = 7
     if (Number.isInteger(rawDays)) {
       days = Math.min(Math.max(rawDays, 1), 30)
     }
+    let recentDays = days
+    if (Number.isInteger(rawRecentDays)) {
+      recentDays = Math.min(Math.max(rawRecentDays, 1), 365)
+    }
 
     const nowTs = Date.now()
     const futureEndTs = nowTs + days * 24 * 60 * 60 * 1000
-    const pastStartTs = nowTs - days * 24 * 60 * 60 * 1000
+    const pastStartTs = nowTs - recentDays * 24 * 60 * 60 * 1000
 
     const upcomingTaskResult = await pool.query(
       `
@@ -962,7 +967,7 @@ app.get('/home/plan', async (req, res) => {
         AND task_date < (NOW() AT TIME ZONE 'Europe/London')::date
       ORDER BY task_date DESC, COALESCE(start_time, due_time) DESC NULLS LAST, created_at DESC
       `,
-      [userId, days],
+      [userId, recentDays],
     )
 
     const customUpcomingItems = upcomingTaskResult.rows
@@ -1109,6 +1114,7 @@ app.get('/home/plan', async (req, res) => {
     return res.json({
       ok: true,
       days,
+      recentDays,
       canvasConnected,
       canvasError,
       items: stripPlanSortTs(upcomingItems),

@@ -18,9 +18,40 @@ import * as Linking from 'expo-linking';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
 const HOME_PLAN_DAYS = 7;
+const HOME_REVIEW_DAYS = 365;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const REVIEW_RANGE_OPTIONS = [
+  {
+    key: '7d',
+    label: '7 days',
+    title: 'Review the previous 7 days',
+    emptyLabel: 'the previous 7 days',
+    days: 7,
+  },
+  {
+    key: '30d',
+    label: '30 days',
+    title: 'Review the previous 30 days',
+    emptyLabel: 'the previous 30 days',
+    days: 30,
+  },
+  {
+    key: 'semester',
+    label: 'Semester',
+    title: 'Review the previous semester',
+    emptyLabel: 'the previous semester',
+    days: 120,
+  },
+  {
+    key: '1y',
+    label: '1 year',
+    title: 'Review the previous year',
+    emptyLabel: 'the previous year',
+    days: 365,
+  },
+];
 
 const getErrorMessage = (error, fallback) => {
   if (error && typeof error.message === 'string' && error.message) {
@@ -428,7 +459,8 @@ const getCheckInAlertText = (gained) => {
 
 const getPlanEmptyMessage = () => 'No Canvas or custom tasks in the next seven days.';
 
-const getReviewEmptyMessage = () => 'No Canvas or custom tasks in the previous seven days.';
+const getReviewEmptyMessage = (label = 'the previous seven days') =>
+  'No Canvas or custom tasks in ' + label + '.';
 
 const getReviewStatusText = (item) => {
   const safeItem = item || {};
@@ -463,6 +495,51 @@ const getReviewSummaryText = (summary, items) => {
   }
 
   return 'Completed ' + String(completedCount) + ' of ' + String(totalCount) + ' tasks';
+};
+
+const getReviewRangeByKey = (key) => {
+  const matchedRange = REVIEW_RANGE_OPTIONS.find((range) => range.key === key);
+  if (matchedRange) {
+    return matchedRange;
+  }
+  return REVIEW_RANGE_OPTIONS[0];
+};
+
+const filterReviewItemsByDays = (items, days) => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const nowTs = Date.now();
+  const windowStartTs = nowTs - days * ONE_DAY_MS;
+
+  return items.filter((item) => {
+    const timestamp = getItemTimestamp(item);
+    if (timestamp === null) {
+      return false;
+    }
+    return timestamp >= windowStartTs && timestamp <= nowTs;
+  });
+};
+
+const buildReviewSummary = (items) => {
+  let completedCount = 0;
+  let totalCount = 0;
+
+  if (Array.isArray(items)) {
+    totalCount = items.length;
+    items.forEach((item) => {
+      const safeItem = item || {};
+      if (safeItem.isCompleted) {
+        completedCount += 1;
+      }
+    });
+  }
+
+  return {
+    totalCount,
+    completedCount,
+  };
 };
 
 const buildPlanRowProps = (item, openPlanItem) => {
@@ -559,12 +636,9 @@ export default function HomeScreen() {
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
+  const [selectedReviewRangeKey, setSelectedReviewRangeKey] = React.useState('7d');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
-  const [recentPlanSummary, setRecentPlanSummary] = React.useState({
-    totalCount: 0,
-    completedCount: 0,
-  });
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
@@ -756,7 +830,12 @@ export default function HomeScreen() {
         return;
       }
 
-      const homePlanUrl = API_BASE_URL + '/home/plan?days=' + String(HOME_PLAN_DAYS);
+      const homePlanUrl =
+        API_BASE_URL +
+        '/home/plan?days=' +
+        String(HOME_PLAN_DAYS) +
+        '&recentDays=' +
+        String(HOME_REVIEW_DAYS);
       const res = await fetchWithTimeout(
         homePlanUrl,
         {
@@ -777,37 +856,8 @@ export default function HomeScreen() {
         recentItems = data.recentItems.slice();
       }
 
-      let nextRecentSummary = {
-        totalCount: 0,
-        completedCount: 0,
-      };
-      if (data && data.recentSummary) {
-        const safeSummary = data.recentSummary;
-        let totalCount = 0;
-        if (
-          typeof safeSummary.totalCount === 'number' &&
-          Number.isFinite(safeSummary.totalCount)
-        ) {
-          totalCount = safeSummary.totalCount;
-        }
-
-        let completedCount = 0;
-        if (
-          typeof safeSummary.completedCount === 'number' &&
-          Number.isFinite(safeSummary.completedCount)
-        ) {
-          completedCount = safeSummary.completedCount;
-        }
-
-        nextRecentSummary = {
-          totalCount,
-          completedCount,
-        };
-      }
-
       setHomePlanItems(items);
       setRecentPlanItems(recentItems);
-      setRecentPlanSummary(nextRecentSummary);
       if (data && data.canvasError) {
         setCanvasPlanWarning(String(data.canvasError).trim());
       } else {
@@ -816,10 +866,6 @@ export default function HomeScreen() {
     } catch (e) {
       setHomePlanItems([]);
       setRecentPlanItems([]);
-      setRecentPlanSummary({
-        totalCount: 0,
-        completedCount: 0,
-      });
       setCanvasPlanWarning('');
       setHomePlanError(getErrorMessage(e, 'Failed to load seven-day plan'));
       console.log('[Home] loadHomePlan error:', getErrorMessage(e, 'Unknown error'));
@@ -906,9 +952,18 @@ export default function HomeScreen() {
 
   const lastingDays = streakDays || totalSignedDays;
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
+  const selectedReviewRange = React.useMemo(() => {
+    return getReviewRangeByKey(selectedReviewRangeKey);
+  }, [selectedReviewRangeKey]);
+  const filteredRecentPlanItems = React.useMemo(() => {
+    return filterReviewItemsByDays(recentPlanItems, selectedReviewRange.days);
+  }, [recentPlanItems, selectedReviewRange]);
+  const filteredRecentPlanSummary = React.useMemo(() => {
+    return buildReviewSummary(filteredRecentPlanItems);
+  }, [filteredRecentPlanItems]);
   const recentReviewSummaryText = React.useMemo(() => {
-    return getReviewSummaryText(recentPlanSummary, recentPlanItems);
-  }, [recentPlanSummary, recentPlanItems]);
+    return getReviewSummaryText(filteredRecentPlanSummary, filteredRecentPlanItems);
+  }, [filteredRecentPlanSummary, filteredRecentPlanItems]);
   const openPlanItem = React.useCallback(async (item) => {
     const safeItem = item || {};
     if (!safeItem.htmlUrl) {
@@ -991,8 +1046,10 @@ export default function HomeScreen() {
   }
 
   let recentReviewEmptyNode = null;
-  if (!loadingHomePlan && !homePlanError && recentPlanItems.length === 0) {
-    recentReviewEmptyNode = <Text style={styles.todoEmpty}>{getReviewEmptyMessage()}</Text>;
+  if (!loadingHomePlan && !homePlanError && filteredRecentPlanItems.length === 0) {
+    recentReviewEmptyNode = (
+      <Text style={styles.todoEmpty}>{getReviewEmptyMessage(selectedReviewRange.emptyLabel)}</Text>
+    );
   }
 
   return (
@@ -1113,11 +1170,36 @@ export default function HomeScreen() {
 
           <View style={styles.todoDivider} />
           <View style={styles.todoSection}>
-            <Text style={styles.todoSectionTitle}>Review the previous seven days</Text>
+            <Text style={styles.todoSectionTitle}>{selectedReviewRange.title}</Text>
+            <View style={styles.reviewRangeRow}>
+              {REVIEW_RANGE_OPTIONS.map((range) => {
+                const active = range.key === selectedReviewRange.key;
+                return (
+                  <Pressable
+                    key={range.key}
+                    onPress={() => setSelectedReviewRangeKey(range.key)}
+                    style={({ pressed }) => [
+                      styles.reviewRangeChip,
+                      getStyleWhen(active, styles.reviewRangeChipActive),
+                      getStyleWhen(pressed, { opacity: 0.82 }),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.reviewRangeChipText,
+                        getStyleWhen(active, styles.reviewRangeChipTextActive),
+                      ]}
+                    >
+                      {range.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <Text style={styles.todoReviewSummary}>{recentReviewSummaryText}</Text>
             {recentReviewEmptyNode}
 
-            {recentPlanItems.map((item) => {
+            {filteredRecentPlanItems.map((item) => {
               const safeItem = item || {};
               let Row = View;
               if (safeItem.htmlUrl) {
@@ -1246,6 +1328,27 @@ const styles = StyleSheet.create({
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
   todoReviewSummary: { fontSize: 11, color: '#6b7280', marginBottom: 6 },
+  reviewRangeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  reviewRangeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  reviewRangeChipActive: {
+    borderColor: '#111827',
+    backgroundColor: '#111827',
+  },
+  reviewRangeChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6b7280',
+  },
+  reviewRangeChipTextActive: {
+    color: '#ffffff',
+  },
   todoDivider: { marginTop: 10, marginBottom: 4, height: 1, backgroundColor: '#e5e7eb' },
   todoLine: { marginTop: 8, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '88%' },
 });
