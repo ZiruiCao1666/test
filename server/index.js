@@ -1613,7 +1613,7 @@ app.get('/checkins/dates', async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT checkin_date
+      SELECT checkin_date::text AS checkin_date
       FROM app_checkins
       WHERE clerk_user_id = $1
       ORDER BY checkin_date ASC
@@ -1623,7 +1623,7 @@ app.get('/checkins/dates', async (req, res) => {
 
     return res.json({
       ok: true,
-      items: result.rows.map((row) => String(row.checkin_date)),
+      items: result.rows.map((row) => String(row.checkin_date || '')),
     })
   } catch (e) {
     console.error('[BE] /checkins/dates error:', e)

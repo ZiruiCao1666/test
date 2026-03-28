@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
@@ -1479,7 +1479,20 @@ export default function CalendarScreen() {
       }
 
       items.forEach((item) => {
-        const key = String(item || '').trim().slice(0, 10);
+        const rawText = String(item || '').trim();
+        let key = '';
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(rawText)) {
+          key = rawText;
+        } else if (/^\d{4}-\d{2}-\d{2}T/.test(rawText)) {
+          key = rawText.slice(0, 10);
+        } else {
+          const parsedDate = new Date(rawText);
+          if (!Number.isNaN(parsedDate.getTime())) {
+            key = buildDateKey(parsedDate);
+          }
+        }
+
         if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
           nextSet.add(key);
         }
@@ -3282,6 +3295,15 @@ export default function CalendarScreen() {
     let plannerFooterHint = 'Tap a date to jump the planner to that week.';
     if (checkinsError) {
       plannerFooterHint = checkinsError;
+    } else {
+      let checkinDebugText = 'Check-ins loaded: ' + String(checkinDateKeys.size);
+      const checkinDateList = Array.from(checkinDateKeys).sort();
+      if (checkinDateList.length > 0) {
+        const firstDate = checkinDateList[0];
+        const lastDate = checkinDateList[checkinDateList.length - 1];
+        checkinDebugText = checkinDebugText + ' | ' + firstDate + ' to ' + lastDate;
+      }
+      plannerFooterHint = plannerFooterHint + '\n' + checkinDebugText;
     }
 
     calendarPanelNode = (
@@ -4924,4 +4946,5 @@ const styles = StyleSheet.create({
   },
   collapseBtnText: { fontSize: 11, fontWeight: '700', color: '#111827' },
 });
+
 
