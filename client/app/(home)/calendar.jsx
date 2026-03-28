@@ -1017,6 +1017,7 @@ const MiniCalendarPanel = ({
                 getStyleWhen(hasCheckin && !isSelected, styles.miniCalendarCellCheckedIn),
                 getStyleWhen(isSelected, styles.miniCalendarCellSelected),
                 getStyleWhen(isToday, styles.miniCalendarCellToday),
+                getStyleWhen(hasCheckin && isSelected, styles.miniCalendarCellCheckedInSelected),
                 getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
@@ -4131,6 +4132,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(134, 239, 172, 0.28)',
   },
+  miniCalendarCellCheckedInSelected: {
+    borderWidth: 2,
+    borderColor: '#86efac',
+  },
   miniCalendarCellSelected: {
     backgroundColor: '#2563eb',
   },
@@ -4173,10 +4178,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563eb',
   },
   miniCalendarDotCheckin: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: '#86efac',
+    borderWidth: 1,
+    borderColor: '#ecfdf5',
   },
   miniCalendarHint: {
     marginTop: 14,
