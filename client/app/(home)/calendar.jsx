@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import { useAuth } from '@clerk/clerk-expo';
+import { useFocusEffect } from '@react-navigation/native';
 
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -979,11 +980,13 @@ const MiniCalendarPanel = ({
             count: 0,
             hasCanvas: false,
             hasCustom: false,
+            hasCheckin: false,
           };
           const isSelected = isSameDay(day.date, selectedDate);
           const isToday = isSameDay(day.date, new Date());
+          const hasCheckin = Boolean(markers.hasCheckin);
           let markersNode = null;
-          if (markers.count > 0) {
+          if (markers.count > 0 || hasCheckin) {
             let canvasDotNode = null;
             if (markers.hasCanvas) {
               canvasDotNode = <View style={styles.miniCalendarDot} />;
@@ -992,10 +995,15 @@ const MiniCalendarPanel = ({
             if (markers.hasCustom) {
               customDotNode = <View style={styles.miniCalendarDotCustom} />;
             }
+            let checkinDotNode = null;
+            if (hasCheckin) {
+              checkinDotNode = <View style={styles.miniCalendarDotCheckin} />;
+            }
             markersNode = (
               <View style={styles.miniCalendarDotRow}>
                 {canvasDotNode}
                 {customDotNode}
+                {checkinDotNode}
               </View>
             );
           }
@@ -1006,6 +1014,7 @@ const MiniCalendarPanel = ({
               style={({ pressed }) => [
                 styles.miniCalendarCell,
                 getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellMuted),
+                getStyleWhen(hasCheckin && !isSelected, styles.miniCalendarCellCheckedIn),
                 getStyleWhen(isSelected, styles.miniCalendarCellSelected),
                 getStyleWhen(isToday, styles.miniCalendarCellToday),
                 getStyleWhen(pressed, { opacity: 0.82 }),
@@ -1015,6 +1024,7 @@ const MiniCalendarPanel = ({
                 style={[
                   styles.miniCalendarCellText,
                   getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellTextMuted),
+                  getStyleWhen(hasCheckin && !isSelected, styles.miniCalendarCellTextCheckedIn),
                   getStyleWhen(isSelected, styles.miniCalendarCellTextSelected),
                 ]}
               >
@@ -1192,6 +1202,8 @@ export default function CalendarScreen() {
   const [customTasks, setCustomTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState('');
+  const [checkinDateKeys, setCheckinDateKeys] = useState(() => new Set());
+  const [checkinsError, setCheckinsError] = useState('');
   const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskDeletingId, setTaskDeletingId] = useState('');
@@ -1432,14 +1444,79 @@ export default function CalendarScreen() {
     }
   };
 
+  const fetchCheckinDates = async ({ silent = false } = {}) => {
+    if (!canPersistToBackend || !API_BASE_URL) {
+      return;
+    }
+
+    try {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) {
+        throw new Error('No Clerk session token available');
+      }
+
+      const response = await fetch(API_BASE_URL + '/checkins/dates', {
+        headers: {
+          Authorization: 'Bearer ' + sessionToken,
+        },
+      });
+
+      const data = await readJsonSafely(response);
+      if (!response.ok) {
+        throw new Error(
+          getApiErrorMessage(
+            data,
+            'Failed to load check-in dates (HTTP ' + String(response.status) + ')'
+          )
+        );
+      }
+
+      const nextSet = new Set();
+      let items = [];
+      if (Array.isArray(data.items)) {
+        items = data.items;
+      }
+
+      items.forEach((item) => {
+        const key = String(item || '').trim().slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+          nextSet.add(key);
+        }
+      });
+
+      setCheckinDateKeys(nextSet);
+      setCheckinsError('');
+    } catch (checkinLoadError) {
+      setCheckinsError(getErrorMessage(checkinLoadError, 'Failed to load check-in dates.'));
+      if (!silent) {
+        setCheckinDateKeys(new Set());
+      }
+    }
+  };
+
   useEffect(() => {
     if (!canPersistToBackend) {
       setCustomTasks([]);
       setTasksError('');
+      setCheckinDateKeys(new Set());
+      setCheckinsError('');
       return;
     }
     fetchCustomTasks();
+    fetchCheckinDates();
   }, [canPersistToBackend]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!canPersistToBackend) {
+        return undefined;
+      }
+
+      fetchCustomTasks({ silent: true });
+      fetchCheckinDates({ silent: true });
+      return undefined;
+    }, [canPersistToBackend])
+  );
 
   const buildCanvasUrl = (pathOrUrl, resolvedBaseUrl = activeCanvasBaseUrl) => {
     if (/^https?:\/\//i.test(pathOrUrl)) {
@@ -2249,26 +2326,44 @@ export default function CalendarScreen() {
     return merged.sort((left, right) => new Date(left.date) - new Date(right.date));
   }, [events, courses, assignmentsByCourse, submissionsByCourse, customTasks]);
 
-  const dateMarkersByDate = useMemo(
-    () =>
-      calendarFeed.reduce((acc, item) => {
-        const key = buildDateKey(item.date);
-        if (!key) {
-          return acc;
-        }
-        const current = acc[key] || {
-          count: 0,
-          hasCanvas: false,
-          hasCustom: false,
-        };
-        current.count += 1;
-        if (item && item.source === 'customTask') current.hasCustom = true;
-        else current.hasCanvas = true;
-        acc[key] = current;
+  const dateMarkersByDate = useMemo(() => {
+    const base = calendarFeed.reduce((acc, item) => {
+      const key = buildDateKey(item.date);
+      if (!key) {
         return acc;
-      }, {}),
-    [calendarFeed]
-  );
+      }
+
+      const current = acc[key] || {
+        count: 0,
+        hasCanvas: false,
+        hasCustom: false,
+        hasCheckin: false,
+      };
+
+      current.count += 1;
+      if (item && item.source === 'customTask') {
+        current.hasCustom = true;
+      } else {
+        current.hasCanvas = true;
+      }
+
+      acc[key] = current;
+      return acc;
+    }, {});
+
+    checkinDateKeys.forEach((key) => {
+      const current = base[key] || {
+        count: 0,
+        hasCanvas: false,
+        hasCustom: false,
+        hasCheckin: false,
+      };
+      current.hasCheckin = true;
+      base[key] = current;
+    });
+
+    return base;
+  }, [calendarFeed, checkinDateKeys]);
 
   const selectedDayItems = useMemo(
     () => calendarFeed.filter((item) => isSameDay(item.date, selectedDate)),
@@ -3183,6 +3278,11 @@ export default function CalendarScreen() {
 
   let calendarPanelNode = null;
   if (selectedPanel === 'calendar') {
+    let plannerFooterHint = 'Tap a date to jump the planner to that week.';
+    if (checkinsError) {
+      plannerFooterHint = checkinsError;
+    }
+
     calendarPanelNode = (
       <>
         <View style={styles.previewFocusRow}>
@@ -3205,7 +3305,7 @@ export default function CalendarScreen() {
             dateMarkersByDate={dateMarkersByDate}
             onPressTitle={openMonthYearPicker}
             titleHint="Tap title to choose month"
-            footerHint="Tap a date to jump the planner to that week."
+            footerHint={plannerFooterHint}
           />
         </View>
 
@@ -4026,6 +4126,11 @@ const styles = StyleSheet.create({
   miniCalendarCellMuted: {
     opacity: 0.38,
   },
+  miniCalendarCellCheckedIn: {
+    backgroundColor: 'rgba(74, 222, 128, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(134, 239, 172, 0.28)',
+  },
   miniCalendarCellSelected: {
     backgroundColor: '#2563eb',
   },
@@ -4040,6 +4145,9 @@ const styles = StyleSheet.create({
   },
   miniCalendarCellTextMuted: {
     color: '#9ca3af',
+  },
+  miniCalendarCellTextCheckedIn: {
+    color: '#d1fae5',
   },
   miniCalendarCellTextSelected: {
     color: '#fff',
@@ -4063,6 +4171,12 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 2.5,
     backgroundColor: '#2563eb',
+  },
+  miniCalendarDotCheckin: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#86efac',
   },
   miniCalendarHint: {
     marginTop: 14,

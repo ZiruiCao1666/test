@@ -1601,6 +1601,37 @@ app.get('/checkins/status', async (req, res) => {
 })
 
 /**
+ * GET /checkins/dates
+ * Return all check-in dates for the current user.
+ */
+app.get('/checkins/dates', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const result = await pool.query(
+      `
+      SELECT checkin_date
+      FROM app_checkins
+      WHERE clerk_user_id = $1
+      ORDER BY checkin_date ASC
+      `,
+      [userId],
+    )
+
+    return res.json({
+      ok: true,
+      items: result.rows.map((row) => String(row.checkin_date)),
+    })
+  } catch (e) {
+    console.error('[BE] /checkins/dates error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /rewards/catalog
  * Return all active rewards.
  */
