@@ -14,11 +14,16 @@ import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
+import { getDisplayNameFromUser } from '../../lib/user-display';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
+const HOME_PLAN_CACHE_PREFIX = 'home_plan_v1';
+const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 const HOME_PLAN_DAYS = 7;
 const HOME_REVIEW_DAYS = 365;
+const HOME_PLAN_CACHE_TTL_MS = 60 * 1000;
+const HOME_PLAN_DEFER_MS = 400;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -53,16 +58,33 @@ const REVIEW_RANGE_OPTIONS = [
   },
 ];
 
+const createInitialReviewExpandedState = () => {
+  return {
+    '7d': false,
+    '30d': false,
+    semester: false,
+    '1y': false,
+  };
+};
+
 const getErrorMessage = (error, fallback) => {
-  if (error && typeof error.message === 'string' && error.message) {
-    return error.message;
+  if (error) {
+    if (typeof error.message === 'string') {
+      if (error.message) {
+        return error.message;
+      }
+    }
   }
   return fallback;
 };
 
 const getApiErrorMessage = (data, fallback) => {
-  if (data && typeof data.error === 'string' && data.error) {
-    return data.error;
+  if (data) {
+    if (typeof data.error === 'string') {
+      if (data.error) {
+        return data.error;
+      }
+    }
   }
   return fallback;
 };
@@ -76,7 +98,9 @@ const getStyleWhen = (condition, style) => {
 
 const formatShortDate = (value) => {
   let safe = '';
-  if (value !== undefined && value !== null) {
+  if (value === undefined || value === null) {
+    safe = '';
+  } else {
     safe = String(value).trim();
   }
 
@@ -93,7 +117,9 @@ const formatShortDate = (value) => {
 
 const formatTimeOnly = (value) => {
   let safe = '';
-  if (value !== undefined && value !== null) {
+  if (value === undefined || value === null) {
+    safe = '';
+  } else {
     safe = String(value).trim();
   }
 
@@ -119,7 +145,9 @@ const formatTimeOnly = (value) => {
 
 const getDateFromAnyValue = (value) => {
   let safe = '';
-  if (value !== undefined && value !== null) {
+  if (value === undefined || value === null) {
+    safe = '';
+  } else {
     safe = String(value).trim();
   }
 
@@ -145,7 +173,9 @@ const getDateFromAnyValue = (value) => {
 
 const getTimeFromAnyValue = (value) => {
   let safe = '';
-  if (value !== undefined && value !== null) {
+  if (value === undefined || value === null) {
+    safe = '';
+  } else {
     safe = String(value).trim();
   }
 
@@ -177,8 +207,10 @@ const getTimeFromAnyValue = (value) => {
 };
 
 const getTimestampNumber = (value) => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+  if (typeof value === 'number') {
+    if (Number.isFinite(value)) {
+      return value;
+    }
   }
 
   if (typeof value === 'string') {
@@ -209,7 +241,9 @@ const getCustomTaskTimestamp = (item) => {
   }
 
   let timingMode = 'deadline';
-  if (safeItem.timingMode !== undefined && safeItem.timingMode !== null) {
+  if (safeItem.timingMode === undefined || safeItem.timingMode === null) {
+    timingMode = 'deadline';
+  } else {
     timingMode = String(safeItem.timingMode).trim().toLowerCase();
   }
 
@@ -253,7 +287,9 @@ const getItemTimestamp = (item) => {
   }
 
   let rawDate = '';
-  if (safeItem.date !== undefined && safeItem.date !== null) {
+  if (safeItem.date === undefined || safeItem.date === null) {
+    rawDate = '';
+  } else {
     rawDate = String(safeItem.date);
   }
 
@@ -274,7 +310,9 @@ const getCustomScheduleText = (item) => {
   }
 
   let timingMode = 'deadline';
-  if (safeItem.timingMode !== undefined && safeItem.timingMode !== null) {
+  if (safeItem.timingMode === undefined || safeItem.timingMode === null) {
+    timingMode = 'deadline';
+  } else {
     timingMode = String(safeItem.timingMode).trim().toLowerCase();
   }
 
@@ -305,8 +343,10 @@ const getCustomScheduleText = (item) => {
   if (safeItem.date) {
     const fallbackDate = getDateFromAnyValue(safeItem.date);
     const fallbackTime = getTimeFromAnyValue(safeItem.date);
-    if (fallbackDate && fallbackTime) {
-      return fallbackDate + ' ' + fallbackTime;
+    if (fallbackDate) {
+      if (fallbackTime) {
+        return fallbackDate + ' ' + fallbackTime;
+      }
     }
   }
   if (safeItem.scheduleText) {
@@ -416,26 +456,6 @@ const getPlanSourceBadgeStyle = (item) => {
   return styles.todoSourceBadgeCanvas;
 };
 
-const getPrimaryEmail = (safeUser) => {
-  if (safeUser.primaryEmailAddress && safeUser.primaryEmailAddress.emailAddress) {
-    return safeUser.primaryEmailAddress.emailAddress;
-  }
-  return '';
-};
-
-const getUserDisplayName = (safeUser, primaryEmail) => {
-  if (safeUser.firstName) {
-    return safeUser.firstName;
-  }
-  if (safeUser.fullName) {
-    return safeUser.fullName;
-  }
-  if (primaryEmail) {
-    return primaryEmail;
-  }
-  return 'Student';
-};
-
 const getSummaryValueText = (summaryReady, value) => {
   if (summaryReady) {
     return value;
@@ -482,18 +502,19 @@ const getReviewStatusText = (item) => {
 const getReviewSummaryText = (summary, items) => {
   const safeSummary = summary || {};
   let totalCount = 0;
-  if (typeof safeSummary.totalCount === 'number' && Number.isFinite(safeSummary.totalCount)) {
-    totalCount = safeSummary.totalCount;
+  if (typeof safeSummary.totalCount === 'number') {
+    if (Number.isFinite(safeSummary.totalCount)) {
+      totalCount = safeSummary.totalCount;
+    }
   } else if (Array.isArray(items)) {
     totalCount = items.length;
   }
 
   let completedCount = 0;
-  if (
-    typeof safeSummary.completedCount === 'number' &&
-    Number.isFinite(safeSummary.completedCount)
-  ) {
-    completedCount = safeSummary.completedCount;
+  if (typeof safeSummary.completedCount === 'number') {
+    if (Number.isFinite(safeSummary.completedCount)) {
+      completedCount = safeSummary.completedCount;
+    }
   } else if (Array.isArray(items)) {
     items.forEach((item) => {
       const safeItem = item || {};
@@ -519,7 +540,13 @@ const filterReviewItemsByDays = (items, days) => {
     if (timestamp === null) {
       return false;
     }
-    return timestamp >= windowStartTs && timestamp <= nowTs;
+    if (timestamp < windowStartTs) {
+      return false;
+    }
+    if (timestamp > nowTs) {
+      return false;
+    }
+    return true;
   });
 };
 
@@ -620,10 +647,9 @@ export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const safeUser = user || {};
-  const primaryEmail = getPrimaryEmail(safeUser);
   const userId = safeUser.id || null;
 
-  const username = getUserDisplayName(safeUser, primaryEmail);
+  const username = getDisplayNameFromUser(safeUser);
   const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
@@ -643,9 +669,13 @@ export default function HomeScreen() {
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
   const [homeCanvasConnected, setHomeCanvasConnected] = React.useState(false);
+  const [expandedReviewSections, setExpandedReviewSections] = React.useState(() =>
+    createInitialReviewExpandedState()
+  );
 
   const summaryRetryRef = React.useRef(0);
   const getTokenRef = React.useRef(getToken);
+  const homePlanLoadedAtRef = React.useRef(0);
 
   React.useEffect(() => {
     getTokenRef.current = getToken;
@@ -667,6 +697,20 @@ export default function HomeScreen() {
       return null;
     }
     return SUMMARY_CACHE_PREFIX + ':' + userId;
+  }, [userId]);
+
+  const homePlanCacheKey = React.useMemo(() => {
+    if (!userId) {
+      return null;
+    }
+    return HOME_PLAN_CACHE_PREFIX + ':' + userId;
+  }, [userId]);
+
+  const homePlanResetKey = React.useMemo(() => {
+    if (!userId) {
+      return null;
+    }
+    return HOME_PLAN_RESET_PREFIX + ':' + userId;
   }, [userId]);
 
   const applySummaryData = React.useCallback((data = {}) => {
@@ -727,8 +771,155 @@ export default function HomeScreen() {
     }
   }, [summaryCacheKey, applySummaryData]);
 
+  const applyHomePlanData = React.useCallback((data = {}) => {
+    const safeData = data || {};
+
+    let nextItems = [];
+    if (Array.isArray(safeData.items)) {
+      nextItems = safeData.items;
+    }
+
+    let nextRecentItems = [];
+    if (Array.isArray(safeData.recentItems)) {
+      nextRecentItems = safeData.recentItems;
+    }
+
+    let nextCanvasConnected = false;
+    if (safeData.canvasConnected) {
+      nextCanvasConnected = true;
+    }
+
+    let nextCanvasWarning = '';
+    if (nextCanvasConnected) {
+      if (typeof safeData.canvasError === 'string') {
+        nextCanvasWarning = safeData.canvasError.trim();
+      }
+    }
+
+    setHomePlanItems(nextItems);
+    setRecentPlanItems(nextRecentItems);
+    setHomeCanvasConnected(nextCanvasConnected);
+    setCanvasPlanWarning(nextCanvasWarning);
+    setHomePlanError(null);
+
+    if (typeof safeData.updatedAt === 'number') {
+      if (Number.isFinite(safeData.updatedAt)) {
+        homePlanLoadedAtRef.current = safeData.updatedAt;
+        return;
+      }
+    }
+    homePlanLoadedAtRef.current = Date.now();
+  }, []);
+
+  const persistHomePlanToCache = React.useCallback(async (data = {}) => {
+    if (!homePlanCacheKey) {
+      return;
+    }
+
+    try {
+      const safeData = data || {};
+      const payload = {
+        items: [],
+        recentItems: [],
+        canvasConnected: Boolean(safeData.canvasConnected),
+        canvasError: '',
+        updatedAt: Date.now(),
+      };
+
+      if (Array.isArray(safeData.items)) {
+        payload.items = safeData.items;
+      }
+      if (Array.isArray(safeData.recentItems)) {
+        payload.recentItems = safeData.recentItems;
+      }
+      if (typeof safeData.canvasError === 'string') {
+        payload.canvasError = safeData.canvasError.trim();
+      }
+
+      await SecureStore.setItemAsync(homePlanCacheKey, JSON.stringify(payload));
+    } catch (_e) {
+      // Ignore cache write errors.
+    }
+  }, [homePlanCacheKey]);
+
+  const hydrateHomePlanFromCache = React.useCallback(async () => {
+    if (!homePlanCacheKey) {
+      return false;
+    }
+
+    try {
+      const raw = await SecureStore.getItemAsync(homePlanCacheKey);
+      if (!raw) {
+        return false;
+      }
+
+      const cached = JSON.parse(raw);
+      applyHomePlanData(cached);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }, [homePlanCacheKey, applyHomePlanData]);
+
+  const clearHomePlanCache = React.useCallback(async () => {
+    if (!homePlanCacheKey) {
+      return;
+    }
+
+    try {
+      await SecureStore.deleteItemAsync(homePlanCacheKey);
+    } catch (_e) {
+      // Ignore cache delete errors.
+    }
+  }, [homePlanCacheKey]);
+
+  const consumeHomePlanResetFlag = React.useCallback(async () => {
+    if (!homePlanResetKey) {
+      return false;
+    }
+
+    try {
+      const raw = await SecureStore.getItemAsync(homePlanResetKey);
+      if (!raw) {
+        return false;
+      }
+
+      await SecureStore.deleteItemAsync(homePlanResetKey);
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }, [homePlanResetKey]);
+
+  const clearCanvasItemsFromHomeState = React.useCallback(() => {
+    setHomePlanItems((prev) => {
+      if (!Array.isArray(prev)) {
+        return [];
+      }
+      return prev.filter((item) => {
+        const safeItem = item || {};
+        return safeItem.source === 'custom';
+      });
+    });
+
+    setRecentPlanItems((prev) => {
+      if (!Array.isArray(prev)) {
+        return [];
+      }
+      return prev.filter((item) => {
+        const safeItem = item || {};
+        return safeItem.source === 'custom';
+      });
+    });
+
+    setHomeCanvasConnected(false);
+    setCanvasPlanWarning('');
+    setHomePlanError(null);
+    homePlanLoadedAtRef.current = 0;
+  }, []);
+
   const getSessionToken = React.useCallback(async () => {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const tokenGetter = getTokenRef.current;
       let token = '';
       if (tokenGetter) {
@@ -737,7 +928,7 @@ export default function HomeScreen() {
       if (token) {
         return token;
       }
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
     return '';
   }, []);
@@ -776,8 +967,12 @@ export default function HomeScreen() {
       persistSummaryToCache(data);
       summaryRetryRef.current = 0;
     } catch (e) {
-      if (e && e.name === 'AbortError') {
-        setSummaryError('Network is slow. Retrying in background...');
+      if (e) {
+        if (e.name === 'AbortError') {
+          setSummaryError('Network is slow. Retrying in background...');
+        } else {
+          setSummaryError(getErrorMessage(e, 'Failed to load summary'));
+        }
       } else {
         setSummaryError(getErrorMessage(e, 'Failed to load summary'));
       }
@@ -789,9 +984,6 @@ export default function HomeScreen() {
         }, 1500);
       }
 
-      console.log('[Home] loadSummary error:', getErrorMessage(e, 'Unknown error'));
-      console.log('[Home] API_BASE_URL =', API_BASE_URL);
-      console.log('[Home] URL =', API_BASE_URL + '/checkins/status');
     } finally {
       if (!silent) {
         setLoadingSummary(false);
@@ -848,36 +1040,61 @@ export default function HomeScreen() {
       if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
 
       let items = [];
-      if (data && Array.isArray(data.items)) {
-        items = data.items.slice();
+      if (data) {
+        if (Array.isArray(data.items)) {
+          items = data.items.slice();
+        }
       }
 
       let recentItems = [];
-      if (data && Array.isArray(data.recentItems)) {
-        recentItems = data.recentItems.slice();
+      if (data) {
+        if (Array.isArray(data.recentItems)) {
+          recentItems = data.recentItems.slice();
+        }
       }
 
-      setHomeCanvasConnected(Boolean(data && data.canvasConnected));
-      setHomePlanItems(items);
-      setRecentPlanItems(recentItems);
-      if (data && data.canvasConnected && data.canvasError) {
-        setCanvasPlanWarning(String(data.canvasError).trim());
-      } else {
-        setCanvasPlanWarning('');
+      let nextCanvasConnected = false;
+      if (data) {
+        nextCanvasConnected = Boolean(data.canvasConnected);
       }
+      let nextCanvasError = '';
+      if (data) {
+        if (data.canvasConnected) {
+          if (data.canvasError) {
+            nextCanvasError = String(data.canvasError).trim();
+          }
+        }
+      }
+
+      applyHomePlanData({
+        items,
+        recentItems,
+        canvasConnected: nextCanvasConnected,
+        canvasError: nextCanvasError,
+      });
+      persistHomePlanToCache({
+        items,
+        recentItems,
+        canvasConnected: nextCanvasConnected,
+        canvasError: nextCanvasError,
+      });
     } catch (e) {
-      setHomeCanvasConnected(false);
-      setHomePlanItems([]);
-      setRecentPlanItems([]);
-      setCanvasPlanWarning('');
       setHomePlanError(getErrorMessage(e, 'Failed to load seven-day plan'));
-      console.log('[Home] loadHomePlan error:', getErrorMessage(e, 'Unknown error'));
     } finally {
       if (!silent) {
         setLoadingHomePlan(false);
       }
     }
-  }, [fetchWithTimeout, authLoaded, isSignedIn, userLoaded, userId, getSessionToken]);
+  }, [
+    fetchWithTimeout,
+    authLoaded,
+    isSignedIn,
+    userLoaded,
+    userId,
+    getSessionToken,
+    applyHomePlanData,
+    persistHomePlanToCache,
+  ]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -886,20 +1103,56 @@ export default function HomeScreen() {
       }
 
       let alive = true;
+      let homePlanTimer = null;
 
       (async () => {
         const hasCache = await hydrateSummaryFromCache();
+        const hasHomePlanReset = await consumeHomePlanResetFlag();
         if (!alive) {
           return;
         }
-        await Promise.allSettled([
-          loadSummary({ silent: hasCache, timeoutMs: 25000 }),
-          loadHomePlan({ timeoutMs: 25000 }),
-        ]);
+
+        if (hasHomePlanReset) {
+          clearCanvasItemsFromHomeState();
+          await clearHomePlanCache();
+        }
+
+        let hasHomePlanCache = false;
+        if (!hasHomePlanReset) {
+          hasHomePlanCache = await hydrateHomePlanFromCache();
+          if (!alive) {
+            return;
+          }
+        }
+
+        loadSummary({ silent: hasCache, timeoutMs: 25000 });
+
+        let shouldRefreshHomePlan = false;
+        if (!hasHomePlanCache) {
+          shouldRefreshHomePlan = true;
+        } else if (homePlanLoadedAtRef.current <= 0) {
+          shouldRefreshHomePlan = true;
+        } else if (Date.now() - homePlanLoadedAtRef.current >= HOME_PLAN_CACHE_TTL_MS) {
+          shouldRefreshHomePlan = true;
+        }
+
+        if (!shouldRefreshHomePlan) {
+          return;
+        }
+
+        homePlanTimer = setTimeout(() => {
+          if (!alive) {
+            return;
+          }
+          loadHomePlan({ silent: hasHomePlanCache, timeoutMs: 25000 });
+        }, HOME_PLAN_DEFER_MS);
       })();
 
       return () => {
         alive = false;
+        if (homePlanTimer) {
+          clearTimeout(homePlanTimer);
+        }
       };
     }, [
       authLoaded,
@@ -907,6 +1160,10 @@ export default function HomeScreen() {
       userLoaded,
       userId,
       hydrateSummaryFromCache,
+      consumeHomePlanResetFlag,
+      clearCanvasItemsFromHomeState,
+      clearHomePlanCache,
+      hydrateHomePlanFromCache,
       loadSummary,
       loadHomePlan,
     ]),
@@ -980,6 +1237,17 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const toggleReviewSection = React.useCallback((sectionKey) => {
+    setExpandedReviewSections((prev) => {
+      const safePrev = prev || {};
+      const nextValue = !safePrev[sectionKey];
+      return {
+        ...safePrev,
+        [sectionKey]: nextValue,
+      };
+    });
+  }, []);
+
   let lastingDaysValueNode = <ActivityIndicator />;
   if (summaryReady) {
     let loadingIndicatorNode = null;
@@ -1045,10 +1313,14 @@ export default function HomeScreen() {
   }
 
   let homePlanEmptyNode = null;
-  if (!loadingHomePlan && !homePlanError && groupedHomePlan.length === 0) {
-    homePlanEmptyNode = (
-      <Text style={styles.todoEmpty}>{getPlanEmptyMessage(homeCanvasConnected)}</Text>
-    );
+  if (!loadingHomePlan) {
+    if (!homePlanError) {
+      if (groupedHomePlan.length === 0) {
+        homePlanEmptyNode = (
+          <Text style={styles.todoEmpty}>{getPlanEmptyMessage(homeCanvasConnected)}</Text>
+        );
+      }
+    }
   }
   return (
     <SafeAreaView style={styles.safe}>
@@ -1167,24 +1439,57 @@ export default function HomeScreen() {
           ))}
 
           {reviewSections.map((section) => {
+            let isExpanded = false;
+            if (expandedReviewSections) {
+              isExpanded = Boolean(expandedReviewSections[section.key]);
+            }
+
+            let toggleHintText = 'Tap to show';
+            if (isExpanded) {
+              toggleHintText = 'Tap to hide';
+            }
+
+            let toggleButtonText = 'Show';
+            if (isExpanded) {
+              toggleButtonText = 'Hide';
+            }
+
             let currentReviewEmptyNode = null;
-            if (!loadingHomePlan && !homePlanError && section.items.length === 0) {
-              currentReviewEmptyNode = (
-                <Text style={styles.todoEmpty}>
-                  {getReviewEmptyMessage(section.emptyLabel, homeCanvasConnected)}
-                </Text>
-              );
+            if (isExpanded) {
+              if (!loadingHomePlan) {
+                if (!homePlanError) {
+                  if (section.items.length === 0) {
+                    currentReviewEmptyNode = (
+                      <Text style={styles.todoEmpty}>
+                        {getReviewEmptyMessage(section.emptyLabel, homeCanvasConnected)}
+                      </Text>
+                    );
+                  }
+                }
+              }
             }
 
             return (
               <React.Fragment key={section.key}>
                 <View style={styles.todoDivider} />
                 <View style={styles.todoSection}>
-                  <Text style={styles.todoSectionTitle}>{section.title}</Text>
+                  <Pressable
+                    onPress={() => toggleReviewSection(section.key)}
+                    style={({ pressed }) => [
+                      styles.todoReviewToggle,
+                      getStyleWhen(pressed, styles.todoReviewTogglePressed),
+                    ]}
+                  >
+                    <View style={styles.todoReviewToggleTextWrap}>
+                      <Text style={styles.todoSectionTitle}>{section.title}</Text>
+                      <Text style={styles.todoReviewToggleHint}>{toggleHintText}</Text>
+                    </View>
+                    <Text style={styles.todoReviewToggleIcon}>{toggleButtonText}</Text>
+                  </Pressable>
                   <Text style={styles.todoReviewSummary}>{section.summaryText}</Text>
                   {currentReviewEmptyNode}
 
-                  {section.items.map((item) => {
+                  {isExpanded ? section.items.map((item) => {
                     const safeItem = item || {};
                     let Row = View;
                     if (safeItem.htmlUrl) {
@@ -1222,7 +1527,7 @@ export default function HomeScreen() {
                         </View>
                       </Row>
                     );
-                  })}
+                  }) : null}
                 </View>
               </React.Fragment>
             );
@@ -1316,6 +1621,29 @@ const styles = StyleSheet.create({
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
   todoReviewSummary: { fontSize: 11, color: '#6b7280', marginBottom: 6 },
+  todoReviewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  todoReviewTogglePressed: {
+    opacity: 0.75,
+  },
+  todoReviewToggleTextWrap: {
+    flex: 1,
+  },
+  todoReviewToggleHint: {
+    marginTop: 2,
+    fontSize: 10,
+    color: '#9ca3af',
+  },
+  todoReviewToggleIcon: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#2563eb',
+  },
   todoDivider: { marginTop: 10, marginBottom: 4, height: 1, backgroundColor: '#e5e7eb' },
   todoLine: { marginTop: 8, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '88%' },
 });

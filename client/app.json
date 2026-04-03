@@ -33,7 +33,13 @@
     "plugins": [
       "expo-secure-store",
       "expo-router",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Student Motivation to access your photos so you can choose a profile picture."
+        }
+      ]
     ]
   }
 }

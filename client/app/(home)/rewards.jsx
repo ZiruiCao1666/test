@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { getDisplayNameFromUser } from '../../lib/user-display';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -185,12 +186,7 @@ export default function RewardsScreen() {
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const safeUser = user || {};
-  const primaryEmailAddress = safeUser.primaryEmailAddress || {};
-  const username =
-    safeUser.firstName ||
-    safeUser.fullName ||
-    primaryEmailAddress.emailAddress ||
-    'Student';
+  const username = getDisplayNameFromUser(safeUser);
   const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
 
