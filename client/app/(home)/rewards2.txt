@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { getDisplayNameFromUser } from '../../lib/user-display';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -28,18 +29,152 @@ const CATEGORY_LABELS = {
   coupon: 'discount coupon',
 };
 
+function getErrorMessage(error, fallbackMessage) {
+  if (error instanceof Error) {
+    if (error.message) {
+      return error.message;
+    }
+  }
+  return fallbackMessage;
+}
+
+function isAbortError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.name !== 'AbortError') {
+    return false;
+  }
+  return true;
+}
+
+function getStyleWhen(condition, style) {
+  if (condition) {
+    return style;
+  }
+  return null;
+}
+
+function renderNodeWhen(condition, node) {
+  if (!condition) {
+    return null;
+  }
+  return node;
+}
+
+function renderNodeWhenElse(condition, trueNode, falseNode) {
+  if (condition) {
+    return trueNode;
+  }
+  return falseNode;
+}
+
+function getRefreshText(loading) {
+  if (loading) {
+    return 'loading';
+  }
+  return 'refresh';
+}
+
+function getRedeemButtonText(disabled) {
+  if (disabled) {
+    return 'redeeming...';
+  }
+  return 'redeem';
+}
+
+function getPointsText(loading, points) {
+  if (loading) {
+    return '...';
+  }
+  return points;
+}
+
+function renderAvatarNode(avatarUrl, avatarInitial) {
+  if (avatarUrl) {
+    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
+  }
+  return (
+    <View style={[styles.avatar, styles.avatarFallback]}>
+      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    </View>
+  );
+}
+
+function renderRewardImage(item) {
+  if (item.imageUrl) {
+    return <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />;
+  }
+  return <Text style={styles.cardImageHint}>image</Text>;
+}
+
+async function readJsonSafely(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (parseError) {
+    return {};
+  }
+}
+
 function normalizeCatalog(items) {
   if (!Array.isArray(items)) return [];
   return items
     .map((raw, index) => {
-      const pointsCost = Number(raw?.pointsCost ?? raw?.points_cost ?? raw?.points);
+      // Normalize backend field names once so the UI can read one stable shape.
+      const safeRaw = raw || {};
+      let pointsValue = safeRaw.pointsCost;
+      if (pointsValue === null || pointsValue === undefined || pointsValue === '') {
+        pointsValue = safeRaw.points_cost;
+      }
+      if (pointsValue === null || pointsValue === undefined || pointsValue === '') {
+        pointsValue = safeRaw.points;
+      }
+      const pointsCost = Number(pointsValue);
+      let rewardId = safeRaw.id;
+      if (rewardId === null || rewardId === undefined || rewardId === '') {
+        rewardId = 'fallback-' + String(index);
+      }
+      let title = safeRaw.title;
+      if (title === null || title === undefined || title === '') {
+        title = 'reward';
+      }
+      let category = safeRaw.category;
+      if (category === null || category === undefined || category === '') {
+        category = 'coupon';
+      }
+      let imageUrl = safeRaw.imageUrl;
+      if (imageUrl === null || imageUrl === undefined || imageUrl === '') {
+        imageUrl = safeRaw.image_url;
+      }
+      if (imageUrl === null || imageUrl === undefined) {
+        imageUrl = '';
+      }
+      let isActive = safeRaw.isActive;
+      if (isActive === null || isActive === undefined) {
+        isActive = safeRaw.is_active;
+      }
+      if (isActive === null || isActive === undefined) {
+        isActive = true;
+      }
+      if (Number.isFinite(pointsCost)) {
+        return {
+          id: rewardId,
+          title: String(title),
+          pointsCost,
+          category: String(category),
+          imageUrl: String(imageUrl),
+          isActive,
+        };
+      }
       return {
-        id: raw?.id ?? `fallback-${index}`,
-        title: String(raw?.title ?? 'reward'),
-        pointsCost: Number.isFinite(pointsCost) ? pointsCost : 0,
-        category: String(raw?.category ?? 'coupon'),
-        imageUrl: String(raw?.imageUrl ?? raw?.image_url ?? ''),
-        isActive: raw?.isActive ?? raw?.is_active ?? true,
+        id: rewardId,
+        title: String(title),
+        pointsCost: 0,
+        category: String(category),
+        imageUrl: String(imageUrl),
+        isActive,
       };
     })
     .filter((it) => it.isActive);
@@ -58,7 +193,11 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
-  const avatarUrl = user?.imageUrl || null;
+  const safeUser = user || {};
+  const username = getDisplayNameFromUser(safeUser);
+  const avatarUrl = safeUser.imageUrl || null;
+  const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
+
   const getTokenRef = React.useRef(getToken);
 
   React.useEffect(() => {
@@ -88,11 +227,18 @@ export default function RewardsScreen() {
     }
 
     try {
+      // Rewards also stay behind the current Clerk session token.
       setLoading(true);
       setError(null);
 
-      const token = await getTokenRef.current?.();
-      if (!token) throw new Error('No session token');
+      const getTokenFromRef = getTokenRef.current;
+      let token = '';
+      if (typeof getTokenFromRef === 'function') {
+        token = await getTokenFromRef();
+      }
+      if (!token) {
+        throw new Error('No session token');
+      }
 
       if (!API_BASE_URL) {
         setCatalog(FALLBACK_CATALOG);
@@ -101,31 +247,39 @@ export default function RewardsScreen() {
       }
 
       const [statusRes, catalogRes] = await Promise.all([
-        fetchWithTimeout(`${API_BASE_URL}/checkins/status`, {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout(API_BASE_URL + '/checkins/status', {
+          headers: { Authorization: 'Bearer ' + token },
         }),
-        fetchWithTimeout(`${API_BASE_URL}/rewards/catalog`, {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout(API_BASE_URL + '/rewards/catalog', {
+          headers: { Authorization: 'Bearer ' + token },
         }),
       ]);
 
-      const statusData = await statusRes.json().catch(() => ({}));
+      const statusData = await readJsonSafely(statusRes);
       if (statusRes.ok) {
-        setPoints(Number(statusData?.points) || 0);
+        setPoints(Number(statusData.points) || 0);
       } else {
-        throw new Error(statusData?.error || 'Failed to load points');
+        throw new Error(statusData.error || 'Failed to load points');
       }
 
       if (catalogRes.ok) {
-        const catalogData = await catalogRes.json().catch(() => ({}));
-        const normalized = normalizeCatalog(catalogData?.items);
-        setCatalog(normalized.length ? normalized : FALLBACK_CATALOG);
+        const catalogData = await readJsonSafely(catalogRes);
+        const normalized = normalizeCatalog(catalogData.items);
+        if (normalized.length > 0) {
+          setCatalog(normalized);
+        } else {
+          setCatalog(FALLBACK_CATALOG);
+        }
       } else {
         setCatalog(FALLBACK_CATALOG);
       }
     } catch (e) {
       setCatalog(FALLBACK_CATALOG);
-      setError(e?.name === 'AbortError' ? 'Request timeout, please retry.' : (e?.message || 'Failed to load rewards'));
+      if (isAbortError(e)) {
+        setError('Request timeout, please retry.');
+      } else {
+        setError(getErrorMessage(e, 'Failed to load rewards'));
+      }
     } finally {
       setLoading(false);
     }
@@ -138,7 +292,9 @@ export default function RewardsScreen() {
   );
 
   const onRedeem = async (item) => {
-    if (redeemingId) return;
+    if (redeemingId) {
+      return;
+    }
 
     if (points < item.pointsCost) {
       Alert.alert('Insufficient points', 'You do not have enough points for this reward.');
@@ -150,42 +306,52 @@ export default function RewardsScreen() {
 
       if (!API_BASE_URL) {
         setPoints((prev) => Math.max(0, prev - item.pointsCost));
-        Alert.alert('Redeemed', `${item.title} redeemed (local mode).`);
+        Alert.alert('Redeemed', String(item.title) + ' redeemed (local mode).');
         return;
       }
 
-      const token = await getTokenRef.current?.();
-      if (!token) throw new Error('No session token');
+      const getTokenFromRef = getTokenRef.current;
+      let token = '';
+      if (typeof getTokenFromRef === 'function') {
+        token = await getTokenFromRef();
+      }
+      if (!token) {
+        throw new Error('No session token');
+      }
 
-      const res = await fetchWithTimeout(`${API_BASE_URL}/rewards/redeem`, {
+      const res = await fetchWithTimeout(API_BASE_URL + '/rewards/redeem', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: 'Bearer ' + token,
         },
         body: JSON.stringify({ rewardId: item.id }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = await readJsonSafely(res);
 
       if (!res.ok) {
         if (res.status === 409) {
-          Alert.alert('Insufficient points', data?.error || 'Not enough points for this reward.');
+          Alert.alert('Insufficient points', data.error || 'Not enough points for this reward.');
           return;
         }
-        throw new Error(data?.error || 'Redeem failed');
+        throw new Error(data.error || 'Redeem failed');
       }
 
-      if (data?.remainingPoints !== undefined) {
+      if (data.remainingPoints !== undefined) {
         setPoints(Number(data.remainingPoints) || 0);
       } else {
         setPoints((prev) => Math.max(0, prev - item.pointsCost));
       }
 
-      Alert.alert('Redeemed', `${item.title} redeemed successfully.`);
+      Alert.alert('Redeemed', String(item.title) + ' redeemed successfully.');
       loadRewards();
     } catch (e) {
-      Alert.alert('Error', e?.name === 'AbortError' ? 'Request timeout, please retry.' : (e?.message || 'Redeem failed'));
+      if (isAbortError(e)) {
+        Alert.alert('Error', 'Request timeout, please retry.');
+      } else {
+        Alert.alert('Error', getErrorMessage(e, 'Redeem failed'));
+      }
     } finally {
       setRedeemingId(null);
     }
@@ -208,19 +374,13 @@ export default function RewardsScreen() {
               onPress={() => router.push('/orders')}
               style={({ pressed }) => [
                 styles.ordersBtn,
-                pressed ? { opacity: 0.7 } : null,
+                getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
               <Text style={styles.ordersText}>my orders</Text>
             </Pressable>
 
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>U</Text>
-              </View>
-            )}
+            {renderAvatarNode(avatarUrl, avatarInitial)}
           </View>
         </View>
 
@@ -228,7 +388,7 @@ export default function RewardsScreen() {
           <View>
             <Text style={styles.pointsLabel}>my points</Text>
             <Text style={styles.pointsValue}>
-              {loading ? '...' : points}
+              {getPointsText(loading, points)}
             </Text>
           </View>
           <Pressable
@@ -236,24 +396,24 @@ export default function RewardsScreen() {
             disabled={loading}
             style={({ pressed }) => [
               styles.refreshBtn,
-              loading ? { opacity: 0.6 } : null,
-              pressed ? { opacity: 0.7 } : null,
+              getStyleWhen(loading, { opacity: 0.6 }),
+              getStyleWhen(pressed, { opacity: 0.7 }),
             ]}
           >
-            <Text style={styles.refreshText}>{loading ? 'loading' : 'refresh'}</Text>
+            <Text style={styles.refreshText}>{getRefreshText(loading)}</Text>
           </Pressable>
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {renderNodeWhen(error, <Text style={styles.errorText}>{error}</Text>)}
 
-        {loading ? (
+        {renderNodeWhen(loading, (
           <View style={styles.loadingWrap}>
             <ActivityIndicator />
           </View>
-        ) : null}
+        ))}
 
         {sectionKeys.map((key, idx) => (
-          <View key={key} style={idx > 0 ? { marginTop: 18 } : null}>
+          <View key={key} style={getStyleWhen(idx > 0, { marginTop: 18 })}>
             <Text style={styles.sectionTitle}>{CATEGORY_LABELS[key] || key}</Text>
             <View style={styles.grid}>
               {sections[key].map((item) => {
@@ -261,11 +421,7 @@ export default function RewardsScreen() {
                 return (
                   <View key={String(item.id)} style={styles.card}>
                     <View style={styles.cardImageSlot}>
-                      {item.imageUrl ? (
-                        <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />
-                      ) : (
-                        <Text style={styles.cardImageHint}>image</Text>
-                      )}
+                      {renderRewardImage(item)}
                     </View>
                     <Text style={styles.cardTitle}>{item.title}</Text>
                     <Text style={styles.cardPoints}>{item.pointsCost} points</Text>
@@ -275,11 +431,11 @@ export default function RewardsScreen() {
                       disabled={disabled}
                       style={({ pressed }) => [
                         styles.redeemBtn,
-                        disabled ? { opacity: 0.65 } : null,
-                        pressed ? { opacity: 0.8 } : null,
+                        getStyleWhen(disabled, { opacity: 0.65 }),
+                        getStyleWhen(pressed, { opacity: 0.8 }),
                       ]}
                     >
-                      <Text style={styles.redeemText}>{disabled ? 'redeeming...' : 'redeem'}</Text>
+                      <Text style={styles.redeemText}>{getRedeemButtonText(disabled)}</Text>
                     </Pressable>
                   </View>
                 );
@@ -288,9 +444,17 @@ export default function RewardsScreen() {
           </View>
         ))}
 
-        {!loading && sectionKeys.length === 0 ? (
+        {renderNodeWhen((() => {
+          if (loading) {
+            return false;
+          }
+          if (sectionKeys.length !== 0) {
+            return false;
+          }
+          return true;
+        })(), (
           <Text style={styles.emptyText}>No rewards available now.</Text>
-        ) : null}
+        ))}
 
         <View style={{ height: 90 }} />
       </ScrollView>

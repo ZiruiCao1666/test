@@ -2,9 +2,11 @@ import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { Redirect, Tabs } from 'expo-router';
 import { useAuth } from '@clerk/clerk-expo';
+import { useAppTheme } from '../../lib/app-theme';
 
 export default function HomeLayout() {
   const { isLoaded, isSignedIn } = useAuth();
+  const { theme } = useAppTheme();
 
   if (!isLoaded) {
     return (
@@ -19,7 +21,20 @@ export default function HomeLayout() {
   }
 
   return (
-    <Tabs screenOptions={{ headerShown: false }}>
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: theme.tabBarBg,
+          borderTopColor: theme.tabBarBorder,
+        },
+        tabBarActiveTintColor: theme.tabActive,
+        tabBarInactiveTintColor: theme.tabInactive,
+        sceneStyle: {
+          backgroundColor: theme.screenBg,
+        },
+      }}
+    >
       <Tabs.Screen name="index" options={{ title: 'home' }} />
       <Tabs.Screen name="calendar" options={{ title: 'calendar' }} />
       <Tabs.Screen name="rewards" options={{ title: 'rewards' }} />

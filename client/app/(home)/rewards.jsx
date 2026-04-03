@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import { getDisplayNameFromUser } from '../../lib/user-display';
+import { useAppTheme } from '../../lib/app-theme';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -25,19 +26,27 @@ const FALLBACK_CATALOG = [
 ];
 
 const CATEGORY_LABELS = {
-  drinks: 'drinks',
-  coupon: 'discount coupon',
+  drinks: 'Drinks',
+  coupon: 'Discount Coupons',
 };
 
 function getErrorMessage(error, fallbackMessage) {
-  if (error instanceof Error && error.message) {
-    return error.message;
+  if (error instanceof Error) {
+    if (error.message) {
+      return error.message;
+    }
   }
   return fallbackMessage;
 }
 
 function isAbortError(error) {
-  return error instanceof Error && error.name === 'AbortError';
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.name !== 'AbortError') {
+    return false;
+  }
+  return true;
 }
 
 function getStyleWhen(condition, style) {
@@ -97,7 +106,11 @@ function renderRewardImage(item) {
   if (item.imageUrl) {
     return <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />;
   }
-  return <Text style={styles.cardImageHint}>image</Text>;
+  return (
+    <View style={styles.cardImageFallback}>
+      <Text style={styles.cardImageHint}>{CATEGORY_LABELS[item.category] || 'Reward'}</Text>
+    </View>
+  );
 }
 
 async function readJsonSafely(response) {
@@ -185,6 +198,7 @@ export default function RewardsScreen() {
   const router = useRouter();
   const { user } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const { theme } = useAppTheme();
   const safeUser = user || {};
   const username = getDisplayNameFromUser(safeUser);
   const avatarUrl = safeUser.imageUrl || null;
@@ -353,47 +367,76 @@ export default function RewardsScreen() {
   const sectionKeys = Object.keys(sections);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.headerRow}>
-          <Text style={styles.headerTitle}>rewards point shop</Text>
+        <View
+          style={[
+            styles.heroCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+          ]}
+        >
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroTitleBlock}>
+              <Text style={[styles.heroEyebrow, { color: theme.textSecondary }]}>Rewards</Text>
+              <Text style={[styles.heroTitle, { color: theme.textPrimary }]}>Point Shop</Text>
+              <Text style={[styles.heroSubtitle, { color: theme.textSecondary }]}>
+                Use your points for simple rewards.
+              </Text>
+            </View>
 
-          <View style={styles.headerRight}>
-            <Pressable
-              onPress={() => router.push('/orders')}
-              style={({ pressed }) => [
+            <View style={styles.heroRight}>
+              <Pressable
+                onPress={() => router.push('/orders')}
+                style={({ pressed }) => [
                 styles.ordersBtn,
+                {
+                  backgroundColor: theme.secondaryBg,
+                  borderColor: theme.borderSoft,
+                },
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              <Text style={styles.ordersText}>my orders</Text>
-            </Pressable>
+                <Text style={[styles.ordersText, { color: theme.textPrimary }]}>My orders</Text>
+              </Pressable>
 
-            {renderAvatarNode(avatarUrl, avatarInitial)}
+              {renderAvatarNode(avatarUrl, avatarInitial)}
+            </View>
           </View>
-        </View>
 
-        <View style={styles.pointsCard}>
-          <View>
-            <Text style={styles.pointsLabel}>my points</Text>
-            <Text style={styles.pointsValue}>
-              {getPointsText(loading, points)}
-            </Text>
-          </View>
-          <Pressable
-            onPress={loadRewards}
-            disabled={loading}
-            style={({ pressed }) => [
-              styles.refreshBtn,
-              getStyleWhen(loading, { opacity: 0.6 }),
-              getStyleWhen(pressed, { opacity: 0.7 }),
+          <View
+            style={[
+              styles.pointsCard,
+              {
+                backgroundColor: theme.surfaceMuted,
+                borderColor: theme.border,
+              },
             ]}
           >
-            <Text style={styles.refreshText}>{getRefreshText(loading)}</Text>
-          </Pressable>
+            <View>
+              <Text style={[styles.pointsLabel, { color: theme.textSecondary }]}>Your points</Text>
+              <Text style={[styles.pointsValue, { color: theme.textPrimary }]}>
+                {getPointsText(loading, points)}
+              </Text>
+            </View>
+            <Pressable
+              onPress={loadRewards}
+              disabled={loading}
+              style={({ pressed }) => [
+                styles.refreshBtn,
+                { backgroundColor: theme.primary },
+                getStyleWhen(loading, { opacity: 0.6 }),
+                getStyleWhen(pressed, { opacity: 0.7 }),
+              ]}
+            >
+              <Text style={[styles.refreshText, { color: theme.primaryText }]}>{getRefreshText(loading)}</Text>
+            </Pressable>
+          </View>
         </View>
 
         {renderNodeWhen(error, <Text style={styles.errorText}>{error}</Text>)}
@@ -406,29 +449,56 @@ export default function RewardsScreen() {
 
         {sectionKeys.map((key, idx) => (
           <View key={key} style={getStyleWhen(idx > 0, { marginTop: 18 })}>
-            <Text style={styles.sectionTitle}>{CATEGORY_LABELS[key] || key}</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+              {CATEGORY_LABELS[key] || key}
+            </Text>
             <View style={styles.grid}>
               {sections[key].map((item) => {
                 const disabled = redeemingId === item.id;
                 return (
-                  <View key={String(item.id)} style={styles.card}>
-                    <View style={styles.cardImageSlot}>
-                      {renderRewardImage(item)}
-                    </View>
-                    <Text style={styles.cardTitle}>{item.title}</Text>
-                    <Text style={styles.cardPoints}>{item.pointsCost} points</Text>
-
-                    <Pressable
-                      onPress={() => onRedeem(item)}
-                      disabled={disabled}
-                      style={({ pressed }) => [
-                        styles.redeemBtn,
-                        getStyleWhen(disabled, { opacity: 0.65 }),
-                        getStyleWhen(pressed, { opacity: 0.8 }),
+                  <View
+                    key={String(item.id)}
+                    style={[
+                      styles.card,
+                      {
+                        backgroundColor: theme.surface,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.cardImageSlot,
+                        {
+                          backgroundColor: theme.surfaceMuted,
+                          borderColor: theme.border,
+                        },
                       ]}
                     >
-                      <Text style={styles.redeemText}>{getRedeemButtonText(disabled)}</Text>
-                    </Pressable>
+                      {renderRewardImage(item)}
+                    </View>
+
+                    <View style={styles.cardBody}>
+                      <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>{item.title}</Text>
+                      <Text style={[styles.cardPoints, { color: theme.textSecondary }]}>
+                        {item.pointsCost} points
+                      </Text>
+
+                      <Pressable
+                        onPress={() => onRedeem(item)}
+                        disabled={disabled}
+                        style={({ pressed }) => [
+                          styles.redeemBtn,
+                          { backgroundColor: theme.primary },
+                          getStyleWhen(disabled, { opacity: 0.65 }),
+                          getStyleWhen(pressed, { opacity: 0.8 }),
+                        ]}
+                      >
+                        <Text style={[styles.redeemText, { color: theme.primaryText }]}>
+                          {getRedeemButtonText(disabled)}
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
                 );
               })}
@@ -436,8 +506,16 @@ export default function RewardsScreen() {
           </View>
         ))}
 
-        {renderNodeWhen(!loading && sectionKeys.length === 0, (
-          <Text style={styles.emptyText}>No rewards available now.</Text>
+        {renderNodeWhen((() => {
+          if (loading) {
+            return false;
+          }
+          if (sectionKeys.length !== 0) {
+            return false;
+          }
+          return true;
+        })(), (
+          <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No rewards available now.</Text>
         ))}
 
         <View style={{ height: 90 }} />
@@ -447,48 +525,80 @@ export default function RewardsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  container: { paddingHorizontal: 18, paddingTop: 12 },
+  safe: { flex: 1, backgroundColor: '#f7f3ec' },
+  container: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: 24 },
 
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
+  heroCard: {
+    borderRadius: 24,
+    backgroundColor: '#fffdf9',
+    borderWidth: 1,
+    borderColor: '#ebe6dc',
+    padding: 18,
+    marginBottom: 12,
+    shadowColor: '#111827',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
   },
-  headerTitle: {
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  heroTitleBlock: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: '800',
+    gap: 4,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  heroTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: '900',
     color: '#111827',
   },
-  headerRight: {
+  heroSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#6b7280',
+  },
+  heroRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   ordersBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   ordersText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#111827',
   },
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f3f4f6' },
+  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#f3f4f6' },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   avatarFallbackText: { fontSize: 12, fontWeight: '800', color: '#111827' },
 
   pointsCard: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 12,
+    borderColor: '#ebe6dc',
+    borderRadius: 20,
+    backgroundColor: '#f9f6f0',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    marginTop: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -498,17 +608,18 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
   pointsValue: {
     marginTop: 4,
-    fontSize: 24,
+    fontSize: 36,
     fontWeight: '900',
     color: '#111827',
   },
   refreshBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
     backgroundColor: '#111827',
   },
   refreshText: {
@@ -529,12 +640,13 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#6b7280',
     marginBottom: 10,
     marginLeft: 2,
-    textTransform: 'lowercase',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
 
   grid: {
@@ -546,53 +658,67 @@ const styles = StyleSheet.create({
 
   card: {
     width: '48%',
-    minHeight: 190,
-    borderRadius: 12,
+    minHeight: 204,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
+    borderColor: '#ebe6dc',
+    backgroundColor: '#fffdf9',
     padding: 12,
     justifyContent: 'space-between',
-    shadowColor: '#000',
+    shadowColor: '#111827',
     shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowRadius: 10,
     elevation: 2,
   },
   cardImageSlot: {
-    height: 72,
-    borderRadius: 8,
+    height: 78,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: '#ece7dd',
+    backgroundColor: '#f5f2eb',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
     overflow: 'hidden',
+  },
+  cardImageFallback: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e6e8ec',
   },
   cardImage: {
     width: '100%',
     height: '100%',
   },
   cardImageHint: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: '#6b7280',
     textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  cardBody: {
+    gap: 6,
   },
   cardTitle: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800',
     color: '#111827',
   },
   cardPoints: {
-    marginTop: 6,
-    marginBottom: 12,
-    fontSize: 11,
+    fontSize: 12,
     color: '#6b7280',
   },
   redeemBtn: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 999,
     backgroundColor: '#111827',
     alignItems: 'center',
   },

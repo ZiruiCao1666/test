@@ -1,25 +1,646 @@
 import React from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { View, Text, Pressable } from 'react-native';
+import {
+  SafeAreaView,
+} from 'react-native-safe-area-context';
+import {
+  View,
+  Text,
+  Pressable,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  Alert,
+  Image,
+  ScrollView,
+} from 'react-native';
 import { useClerk, useUser } from '@clerk/clerk-expo';
+import * as ImagePicker from 'expo-image-picker';
+import { getCustomDisplayNameFromUser, getDisplayNameFromUser } from '../../lib/user-display';
+
+const MAX_NAME_LENGTH = 40;
 
 export default function MyProfileScreen() {
   const { signOut } = useClerk();
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
+  const safeUser = user || {};
+  const currentDisplayName = getDisplayNameFromUser(safeUser);
+  const currentCustomDisplayName = getCustomDisplayNameFromUser(safeUser);
+  const hasCustomAvatar = Boolean(safeUser.hasImage);
+  let avatarUrl = '';
+  if (safeUser.imageUrl) {
+    avatarUrl = String(safeUser.imageUrl);
+  }
+  let avatarInitial = 'U';
+  const safeName = String(currentDisplayName || '').trim();
+  if (safeName) {
+    avatarInitial = safeName.charAt(0).toUpperCase();
+  }
+
+  const [nameInput, setNameInput] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [avatarSaving, setAvatarSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isLoaded) {
+      return;
+    }
+
+    setNameInput(currentDisplayName);
+  }, [isLoaded, currentDisplayName]);
+
+  const saveDisplayName = async () => {
+    if (!user) {
+      return;
+    }
+
+    const nextName = String(nameInput || '').trim();
+    if (!nextName) {
+      Alert.alert('Name required', 'Please enter a name before saving.');
+      return;
+    }
+
+    if (nextName.length > MAX_NAME_LENGTH) {
+      Alert.alert('Name too long', 'Please keep your name within 40 characters.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      let unsafeMetadata = {};
+      if (safeUser.unsafeMetadata) {
+        unsafeMetadata = safeUser.unsafeMetadata;
+      }
+
+      await user.update({
+        unsafeMetadata: {
+          ...unsafeMetadata,
+          displayName: nextName,
+        },
+      });
+
+      setNameInput(nextName);
+    } catch (error) {
+      let message = 'Failed to update your display name.';
+      if (error instanceof Error) {
+        if (error.message) {
+          message = error.message;
+        }
+      }
+      Alert.alert('Update failed', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetDisplayName = async () => {
+    if (!user) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      let unsafeMetadata = {};
+      if (safeUser.unsafeMetadata) {
+        unsafeMetadata = safeUser.unsafeMetadata;
+      }
+
+      await user.update({
+        unsafeMetadata: {
+          ...unsafeMetadata,
+          displayName: '',
+        },
+      });
+
+      const fallbackName = getDisplayNameFromUser({
+        ...safeUser,
+        unsafeMetadata: {
+          ...unsafeMetadata,
+          displayName: '',
+        },
+      });
+
+      setNameInput(fallbackName);
+    } catch (error) {
+      let message = 'Failed to reset your display name.';
+      if (error instanceof Error) {
+        if (error.message) {
+          message = error.message;
+        }
+      }
+      Alert.alert('Reset failed', message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const pickAvatar = async () => {
+    if (!user) {
+      return;
+    }
+
+    try {
+      setAvatarSaving(true);
+
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission required', 'Please allow photo library access to choose an avatar.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      let selectedAsset = null;
+      if (Array.isArray(result.assets)) {
+        if (result.assets.length > 0) {
+          selectedAsset = result.assets[0];
+        }
+      }
+
+      if (!selectedAsset) {
+        return;
+      }
+
+      let imageUri = '';
+      if (selectedAsset.uri) {
+        imageUri = String(selectedAsset.uri);
+      }
+
+      if (!imageUri) {
+        Alert.alert('Image missing', 'The selected image could not be read.');
+        return;
+      }
+
+      let imageType = 'image/jpeg';
+      if (selectedAsset.mimeType) {
+        const nextType = String(selectedAsset.mimeType).trim().toLowerCase();
+        if (nextType.startsWith('image/')) {
+          imageType = nextType;
+        }
+      }
+
+      let imageName = 'avatar.jpg';
+      if (selectedAsset.fileName) {
+        imageName = String(selectedAsset.fileName);
+      } else if (imageType === 'image/png') {
+        imageName = 'avatar.png';
+      } else if (imageType === 'image/heic') {
+        imageName = 'avatar.heic';
+      } else if (imageType === 'image/heif') {
+        imageName = 'avatar.heif';
+      }
+
+      const uploadFile = {
+        uri: imageUri,
+        name: imageName,
+        type: imageType,
+      };
+
+      await user.setProfileImage({ file: uploadFile });
+      await user.reload();
+    } catch (error) {
+      let message = 'Failed to update your avatar.';
+      if (error instanceof Error) {
+        if (error.message) {
+          message = error.message;
+        }
+      }
+      Alert.alert('Update failed', message);
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    if (!user) {
+      return;
+    }
+
+    Alert.alert(
+      'Remove avatar',
+      'Do you want to remove your custom avatar and go back to the default profile image?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setAvatarSaving(true);
+              await user.setProfileImage({ file: null });
+              await user.reload();
+            } catch (error) {
+              let message = 'Failed to remove your avatar.';
+              if (error instanceof Error) {
+                if (error.message) {
+                  message = error.message;
+                }
+              }
+              Alert.alert('Remove failed', message);
+            } finally {
+              setAvatarSaving(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  if (!isLoaded) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  let resetButtonNode = null;
+  if (currentCustomDisplayName) {
+    resetButtonNode = (
+      <Pressable
+        onPress={resetDisplayName}
+        disabled={saving}
+        style={({ pressed }) => [
+          styles.secondaryButton,
+          pressed ? styles.buttonPressed : null,
+          saving ? styles.buttonDisabled : null,
+        ]}
+      >
+        <Text style={styles.secondaryButtonText}>Reset name</Text>
+      </Pressable>
+    );
+  }
+
+  let avatarNode = null;
+  if (avatarUrl) {
+    avatarNode = <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />;
+  } else {
+    avatarNode = (
+      <View style={styles.avatarFallback}>
+        <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+      </View>
+    );
+  }
+
+  let removeAvatarNode = null;
+  if (hasCustomAvatar) {
+    removeAvatarNode = (
+      <Pressable
+        onPress={removeAvatar}
+        disabled={avatarSaving}
+        style={({ pressed }) => [
+          styles.headerSecondaryButton,
+          pressed ? styles.buttonPressed : null,
+          avatarSaving ? styles.buttonDisabled : null,
+        ]}
+      >
+        <Text style={styles.headerSecondaryButtonText}>Remove avatar</Text>
+      </Pressable>
+    );
+  }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-      <View style={{ padding: 18, gap: 12 }}>
-        <Text style={{ fontSize: 20, fontWeight: '800' }}>my profile</Text>
-        <Text>{user?.fullName || user?.firstName || 'Student'}</Text>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.headerCard}>
+          <View style={styles.headerTopRow}>
+            <Text style={styles.headerEyebrow}>PROFILE</Text>
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>Account</Text>
+            </View>
+          </View>
 
-        <Pressable
-          onPress={() => signOut()}
-          style={{ padding: 10, borderRadius: 10, backgroundColor: '#111827' }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>sign out</Text>
-        </Pressable>
-      </View>
+          <View style={styles.avatarHeroWrap}>
+            <View style={styles.avatarHeroRing}>
+              <View style={styles.avatarWrap}>
+                {avatarNode}
+              </View>
+            </View>
+          </View>
+
+          <Text style={styles.headerName}>{currentDisplayName}</Text>
+          <Text style={styles.headerSubtitle}>Student Motivation account</Text>
+
+          <View style={styles.headerButtonColumn}>
+            <Pressable
+              onPress={pickAvatar}
+              disabled={avatarSaving}
+              style={({ pressed }) => [
+                styles.headerPrimaryButton,
+                pressed ? styles.buttonPressed : null,
+                avatarSaving ? styles.buttonDisabled : null,
+              ]}
+            >
+              <Text style={styles.headerPrimaryButtonText}>
+                {avatarSaving ? 'Saving...' : 'Change avatar'}
+              </Text>
+            </Pressable>
+
+            {removeAvatarNode}
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionLabel}>Display name</Text>
+          <Text style={styles.currentName}>{currentDisplayName}</Text>
+
+          <Text style={styles.inputLabel}>Custom display name</Text>
+          <TextInput
+            value={nameInput}
+            onChangeText={setNameInput}
+            maxLength={MAX_NAME_LENGTH}
+            placeholder="Enter the name you want to show"
+            autoCapitalize="words"
+            autoCorrect={false}
+            editable={!saving}
+            style={styles.input}
+          />
+
+          <View style={styles.nameActionRow}>
+            <Pressable
+              onPress={saveDisplayName}
+              disabled={saving}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                styles.nameActionPrimary,
+                pressed ? styles.buttonPressed : null,
+                saving ? styles.buttonDisabled : null,
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>
+                {saving ? 'Saving...' : 'Save name'}
+              </Text>
+            </Pressable>
+
+            {resetButtonNode}
+          </View>
+        </View>
+
+        <View style={styles.dangerCard}>
+          <Pressable
+            onPress={() => signOut()}
+            style={({ pressed }) => [
+              styles.signOutButton,
+              pressed ? styles.buttonPressed : null,
+            ]}
+          >
+            <Text style={styles.signOutButtonText}>sign out</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: '#f7f3ec',
+  },
+  container: {
+    padding: 18,
+    gap: 16,
+    paddingBottom: 28,
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCard: {
+    borderRadius: 28,
+    backgroundColor: '#162033',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 22,
+    gap: 10,
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 4,
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerEyebrow: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#cbd5e1',
+    letterSpacing: 1.6,
+  },
+  headerBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+  },
+  headerBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#e2e8f0',
+  },
+  avatarHeroWrap: {
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  avatarHeroRing: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  card: {
+    borderWidth: 1,
+    borderColor: '#eadfce',
+    borderRadius: 22,
+    backgroundColor: '#fffdf9',
+    padding: 18,
+    gap: 12,
+  },
+  avatarWrap: {
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    overflow: 'hidden',
+    backgroundColor: '#f3f4f6',
+    alignSelf: 'center',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  avatarFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+  },
+  avatarFallbackText: {
+    fontSize: 44,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  headerName: {
+    marginTop: 10,
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#dbe5f1',
+    textAlign: 'center',
+  },
+  headerButtonColumn: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  headerPrimaryButton: {
+    borderRadius: 999,
+    backgroundColor: '#f8fafc',
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    minWidth: 150,
+  },
+  headerPrimaryButtonText: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  headerSecondaryButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    minWidth: 150,
+  },
+  headerSecondaryButtonText: {
+    color: '#e5e7eb',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  currentName: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  inputLabel: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: '#111827',
+    backgroundColor: '#ffffff',
+  },
+  nameActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  nameActionPrimary: {
+    flex: 1,
+  },
+  primaryButton: {
+    marginTop: 4,
+    borderRadius: 12,
+    backgroundColor: '#111827',
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#ffffff',
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dangerCard: {
+    borderRadius: 22,
+    backgroundColor: '#fffdf9',
+    borderWidth: 1,
+    borderColor: '#f1d2d2',
+    padding: 18,
+  },
+  signOutButton: {
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
+    backgroundColor: '#fffdf9',
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  signOutButtonText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  buttonPressed: {
+    opacity: 0.75,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+});

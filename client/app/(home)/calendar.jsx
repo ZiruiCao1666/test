@@ -11,12 +11,16 @@ import {
   Modal,
 } from 'react-native';
 import * as Linking from 'expo-linking';
+import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { useAppTheme } from '../../lib/app-theme';
 
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+const HOME_PLAN_CACHE_PREFIX = 'home_plan_v1';
+const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 
 const normalizeBaseUrl = (value) => {
   const trimmed = value.trim();
@@ -70,13 +74,19 @@ const parseNumber = (value) => {
 const formatScoreValue = (score, pointsPossible) => {
   const safeScore = parseNumber(score);
   const safePoints = parseNumber(pointsPossible);
-  if (safeScore === null && safePoints === null) {
-    return 'N/A';
+  const hasScore = safeScore !== null;
+  const hasPoints = safePoints !== null;
+  if (!hasScore) {
+    if (!hasPoints) {
+      return 'N/A';
+    }
   }
-  if (safeScore !== null && safePoints !== null) {
-    return String(safeScore) + ' / ' + String(safePoints);
+  if (hasScore) {
+    if (hasPoints) {
+      return String(safeScore) + ' / ' + String(safePoints);
+    }
   }
-  if (safeScore !== null) {
+  if (hasScore) {
     return String(safeScore) + ' / N/A';
   }
   return 'N/A / ' + String(safePoints);
@@ -98,13 +108,17 @@ const parseLinkHeader = (header) => {
 const sortByDueAt = (a, b) => {
   const left = a || {};
   const right = b || {};
-  if (!left.due_at && !right.due_at) {
-    return 0;
+  const leftMissing = !left.due_at;
+  const rightMissing = !right.due_at;
+  if (leftMissing) {
+    if (rightMissing) {
+      return 0;
+    }
   }
-  if (!left.due_at) {
+  if (leftMissing) {
     return 1;
   }
-  if (!right.due_at) {
+  if (rightMissing) {
     return -1;
   }
   return new Date(a.due_at) - new Date(b.due_at);
@@ -190,16 +204,20 @@ const pickLatestSubmissions = (submissions) => {
       acc[assignmentKey] = submission;
       return acc;
     }
-    if (nextOrder.attempt === currentOrder.attempt && nextOrder.updated > currentOrder.updated) {
-      acc[assignmentKey] = submission;
+    if (nextOrder.attempt === currentOrder.attempt) {
+      if (nextOrder.updated > currentOrder.updated) {
+        acc[assignmentKey] = submission;
+      }
     }
     return acc;
   }, {});
 };
 
 const getErrorMessage = (error, fallbackMessage) => {
-  if (error instanceof Error && error.message) {
-    return error.message;
+  if (error instanceof Error) {
+    if (error.message) {
+      return error.message;
+    }
   }
   return fallbackMessage;
 };
@@ -244,7 +262,14 @@ const isSubmissionSubmitted = (submission) => {
 
 const isSubmissionOnTime = (submission) => {
   const safeSubmission = submission || {};
-  return Boolean(safeSubmission.submitted_at) && !safeSubmission.late;
+  const hasSubmittedAt = Boolean(safeSubmission.submitted_at);
+  if (!hasSubmittedAt) {
+    return false;
+  }
+  if (safeSubmission.late) {
+    return false;
+  }
+  return true;
 };
 
 const normalizeUpcomingEvent = (item, index) => {
@@ -323,20 +348,11 @@ const getCanvasConnectButtonText = (isConnected) => {
 };
 
 const getCanvasStorageHelperText = (canPersistToBackend) => {
-  if (canPersistToBackend) {
-    return 'Token is saved to your backend account storage and auto-loaded when you open the app.';
-  }
-  return 'Backend token storage is unavailable. Set EXPO_PUBLIC_API_URL and sign in first.';
+  return '';
 };
 
 const getCanvasTokenStatusText = (hasTokenInput, canPersistToBackend) => {
-  if (!hasTokenInput) {
-    return '';
-  }
-  if (!canPersistToBackend) {
-    return 'A token is currently loaded in this form.';
-  }
-  return 'A saved token is currently loaded. If Canvas shows 401, replace it with a new token or tap Clear.';
+  return '';
 };
 
 const getPreviewEyebrowText = (isConnected) => {
@@ -361,8 +377,10 @@ const getPreviewSubtitleText = (isConnected) => {
 };
 
 const getNextUpcomingLabel = (nextUpcomingItem) => {
-  if (nextUpcomingItem && nextUpcomingItem.title) {
-    return 'Next: ' + String(nextUpcomingItem.title);
+  if (nextUpcomingItem) {
+    if (nextUpcomingItem.title) {
+      return 'Next: ' + String(nextUpcomingItem.title);
+    }
   }
   return 'Next: No synced task yet';
 };
@@ -527,10 +545,13 @@ const isSameMonth = (left, right) => {
   if (!leftDate || !rightDate) {
     return false;
   }
-  return (
-    leftDate.getFullYear() === rightDate.getFullYear() &&
-    leftDate.getMonth() === rightDate.getMonth()
-  );
+  if (leftDate.getFullYear() !== rightDate.getFullYear()) {
+    return false;
+  }
+  if (leftDate.getMonth() !== rightDate.getMonth()) {
+    return false;
+  }
+  return true;
 };
 
 const buildDateKey = (value) => {
@@ -648,7 +669,13 @@ const isValidTimeInput = (value) =>
   /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || '').trim());
 const isQuarterHourTimeInput = (value) => {
   const safe = String(value || '').trim();
-  return isValidTimeInput(safe) && MINUTE_OPTIONS.includes(safe.slice(3, 5));
+  if (!isValidTimeInput(safe)) {
+    return false;
+  }
+  if (!MINUTE_OPTIONS.includes(safe.slice(3, 5))) {
+    return false;
+  }
+  return true;
 };
 
 const parseDateInput = (value) => {
@@ -701,7 +728,9 @@ const normalizeCustomTask = (task, fallbackDate = new Date()) => {
 
 const formatTimeOnly = (value) => {
   let safe = '';
-  if (value !== undefined && value !== null) {
+  if (value === undefined || value === null) {
+    safe = '';
+  } else {
     safe = String(value).trim();
   }
 
@@ -730,8 +759,10 @@ const buildTaskDateTimeIso = (task) => {
   if (!isValidDateInput(taskDate)) {
     return '';
   }
-  if (safeTask.timingMode === 'range' && isValidTimeInput(safeTask.startTime)) {
-    return taskDate + 'T' + String(safeTask.startTime).trim() + ':00';
+  if (safeTask.timingMode === 'range') {
+    if (isValidTimeInput(safeTask.startTime)) {
+      return taskDate + 'T' + String(safeTask.startTime).trim() + ':00';
+    }
   }
   if (isValidTimeInput(safeTask.dueTime)) {
     return taskDate + 'T' + String(safeTask.dueTime).trim() + ':00';
@@ -832,6 +863,7 @@ const PickerWheelColumn = ({
   onChange,
   scrollRef,
 }) => {
+  const { theme } = useAppTheme();
   const paddingHeight = TIME_WHEEL_ITEM_HEIGHT * TIME_WHEEL_SIDE_ROWS;
 
   const snapToOption = (index, animated = true) => {
@@ -839,14 +871,18 @@ const PickerWheelColumn = ({
     const nextValue = options[safeIndex];
     if (nextValue !== value) onChange(nextValue);
     let currentScrollRef = null;
-    if (scrollRef && scrollRef.current) {
-      currentScrollRef = scrollRef.current;
+    if (scrollRef) {
+      if (scrollRef.current) {
+        currentScrollRef = scrollRef.current;
+      }
     }
-    if (currentScrollRef && typeof currentScrollRef.scrollTo === 'function') {
-      currentScrollRef.scrollTo({
-        y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
-        animated,
-      });
+    if (currentScrollRef) {
+      if (typeof currentScrollRef.scrollTo === 'function') {
+        currentScrollRef.scrollTo({
+          y: safeIndex * TIME_WHEEL_ITEM_HEIGHT,
+          animated,
+        });
+      }
     }
   };
 
@@ -857,9 +893,17 @@ const PickerWheelColumn = ({
 
   return (
     <View style={styles.timeWheelGroup}>
-      <Text style={styles.timeWheelLabel}>{label}</Text>
-      <View style={styles.timeWheelColumn}>
-        <View pointerEvents="none" style={styles.timeWheelGuideFrame} />
+      <Text style={[styles.timeWheelLabel, { color: theme.textSecondary }]}>{label}</Text>
+      <View
+        style={[
+          styles.timeWheelColumn,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+        ]}
+      >
+        <View
+          pointerEvents="none"
+          style={[styles.timeWheelGuideFrame, { borderColor: theme.borderSoft }]}
+        />
         <ScrollView
           ref={scrollRef}
           bounces={false}
@@ -882,7 +926,9 @@ const PickerWheelColumn = ({
                 <Text
                   style={[
                     styles.timeWheelItemText,
+                    { color: theme.textMuted },
                     getStyleWhen(active, styles.timeWheelItemTextActive),
+                    getStyleWhen(active, { color: theme.textPrimary }),
                   ]}
                 >
                   {option}
@@ -906,10 +952,11 @@ const MiniCalendarPanel = ({
   titleHint,
   footerHint,
 }) => {
+  const { theme } = useAppTheme();
   const calendarDays = useMemo(() => buildMiniCalendarDays(anchorDate), [anchorDate]);
   let titleHintNode = null;
   if (titleHint) {
-    titleHintNode = <Text style={styles.miniCalendarTitleHint}>{titleHint}</Text>;
+    titleHintNode = <Text style={[styles.miniCalendarTitleHint, { color: theme.textMuted }]}>{titleHint}</Text>;
   }
 
   let titleNode = (
@@ -935,11 +982,29 @@ const MiniCalendarPanel = ({
 
   let footerHintNode = null;
   if (footerHint) {
-    footerHintNode = <Text style={styles.miniCalendarHint}>{footerHint}</Text>;
+    footerHintNode = <Text style={[styles.miniCalendarHint, { color: '#CBD5E1' }]}>{footerHint}</Text>;
   }
+
+  const legendNode = (
+    <View style={styles.miniCalendarLegendRow}>
+      <View style={styles.miniCalendarLegendItem}>
+        <View style={[styles.miniCalendarLegendDot, styles.miniCalendarLegendDotCanvas]} />
+        <Text style={[styles.miniCalendarLegendText, { color: '#E2E8F0' }]}>Canvas task</Text>
+      </View>
+      <View style={styles.miniCalendarLegendItem}>
+        <View style={[styles.miniCalendarLegendDot, styles.miniCalendarLegendDotCustom]} />
+        <Text style={[styles.miniCalendarLegendText, { color: '#E2E8F0' }]}>Custom task</Text>
+      </View>
+      <View style={styles.miniCalendarLegendItem}>
+        <View style={[styles.miniCalendarLegendDot, styles.miniCalendarLegendDotCheckin]} />
+        <Text style={[styles.miniCalendarLegendText, { color: '#E2E8F0' }]}>Checked in</Text>
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.miniCalendarCard}>
+      <View pointerEvents="none" style={styles.miniCalendarGlow} />
       <View style={styles.miniCalendarTopRow}>
         {titleNode}
 
@@ -976,15 +1041,39 @@ const MiniCalendarPanel = ({
       <View style={styles.miniCalendarGrid}>
         {calendarDays.map((day) => {
           const dateKey = buildDateKey(day.date);
-          const markers = (dateMarkersByDate && dateMarkersByDate[dateKey]) || {
+          let markers = {
             count: 0,
             hasCanvas: false,
             hasCustom: false,
             hasCheckin: false,
           };
+          if (dateMarkersByDate) {
+            const nextMarkers = dateMarkersByDate[dateKey];
+            if (nextMarkers) {
+              markers = nextMarkers;
+            }
+          }
           const isSelected = isSameDay(day.date, selectedDate);
           const isToday = isSameDay(day.date, new Date());
           const hasCheckin = Boolean(markers.hasCheckin);
+          let showCheckedInBackground = false;
+          if (hasCheckin) {
+            if (!isSelected) {
+              showCheckedInBackground = true;
+            }
+          }
+          let showCheckedInSelected = false;
+          if (hasCheckin) {
+            if (isSelected) {
+              showCheckedInSelected = true;
+            }
+          }
+          let showCheckedInText = false;
+          if (hasCheckin) {
+            if (!isSelected) {
+              showCheckedInText = true;
+            }
+          }
           let markersNode = null;
           if (markers.count > 0 || hasCheckin) {
             let canvasDotNode = null;
@@ -1014,10 +1103,10 @@ const MiniCalendarPanel = ({
               style={({ pressed }) => [
                 styles.miniCalendarCell,
                 getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellMuted),
-                getStyleWhen(hasCheckin && !isSelected, styles.miniCalendarCellCheckedIn),
+                getStyleWhen(showCheckedInBackground, styles.miniCalendarCellCheckedIn),
                 getStyleWhen(isSelected, styles.miniCalendarCellSelected),
                 getStyleWhen(isToday, styles.miniCalendarCellToday),
-                getStyleWhen(hasCheckin && isSelected, styles.miniCalendarCellCheckedInSelected),
+                getStyleWhen(showCheckedInSelected, styles.miniCalendarCellCheckedInSelected),
                 getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
             >
@@ -1025,7 +1114,7 @@ const MiniCalendarPanel = ({
                 style={[
                   styles.miniCalendarCellText,
                   getStyleWhen(!day.inCurrentMonth, styles.miniCalendarCellTextMuted),
-                  getStyleWhen(hasCheckin && !isSelected, styles.miniCalendarCellTextCheckedIn),
+                  getStyleWhen(showCheckedInText, styles.miniCalendarCellTextCheckedIn),
                   getStyleWhen(isSelected, styles.miniCalendarCellTextSelected),
                 ]}
               >
@@ -1037,6 +1126,7 @@ const MiniCalendarPanel = ({
         })}
       </View>
 
+      {legendNode}
       {footerHintNode}
     </View>
   );
@@ -1048,22 +1138,24 @@ const TaskSelectField = ({
   hint,
   onPress,
 }) => {
+  const { theme } = useAppTheme();
   let hintNode = null;
   if (hint) {
-    hintNode = <Text style={styles.taskFieldSelectHint}>{hint}</Text>;
+    hintNode = <Text style={[styles.taskFieldSelectHint, { color: theme.textSecondary }]}>{hint}</Text>;
   }
 
   return (
     <View style={styles.taskFieldBlock}>
-      <Text style={styles.taskFieldLabel}>{label}</Text>
+      <Text style={[styles.taskFieldLabel, { color: theme.textSecondary }]}>{label}</Text>
       <Pressable
         onPress={onPress}
         style={({ pressed }) => [
           styles.taskFieldSelect,
+          { backgroundColor: theme.surfaceMuted, borderColor: theme.border },
           getStyleWhen(pressed, { opacity: 0.82 }),
         ]}
       >
-        <Text style={styles.taskFieldSelectValue}>{value}</Text>
+        <Text style={[styles.taskFieldSelectValue, { color: theme.textPrimary }]}>{value}</Text>
         {hintNode}
       </Pressable>
     </View>
@@ -1083,24 +1175,28 @@ const BottomSheetPicker = ({
   cardStyle,
   children,
 }) => {
+  const { theme } = useAppTheme();
   let leadingActionNode = <View style={styles.sheetActionSpacer} />;
-  if (leadingLabel && onLeadingPress) {
-    leadingActionNode = (
-      <Pressable
-        onPress={onLeadingPress}
-        style={({ pressed }) => [
-          styles.sheetGhostAction,
-          getStyleWhen(pressed, { opacity: 0.82 }),
-        ]}
-      >
-        <Text style={styles.sheetGhostActionText}>{leadingLabel}</Text>
-      </Pressable>
-    );
+  if (leadingLabel) {
+    if (onLeadingPress) {
+      leadingActionNode = (
+        <Pressable
+          onPress={onLeadingPress}
+          style={({ pressed }) => [
+            styles.sheetGhostAction,
+            { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder },
+            getStyleWhen(pressed, { opacity: 0.82 }),
+          ]}
+        >
+          <Text style={[styles.sheetGhostActionText, { color: theme.secondaryText }]}>{leadingLabel}</Text>
+        </Pressable>
+      );
+    }
   }
 
   let subtitleNode = null;
   if (subtitle) {
-    subtitleNode = <Text style={styles.sheetSubtitle}>{subtitle}</Text>;
+    subtitleNode = <Text style={[styles.sheetSubtitle, { color: theme.textSecondary }]}>{subtitle}</Text>;
   }
 
   return (
@@ -1112,8 +1208,14 @@ const BottomSheetPicker = ({
     >
       <View style={styles.sheetOverlay}>
         <Pressable style={styles.sheetBackdrop} onPress={onClose} />
-        <View style={[styles.sheetCard, cardStyle]}>
-          <View style={styles.sheetHandle} />
+        <View
+          style={[
+            styles.sheetCard,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+            cardStyle,
+          ]}
+        >
+          <View style={[styles.sheetHandle, { backgroundColor: theme.borderSoft }]} />
           <View style={styles.sheetActionRow}>
             {leadingActionNode}
 
@@ -1122,24 +1224,26 @@ const BottomSheetPicker = ({
                 onPress={onClose}
                 style={({ pressed }) => [
                   styles.sheetGhostAction,
+                  { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder },
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
-                <Text style={styles.sheetGhostActionText}>{cancelLabel}</Text>
+                <Text style={[styles.sheetGhostActionText, { color: theme.secondaryText }]}>{cancelLabel}</Text>
               </Pressable>
               <Pressable
                 onPress={onConfirm}
                 style={({ pressed }) => [
                   styles.sheetPrimaryAction,
+                  { backgroundColor: theme.primary },
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
-                <Text style={styles.sheetPrimaryActionText}>{confirmLabel}</Text>
+                <Text style={[styles.sheetPrimaryActionText, { color: theme.primaryText }]}>{confirmLabel}</Text>
               </Pressable>
             </View>
           </View>
 
-          <Text style={styles.sheetTitle}>{title}</Text>
+          <Text style={[styles.sheetTitle, { color: theme.textPrimary }]}>{title}</Text>
           {subtitleNode}
           {children}
         </View>
@@ -1178,7 +1282,9 @@ const sortTasks = (items) => {
 };
 
 export default function CalendarScreen() {
-  const { getToken, isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn, userId } = useAuth();
+  const { theme } = useAppTheme();
+  const isDarkTheme = theme.mode === 'dark';
   const [schoolInput, setSchoolInput] = useState('');
   const [tokenInput, setTokenInput] = useState('');
   const [activeCanvasBaseUrl, setActiveCanvasBaseUrl] = useState('');
@@ -1230,9 +1336,29 @@ export default function CalendarScreen() {
   const minuteWheelRef = useRef(null);
   const meridiemWheelRef = useRef(null);
 
+  const surfaceCardStyle = { backgroundColor: theme.surface, borderColor: theme.border };
+  const softSurfaceCardStyle = { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft };
+  const secondaryButtonStyle = { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder };
+  const secondaryButtonTextStyle = { color: theme.secondaryText };
+  const primaryButtonStyle = { backgroundColor: theme.primary, borderColor: theme.primary };
+  const primaryButtonTextStyle = { color: theme.primaryText };
+  const heroCardStyle = { backgroundColor: theme.heroBg, borderColor: theme.heroBorder };
+  const heroTitleTextStyle = { color: theme.textOnDark };
+  const heroMutedTextStyle = { color: theme.textOnDarkMuted };
+  const warningTextStyle = { color: isDarkTheme ? '#F0B36D' : '#B45309' };
+  const errorTextStyle = { color: theme.dangerText };
+  const emptyTextStyle = { color: theme.textSecondary };
+
   const draftBaseUrl = useMemo(() => buildBaseUrl(schoolInput), [schoolInput]);
   const isConnected = Boolean(profile) || courses.length > 0;
-  const canPersistToBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
+  let canPersistToBackend = false;
+  if (API_BASE_URL) {
+    if (authLoaded) {
+      if (isSignedIn) {
+        canPersistToBackend = true;
+      }
+    }
+  }
   const hasTokenInput = Boolean(String(tokenInput || '').trim());
   const monthYearOptions = useMemo(() => {
     let centerYear = new Date().getFullYear();
@@ -1254,14 +1380,18 @@ export default function CalendarScreen() {
     const syncWheelPosition = (ref, options, nextValue) => {
       const index = Math.max(0, options.indexOf(nextValue));
       let currentRef = null;
-      if (ref && ref.current) {
-        currentRef = ref.current;
+      if (ref) {
+        if (ref.current) {
+          currentRef = ref.current;
+        }
       }
-      if (currentRef && typeof currentRef.scrollTo === 'function') {
-        currentRef.scrollTo({
-          y: index * TIME_WHEEL_ITEM_HEIGHT,
-          animated: false,
-        });
+      if (currentRef) {
+        if (typeof currentRef.scrollTo === 'function') {
+          currentRef.scrollTo({
+            y: index * TIME_WHEEL_ITEM_HEIGHT,
+            animated: false,
+          });
+        }
       }
     };
 
@@ -1276,7 +1406,7 @@ export default function CalendarScreen() {
 
   const getSessionToken = async () => {
     // Clerk session token may be briefly unavailable right after sign-in, so retry a few times.
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const getToken = getTokenRef.current;
       let token = '';
       if (typeof getToken === 'function') {
@@ -1285,7 +1415,7 @@ export default function CalendarScreen() {
       if (token) {
         return token;
       }
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
     return '';
   };
@@ -1346,6 +1476,27 @@ export default function CalendarScreen() {
       throw new Error(
         getApiErrorMessage(data, 'Failed to clear credentials (HTTP ' + String(response.status) + ')')
       );
+    }
+  };
+
+  const clearHomePlanCacheForCurrentUser = async () => {
+    if (!userId) {
+      return;
+    }
+
+    const cacheKey = HOME_PLAN_CACHE_PREFIX + ':' + userId;
+    const resetKey = HOME_PLAN_RESET_PREFIX + ':' + userId;
+
+    try {
+      await SecureStore.deleteItemAsync(cacheKey);
+    } catch (_cacheDeleteError) {
+      // Ignore cache delete errors.
+    }
+
+    try {
+      await SecureStore.setItemAsync(resetKey, String(Date.now()));
+    } catch (_resetWriteError) {
+      // Ignore reset marker write errors.
     }
   };
 
@@ -1650,6 +1801,7 @@ export default function CalendarScreen() {
         return;
       }
       await removeSavedCanvasCredentialsFromBackend();
+      await clearHomePlanCacheForCurrentUser();
       clearLocalCanvasState();
     } catch (clearError) {
       setError(
@@ -1685,15 +1837,17 @@ export default function CalendarScreen() {
       return;
     }
 
-    if (current.data && !current.error) {
-      setSubmissionDetailsByAssignment((prev) => ({
-        ...prev,
-        [detailKey]: {
-          ...current,
-          expanded: true,
-        },
-      }));
-      return;
+    if (current.data) {
+      if (!current.error) {
+        setSubmissionDetailsByAssignment((prev) => ({
+          ...prev,
+          [detailKey]: {
+            ...current,
+            expanded: true,
+          },
+        }));
+        return;
+      }
     }
 
     setSubmissionDetailsByAssignment((prev) => ({
@@ -1862,16 +2016,26 @@ export default function CalendarScreen() {
       const normalizedEvents = safeEvents
         .map((item, index) => normalizeUpcomingEvent(item, index))
         .sort((a, b) => {
-          if (!a.date && !b.date) {
-            return 0;
-          }
-          if (!a.date) {
+          const leftMissing = !a.date;
+          const rightMissing = !b.date;
+          if (leftMissing) {
+            if (rightMissing) {
+              return 0;
+            }
             return 1;
           }
-          if (!b.date) {
+          if (rightMissing) {
             return -1;
           }
-          return new Date(a.date) - new Date(b.date);
+          const leftTime = new Date(a.date).getTime();
+          const rightTime = new Date(b.date).getTime();
+          if (leftTime < rightTime) {
+            return -1;
+          }
+          if (leftTime > rightTime) {
+            return 1;
+          }
+          return 0;
         });
 
       const today = new Date();
@@ -1918,21 +2082,23 @@ export default function CalendarScreen() {
       const message = getErrorMessage(err, 'Connection failed. Check network and token.');
       const normalizedMessage = String(message || '').toLowerCase();
 
-      if (
-        normalizedMessage.includes('401') &&
-        normalizedMessage.includes('invalid access token')
-      ) {
-        try {
-          await removeSavedCanvasCredentialsFromBackend();
-        } catch (_removeError) {
-          // Best effort only. Keep the original Canvas error visible.
+      if (normalizedMessage.includes('401')) {
+        if (normalizedMessage.includes('invalid access token')) {
+          try {
+            await removeSavedCanvasCredentialsFromBackend();
+          } catch (_removeError) {
+            // Best effort only. Keep the original Canvas error visible.
+          }
+          await clearHomePlanCacheForCurrentUser();
+          clearSyncedCanvasState(new Date());
+          setSchoolInput(nextSchool);
+          setTokenInput('');
+          setError(
+            'Canvas rejected this token (401 Invalid access token). The saved token was cleared. Paste a new Canvas token and try again.'
+          );
+        } else {
+          setError('Connection failed: ' + message);
         }
-        clearSyncedCanvasState(new Date());
-        setSchoolInput(nextSchool);
-        setTokenInput('');
-        setError(
-          'Canvas rejected this token (401 Invalid access token). The saved token was cleared. Paste a new Canvas token and try again.'
-        );
       } else {
         setError('Connection failed: ' + message);
       }
@@ -1991,8 +2157,10 @@ export default function CalendarScreen() {
     };
     setActiveTimeField(field);
     let currentValue = '';
-    if (taskForm && field) {
-      currentValue = taskForm[field];
+    if (taskForm) {
+      if (field) {
+        currentValue = taskForm[field];
+      }
     }
     setTimeDraft(parseTimeDraft(currentValue || defaults[field] || '18:00'));
     setTimePickerVisible(true);
@@ -2112,17 +2280,21 @@ export default function CalendarScreen() {
       await fetchCustomTasks({ silent: true });
       setTasksError('');
       let resetDate = selectedDate;
-      if (normalizedSavedTask && normalizedSavedTask.taskDate) {
-        resetDate = parseDateInput(normalizedSavedTask.taskDate) || selectedDate;
+      if (normalizedSavedTask) {
+        if (normalizedSavedTask.taskDate) {
+          resetDate = parseDateInput(normalizedSavedTask.taskDate) || selectedDate;
+        }
       }
       resetTaskComposer(
         resetDate
       );
       setSelectedPanel('calendar');
       setSelectedView('week');
-      if (normalizedSavedTask && normalizedSavedTask.taskDate) {
-        const nextSelectedDate = toSafeDate(buildTaskDateTimeIso(normalizedSavedTask));
-        if (nextSelectedDate) setSelectedDate(nextSelectedDate);
+      if (normalizedSavedTask) {
+        if (normalizedSavedTask.taskDate) {
+          const nextSelectedDate = toSafeDate(buildTaskDateTimeIso(normalizedSavedTask));
+          if (nextSelectedDate) setSelectedDate(nextSelectedDate);
+        }
       }
     } catch (taskSaveError) {
       if (taskSaveError instanceof Error) {
@@ -2355,10 +2527,12 @@ export default function CalendarScreen() {
       };
 
       current.count += 1;
-      if (item && item.source === 'customTask') {
-        current.hasCustom = true;
-      } else {
-        current.hasCanvas = true;
+      if (item) {
+        if (item.source === 'customTask') {
+          current.hasCustom = true;
+        } else {
+          current.hasCanvas = true;
+        }
       }
 
       acc[key] = current;
@@ -2397,10 +2571,13 @@ export default function CalendarScreen() {
         if (!date) {
           return false;
         }
-        return (
-          date.getFullYear() === selectedDate.getFullYear() &&
-          date.getMonth() === selectedDate.getMonth()
-        );
+        if (date.getFullYear() !== selectedDate.getFullYear()) {
+          return false;
+        }
+        if (date.getMonth() !== selectedDate.getMonth()) {
+          return false;
+        }
+        return true;
       }),
     [calendarFeed, selectedDate]
   );
@@ -2437,7 +2614,14 @@ export default function CalendarScreen() {
       calendarFeed.find(
         (item) => {
           const safeItem = item || {};
-          return !safeItem.completed && new Date(safeItem.date).getTime() >= now;
+          if (safeItem.completed) {
+            return false;
+          }
+          const itemTime = new Date(safeItem.date).getTime();
+          if (itemTime < now) {
+            return false;
+          }
+          return true;
         }
       ) || null
     );
@@ -2445,16 +2629,17 @@ export default function CalendarScreen() {
 
   const safeSelectedCalendarItem = selectedCalendarItem || null;
   let selectedCalendarDetailKey = '';
-  if (
-    safeSelectedCalendarItem &&
-    safeSelectedCalendarItem.source === 'assignment' &&
-    safeSelectedCalendarItem.courseId &&
-    safeSelectedCalendarItem.assignmentId
-  ) {
-    selectedCalendarDetailKey = buildAssignmentDetailKey(
-      safeSelectedCalendarItem.courseId,
-      safeSelectedCalendarItem.assignmentId
-    );
+  if (safeSelectedCalendarItem) {
+    if (safeSelectedCalendarItem.source === 'assignment') {
+      if (safeSelectedCalendarItem.courseId) {
+        if (safeSelectedCalendarItem.assignmentId) {
+          selectedCalendarDetailKey = buildAssignmentDetailKey(
+            safeSelectedCalendarItem.courseId,
+            safeSelectedCalendarItem.assignmentId
+          );
+        }
+      }
+    }
   }
   let selectedCalendarDetailState = {};
   if (selectedCalendarDetailKey) {
@@ -2464,7 +2649,7 @@ export default function CalendarScreen() {
   let lastSyncNode = null;
   if (lastSyncAt) {
     lastSyncNode = (
-      <Text style={styles.sync}>
+      <Text style={[styles.sync, { color: theme.textSecondary }]}>
         Last sync:
         {' '}
         {lastSyncAt.toLocaleString()}
@@ -2481,7 +2666,9 @@ export default function CalendarScreen() {
     }
     const safeProfile = profile || {};
     let currentUserId = '';
-    if (safeProfile.id !== null && safeProfile.id !== undefined) {
+    if (safeProfile.id === null || safeProfile.id === undefined) {
+      currentUserId = '';
+    } else {
       currentUserId = String(safeProfile.id);
     }
     return detailComments.filter(
@@ -2567,13 +2754,6 @@ export default function CalendarScreen() {
     }
 
     let customTaskNoteNode = null;
-    if (safeSelectedCalendarItem.source === 'customTask') {
-      customTaskNoteNode = (
-        <Text style={styles.sheetDetailNote}>
-          This is your own task stored in the app and merged into the planner.
-        </Text>
-      );
-    }
 
     selectedCalendarDetailNode = (
       <View style={styles.sheetDetailPanel}>
@@ -2620,12 +2800,20 @@ export default function CalendarScreen() {
   const showTaskSection = selectedPanel === 'overview';
   const safeProfile = profile || {};
   let currentProfileId = '';
-  if (safeProfile.id !== null && safeProfile.id !== undefined) {
+  if (safeProfile.id === null || safeProfile.id === undefined) {
+    currentProfileId = '';
+  } else {
     currentProfileId = String(safeProfile.id);
   }
   let selectedCalendarDetailSubtitle = '';
   if (safeSelectedCalendarItem) {
     selectedCalendarDetailSubtitle = formatDateTime(safeSelectedCalendarItem.date);
+  }
+  let selectedCalendarDetailTitle = 'Task detail';
+  if (safeSelectedCalendarItem) {
+    if (safeSelectedCalendarItem.title) {
+      selectedCalendarDetailTitle = safeSelectedCalendarItem.title;
+    }
   }
 
   const openCalendarItemDetail = async (item) => {
@@ -2686,34 +2874,37 @@ export default function CalendarScreen() {
   };
 
   let connectButtonContentNode = (
-    <Text style={styles.primaryBtnText}>
+    <Text style={[styles.primaryBtnText, primaryButtonTextStyle]}>
       {getCanvasConnectButtonText(isConnected)}
     </Text>
   );
   if (loading) {
-    connectButtonContentNode = <ActivityIndicator color="#fff" />;
+    connectButtonContentNode = <ActivityIndicator color={theme.primaryText} />;
   }
 
   let cardErrorNode = null;
   if (error) {
-    cardErrorNode = <Text style={styles.error}>{error}</Text>;
+    cardErrorNode = <Text style={[styles.error, errorTextStyle]}>{error}</Text>;
   }
 
   let tokenStatusNode = null;
-  if (hasTokenInput) {
-    tokenStatusNode = (
-      <Text style={styles.helperMuted}>
-        {getCanvasTokenStatusText(hasTokenInput, canPersistToBackend)}
-      </Text>
-    );
+  let canvasTokenStatusText = getCanvasTokenStatusText(hasTokenInput, canPersistToBackend);
+  if (canvasTokenStatusText) {
+    tokenStatusNode = <Text style={[styles.helperMuted, { color: theme.textMuted }]}>{canvasTokenStatusText}</Text>;
   }
 
-  let profileOverviewNode = <Text style={styles.empty}>No profile synced yet.</Text>;
+  let canvasStorageHelperNode = null;
+  let canvasStorageHelperText = getCanvasStorageHelperText(canPersistToBackend);
+  if (canvasStorageHelperText) {
+    canvasStorageHelperNode = <Text style={[styles.helper, { color: theme.textMuted }]}>{canvasStorageHelperText}</Text>;
+  }
+
+  let profileOverviewNode = <Text style={[styles.empty, emptyTextStyle]}>No profile synced yet.</Text>;
   if (profile) {
     let profileEmailNode = null;
     if (safeProfile.primary_email || safeProfile.login_id) {
       profileEmailNode = (
-        <Text style={styles.profileMeta}>
+        <Text style={[styles.profileMeta, { color: theme.textSecondary }]}>
           Email/Login:
           {' '}
           {safeProfile.primary_email || safeProfile.login_id}
@@ -2724,7 +2915,7 @@ export default function CalendarScreen() {
     let profileTimeZoneNode = null;
     if (safeProfile.time_zone) {
       profileTimeZoneNode = (
-        <Text style={styles.profileMeta}>
+        <Text style={[styles.profileMeta, { color: theme.textSecondary }]}>
           Time zone:
           {' '}
           {safeProfile.time_zone}
@@ -2733,15 +2924,15 @@ export default function CalendarScreen() {
     }
 
     profileOverviewNode = (
-      <View style={styles.profileCard}>
-        <Text style={styles.profileName}>{safeProfile.name || 'Unknown user'}</Text>
+      <View style={[styles.profileCard, surfaceCardStyle]}>
+        <Text style={[styles.profileName, { color: theme.textPrimary }]}>{safeProfile.name || 'Unknown user'}</Text>
         {profileEmailNode}
         {profileTimeZoneNode}
       </View>
     );
   }
 
-  let courseGradesOverviewNode = <Text style={styles.empty}>No courses synced.</Text>;
+  let courseGradesOverviewNode = <Text style={[styles.empty, emptyTextStyle]}>No courses synced.</Text>;
   if (courses.length > 0) {
     courseGradesOverviewNode = (
       <View style={styles.events}>
@@ -2764,22 +2955,23 @@ export default function CalendarScreen() {
                 onPress={() => openUrl(grades.html_url)}
                 style={({ pressed }) => [
                   styles.inlineLinkBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.7 }),
                 ]}
               >
-                <Text style={styles.inlineLinkText}>Open grade page</Text>
+                <Text style={[styles.inlineLinkText, secondaryButtonTextStyle]}>Open grade page</Text>
               </Pressable>
             );
           }
 
           return (
-            <View key={courseId + '-grade-' + String(courseIndex)} style={styles.gradeCard}>
-              <Text style={styles.gradeCourseName}>
+            <View key={courseId + '-grade-' + String(courseIndex)} style={[styles.gradeCard, surfaceCardStyle]}>
+              <Text style={[styles.gradeCourseName, { color: theme.textPrimary }]}>
                 {safeCourse.name || safeCourse.course_code || 'Untitled course'}
               </Text>
-              <Text style={styles.gradeMeta}>Term: {termName}</Text>
-              <Text style={styles.gradeMeta}>Completion: {completionText}</Text>
-              <Text style={styles.gradeMeta}>On-time: {onTimeText}</Text>
+              <Text style={[styles.gradeMeta, { color: theme.textSecondary }]}>Term: {termName}</Text>
+              <Text style={[styles.gradeMeta, { color: theme.textSecondary }]}>Completion: {completionText}</Text>
+              <Text style={[styles.gradeMeta, { color: theme.textSecondary }]}>On-time: {onTimeText}</Text>
               {gradeLinkNode}
             </View>
           );
@@ -2788,18 +2980,18 @@ export default function CalendarScreen() {
     );
   }
 
-  let dueSoonOverviewNode = <Text style={styles.empty}>No upcoming events.</Text>;
+  let dueSoonOverviewNode = <Text style={[styles.empty, emptyTextStyle]}>No upcoming events.</Text>;
   if (events.length > 0) {
     dueSoonOverviewNode = (
       <View style={styles.events}>
         {events.map((event, eventIndex) => {
           let eventCourseNode = null;
           if (event.course) {
-            eventCourseNode = <Text style={styles.eventCourse}>{event.course}</Text>;
+            eventCourseNode = <Text style={[styles.eventCourse, { color: theme.textSecondary }]}>{event.course}</Text>;
           }
           let eventLinkNode = null;
           if (event.htmlUrl) {
-            eventLinkNode = <Text style={styles.eventLink}>Open in Canvas</Text>;
+            eventLinkNode = <Text style={[styles.eventLink, { color: theme.primary }]}>Open in Canvas</Text>;
           }
           return (
             <Pressable
@@ -2807,17 +2999,18 @@ export default function CalendarScreen() {
               onPress={() => openUrl(event.htmlUrl)}
               style={({ pressed }) => [
                 styles.eventItem,
-                getStyleWhen(event.htmlUrl, styles.eventClickable),
+                surfaceCardStyle,
+                getStyleWhen(event.htmlUrl, { borderColor: theme.primary }),
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              <View style={styles.eventTag}>
-                <Text style={styles.eventTagText}>{event.type}</Text>
+              <View style={[styles.eventTag, softSurfaceCardStyle]}>
+                <Text style={[styles.eventTagText, { color: theme.textSecondary }]}>{event.type}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.eventTitle}>{event.title}</Text>
+                <Text style={[styles.eventTitle, { color: theme.textPrimary }]}>{event.title}</Text>
                 {eventCourseNode}
-                <Text style={styles.eventDate}>{formatDateTime(event.date)}</Text>
+                <Text style={[styles.eventDate, { color: theme.textPrimary }]}>{formatDateTime(event.date)}</Text>
                 {eventLinkNode}
               </View>
             </Pressable>
@@ -2827,15 +3020,17 @@ export default function CalendarScreen() {
     );
   }
 
-  let assignmentsOverviewNode = <Text style={styles.empty}>No assignment data yet.</Text>;
+  let assignmentsOverviewNode = <Text style={[styles.empty, emptyTextStyle]}>No assignment data yet.</Text>;
   if (courses.length > 0) {
     assignmentsOverviewNode = courses.map((course, courseIndex) => {
       const safeCourse = course || {};
       const courseId = String(safeCourse.id);
       const assignmentEntry = assignmentsByCourse[courseId];
       let assignments = [];
-      if (assignmentEntry && Array.isArray(assignmentEntry.items)) {
-        assignments = assignmentEntry.items;
+      if (assignmentEntry) {
+        if (Array.isArray(assignmentEntry.items)) {
+          assignments = assignmentEntry.items;
+        }
       }
       const submissionEntry = submissionsByCourse[courseId] || {};
       const submissionLookup = submissionEntry.byAssignment || {};
@@ -2858,7 +3053,7 @@ export default function CalendarScreen() {
         let assignmentHintNode = null;
         if (displayItems.length === 0) {
           assignmentHintNode = (
-            <Text style={styles.assignmentHint}>
+            <Text style={[styles.assignmentHint, { color: theme.textSecondary }]}>
               No assignments in current window. Expand to see all.
             </Text>
           );
@@ -2876,22 +3071,26 @@ export default function CalendarScreen() {
           const detailState = submissionDetailsByAssignment[detailKey] || {};
           const detailData = detailState.data || null;
           let teacherComments = [];
-          if (detailData && Array.isArray(detailData.submission_comments)) {
-            teacherComments = detailData.submission_comments.filter((comment) => {
-              const safeComment = comment || {};
-              let authorId = '';
-              if (safeComment.author_id !== undefined) {
-                authorId = safeComment.author_id;
-              }
-              if (!currentProfileId) {
-                return true;
-              }
-              return String(authorId) !== currentProfileId;
-            });
+          if (detailData) {
+            if (Array.isArray(detailData.submission_comments)) {
+              teacherComments = detailData.submission_comments.filter((comment) => {
+                const safeComment = comment || {};
+                let authorId = '';
+                if (safeComment.author_id !== undefined) {
+                  authorId = safeComment.author_id;
+                }
+                if (!currentProfileId) {
+                  return true;
+                }
+                return String(authorId) !== currentProfileId;
+              });
+            }
           }
           let detailHistory = [];
-          if (detailData && Array.isArray(detailData.submission_history)) {
-            detailHistory = detailData.submission_history;
+          if (detailData) {
+            if (Array.isArray(detailData.submission_history)) {
+              detailHistory = detailData.submission_history;
+            }
           }
 
           let assignmentDetailNode = (
@@ -2911,14 +3110,14 @@ export default function CalendarScreen() {
                 return (
                   <View
                     key={courseId + '-assignment-' + String(safeAssignment.id) + '-comment-' + String(safeComment.id || 'x') + '-' + String(index)}
-                    style={styles.detailRow}
+                    style={[styles.detailRow, softSurfaceCardStyle]}
                   >
-                    <Text style={styles.detailMeta}>
+                    <Text style={[styles.detailMeta, { color: theme.textSecondary }]}>
                       {safeComment.author_name || 'Instructor'}
                       {' | '}
                       {formatDateTime(safeComment.created_at)}
                     </Text>
-                    <Text style={styles.detailText}>
+                    <Text style={[styles.detailText, { color: theme.textPrimary }]}>
                       {safeComment.comment || '-'}
                     </Text>
                   </View>
@@ -2937,18 +3136,18 @@ export default function CalendarScreen() {
                 return (
                   <View
                     key={courseId + '-assignment-' + String(safeAssignment.id) + '-attempt-' + String(safeAttempt.id || safeAttempt.attempt || 'x') + '-' + String(index)}
-                    style={styles.detailRow}
+                    style={[styles.detailRow, softSurfaceCardStyle]}
                   >
-                    <Text style={styles.detailMeta}>
+                    <Text style={[styles.detailMeta, { color: theme.textSecondary }]}>
                       Attempt {safeAttempt.attempt || index + 1}
                     </Text>
-                    <Text style={styles.detailText}>
+                    <Text style={[styles.detailText, { color: theme.textPrimary }]}>
                       Submitted: {formatDateTime(safeAttempt.submitted_at)}
                     </Text>
-                    <Text style={styles.detailText}>
+                    <Text style={[styles.detailText, { color: theme.textPrimary }]}>
                       Late: {getYesNoText(safeAttempt.late)}
                     </Text>
-                    <Text style={styles.detailText}>
+                    <Text style={[styles.detailText, { color: theme.textPrimary }]}>
                       Score:
                       {' '}
                       {formatScoreValue(
@@ -2963,15 +3162,15 @@ export default function CalendarScreen() {
 
             assignmentDetailNode = (
               <>
-                <Text style={styles.detailMeta}>
+                <Text style={[styles.detailMeta, { color: theme.textSecondary }]}>
                   Late: {getYesNoText(detailData.late)}
                 </Text>
-                <Text style={styles.detailMeta}>
+                <Text style={[styles.detailMeta, { color: theme.textSecondary }]}>
                   Submitted at: {formatDateTime(detailData.submitted_at)}
                 </Text>
-                <Text style={styles.detailHeading}>Teacher comments</Text>
+                <Text style={[styles.detailHeading, { color: theme.textPrimary }]}>Teacher comments</Text>
                 {teacherCommentsNode}
-                <Text style={styles.detailHeading}>Attempt history</Text>
+                <Text style={[styles.detailHeading, { color: theme.textPrimary }]}>Attempt history</Text>
                 {detailHistoryNode}
               </>
             );
@@ -2982,13 +3181,13 @@ export default function CalendarScreen() {
             let detailErrorNode = null;
             if (detailState.error) {
               detailErrorNode = (
-                <Text style={styles.detailError}>
+                <Text style={[styles.detailError, errorTextStyle]}>
                   Failed to load detail: {detailState.error}
                 </Text>
               );
             }
             detailPanelNode = (
-              <View style={styles.detailPanel}>
+              <View style={[styles.detailPanel, surfaceCardStyle]}>
                 {detailErrorNode}
                 {assignmentDetailNode}
               </View>
@@ -3002,10 +3201,11 @@ export default function CalendarScreen() {
                 onPress={() => openUrl(safeAssignment.html_url)}
                 style={({ pressed }) => [
                   styles.inlineLinkBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.7 }),
                 ]}
               >
-                <Text style={styles.inlineLinkText}>Open assignment</Text>
+                <Text style={[styles.inlineLinkText, secondaryButtonTextStyle]}>Open assignment</Text>
               </Pressable>
             );
           }
@@ -3015,21 +3215,22 @@ export default function CalendarScreen() {
               key={courseId + '-assignment-' + String(safeAssignment.id) + '-' + String(assignmentIndex)}
               style={[
                 styles.assignmentItem,
-                getStyleWhen(safeAssignment.html_url, styles.eventClickable),
+                softSurfaceCardStyle,
+                getStyleWhen(safeAssignment.html_url, { borderColor: theme.primary }),
               ]}
             >
-              <Text style={styles.assignmentTitle}>
+              <Text style={[styles.assignmentTitle, { color: theme.textPrimary }]}>
                 {safeAssignment.name || 'Untitled assignment'}
               </Text>
-              <Text style={styles.assignmentMeta}>
+              <Text style={[styles.assignmentMeta, { color: theme.textSecondary }]}>
                 Due:
                 {' '}
                 {formatDateTime(safeAssignment.due_at)}
               </Text>
-              <Text style={styles.assignmentMeta}>
+              <Text style={[styles.assignmentMeta, { color: theme.textSecondary }]}>
                 Score: {scoreText}
               </Text>
-              <Text style={styles.assignmentMeta}>
+              <Text style={[styles.assignmentMeta, { color: theme.textSecondary }]}>
                 Status:
                 {' '}
                 {getSubmissionStatusText(safeSubmission)}
@@ -3038,10 +3239,11 @@ export default function CalendarScreen() {
                 onPress={() => handleToggleSubmissionDetail(courseId, safeAssignment.id)}
                 style={({ pressed }) => [
                   styles.detailBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.7 }),
                 ]}
               >
-                <Text style={styles.detailBtnText}>
+                <Text style={[styles.detailBtnText, secondaryButtonTextStyle]}>
                   {getSubmissionDetailButtonText(detailState)}
                 </Text>
               </Pressable>
@@ -3063,10 +3265,11 @@ export default function CalendarScreen() {
               }
               style={({ pressed }) => [
                 styles.collapseBtn,
+                secondaryButtonStyle,
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              <Text style={styles.collapseBtnText}>
+              <Text style={[styles.collapseBtnText, secondaryButtonTextStyle]}>
                 {getCollapseAssignmentsText(isExpanded, collapsedItems.length)}
               </Text>
             </Pressable>
@@ -3083,8 +3286,11 @@ export default function CalendarScreen() {
       }
 
       return (
-        <View key={courseId + '-assignment-group-' + String(courseIndex)} style={styles.assignmentGroup}>
-          <Text style={styles.assignmentCourseName}>
+        <View
+          key={courseId + '-assignment-group-' + String(courseIndex)}
+          style={[styles.assignmentGroup, surfaceCardStyle]}
+        >
+          <Text style={[styles.assignmentCourseName, { color: theme.textPrimary }]}>
             {safeCourse.name || safeCourse.course_code || 'Untitled course'}
           </Text>
           {assignmentsContentNode}
@@ -3094,37 +3300,42 @@ export default function CalendarScreen() {
   }
 
   let overviewPanelNode = null;
-  if (isConnected && selectedPanel === 'overview') {
-    overviewPanelNode = (
-      <>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Profile</Text>
-          {profileOverviewNode}
-        </View>
+  let dayViewNode = null;
+  let weekViewNode = null;
+  let monthViewNode = null;
+  let calendarPanelNode = null;
+  if (isConnected) {
+    if (selectedPanel === 'overview') {
+      overviewPanelNode = (
+        <>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Profile</Text>
+            {profileOverviewNode}
+          </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Course Grades</Text>
-          {courseGradesOverviewNode}
-        </View>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Course Grades</Text>
+            {courseGradesOverviewNode}
+          </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Due Soon</Text>
-          {dueSoonOverviewNode}
-        </View>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Due Soon</Text>
+            {dueSoonOverviewNode}
+          </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Assignments + Scores</Text>
-          {assignmentsOverviewNode}
-        </View>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Assignments + Scores</Text>
+            {assignmentsOverviewNode}
+          </View>
 
-        <View style={{ height: 90 }} />
-      </>
-    );
+          <View style={{ height: 90 }} />
+        </>
+      );
+    }
   }
 
-  let dayViewNode = null;
   if (selectedView === 'day') {
-    let dayContentNode = <Text style={styles.empty}>No synced tasks on this day.</Text>;
+    let dayContentNode = <Text style={[styles.empty, emptyTextStyle]}>No synced tasks on this day.</Text>;
     if (selectedDayItems.length > 0) {
       dayContentNode = selectedDayItems.map((item, index) => (
         <Pressable
@@ -3132,6 +3343,7 @@ export default function CalendarScreen() {
           onPress={() => openCalendarItemDetail(item)}
           style={({ pressed }) => [
             styles.agendaCard,
+            softSurfaceCardStyle,
             getStyleWhen(pressed, { opacity: 0.8 }),
           ]}
         >
@@ -3142,9 +3354,9 @@ export default function CalendarScreen() {
             ]}
           />
           <View style={{ flex: 1 }}>
-            <Text style={styles.agendaTime}>{formatClockTime(item.date)}</Text>
-            <Text style={styles.agendaTitle}>{item.title}</Text>
-            <Text style={styles.agendaMeta}>
+            <Text style={[styles.agendaTime, { color: theme.primary }]}>{formatClockTime(item.date)}</Text>
+            <Text style={[styles.agendaTitle, { color: theme.textPrimary }]}>{item.title}</Text>
+            <Text style={[styles.agendaMeta, { color: theme.textSecondary }]}>
               {item.course || 'Canvas'} | {item.status}
             </Text>
           </View>
@@ -3155,12 +3367,11 @@ export default function CalendarScreen() {
     dayViewNode = <View style={styles.agendaList}>{dayContentNode}</View>;
   }
 
-  let weekViewNode = null;
   if (selectedView === 'week') {
     weekViewNode = (
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <View>
-          <View style={styles.weekHeaderRow}>
+          <View style={[styles.weekHeaderRow, { borderBottomColor: theme.borderSoft }]}>
             <View style={styles.weekTimeHeader} />
             {weekDays.map((day) => {
               const active = isSameDay(day, selectedDate);
@@ -3170,13 +3381,15 @@ export default function CalendarScreen() {
                   onPress={() => setSelectedDate(day)}
                   style={[
                     styles.weekDayHeader,
-                    getStyleWhen(active, styles.weekDayHeaderActive),
+                    getStyleWhen(active, { backgroundColor: theme.surfaceMuted }),
+                    { borderLeftColor: theme.borderSoft },
                   ]}
                 >
                   <Text
                     style={[
                       styles.weekDayName,
-                      getStyleWhen(active, styles.weekDayNameActive),
+                      { color: theme.textMuted },
+                      getStyleWhen(active, { color: theme.primary }),
                     ]}
                   >
                     {formatWeekday(day)}
@@ -3184,7 +3397,8 @@ export default function CalendarScreen() {
                   <Text
                     style={[
                       styles.weekDayNumber,
-                      getStyleWhen(active, styles.weekDayNumberActive),
+                      { color: theme.textPrimary },
+                      getStyleWhen(active, { color: theme.primary }),
                     ]}
                   >
                     {day.getDate()}
@@ -3197,7 +3411,7 @@ export default function CalendarScreen() {
           {TIME_SLOTS.map((hour) => (
             <View key={'hour-' + String(hour)} style={styles.weekGridRow}>
               <View style={styles.weekTimeCell}>
-                <Text style={styles.weekTimeText}>{formatHourLabel(hour)}</Text>
+                <Text style={[styles.weekTimeText, { color: theme.textMuted }]}>{formatHourLabel(hour)}</Text>
               </View>
 
               {weekDays.map((day) => {
@@ -3214,8 +3428,9 @@ export default function CalendarScreen() {
                     onPress={() => setSelectedDate(day)}
                     style={[
                       styles.weekGridCell,
-                      getStyleWhen(isSameDay(day, selectedDate), styles.weekGridCellSelected),
-                      getStyleWhen(isSameDay(day, new Date()), styles.weekGridCellToday),
+                      { borderLeftColor: theme.borderSoft, borderBottomColor: theme.borderSoft },
+                      getStyleWhen(isSameDay(day, selectedDate), { backgroundColor: theme.surfaceMuted }),
+                      getStyleWhen(isSameDay(day, new Date()), { backgroundColor: isDarkTheme ? '#1A2437' : '#FFF9F5' }),
                     ]}
                   >
                     {cellItems.slice(0, 2).map((item, itemIndex) => (
@@ -3239,7 +3454,7 @@ export default function CalendarScreen() {
                         >
                           {formatClockTime(item.date)}
                         </Text>
-                        <Text numberOfLines={1} style={styles.weekEventTitle}>
+                        <Text numberOfLines={1} style={[styles.weekEventTitle, { color: theme.textPrimary }]}>
                           {item.title}
                         </Text>
                       </Pressable>
@@ -3255,9 +3470,8 @@ export default function CalendarScreen() {
     );
   }
 
-  let monthViewNode = null;
   if (selectedView === 'month') {
-    let monthContentNode = <Text style={styles.empty}>No synced tasks in this month.</Text>;
+    let monthContentNode = <Text style={[styles.empty, emptyTextStyle]}>No synced tasks in this month.</Text>;
     if (monthItems.length > 0) {
       monthContentNode = monthItems.slice(0, 12).map((item, index) => (
         <Pressable
@@ -3265,6 +3479,7 @@ export default function CalendarScreen() {
           onPress={() => openCalendarItemDetail(item)}
           style={({ pressed }) => [
             styles.agendaCard,
+            softSurfaceCardStyle,
             getStyleWhen(pressed, { opacity: 0.8 }),
           ]}
         >
@@ -3275,11 +3490,11 @@ export default function CalendarScreen() {
             ]}
           />
           <View style={{ flex: 1 }}>
-            <Text style={styles.agendaTime}>
+            <Text style={[styles.agendaTime, { color: theme.primary }]}>
               {formatShortDate(item.date)} | {formatClockTime(item.date)}
             </Text>
-            <Text style={styles.agendaTitle}>{item.title}</Text>
-            <Text style={styles.agendaMeta}>
+            <Text style={[styles.agendaTitle, { color: theme.textPrimary }]}>{item.title}</Text>
+            <Text style={[styles.agendaMeta, { color: theme.textSecondary }]}>
               {item.course || 'Canvas'} | {item.status}
             </Text>
           </View>
@@ -3290,29 +3505,19 @@ export default function CalendarScreen() {
     monthViewNode = <View style={styles.agendaList}>{monthContentNode}</View>;
   }
 
-  let calendarPanelNode = null;
   if (selectedPanel === 'calendar') {
-    let plannerFooterHint = 'Tap a date to jump the planner to that week.';
+    let plannerFooterHint = '';
     if (checkinsError) {
       plannerFooterHint = checkinsError;
-    } else {
-      let checkinDebugText = 'Check-ins loaded: ' + String(checkinDateKeys.size);
-      const checkinDateList = Array.from(checkinDateKeys).sort();
-      if (checkinDateList.length > 0) {
-        const firstDate = checkinDateList[0];
-        const lastDate = checkinDateList[checkinDateList.length - 1];
-        checkinDebugText = checkinDebugText + ' | ' + firstDate + ' to ' + lastDate;
-      }
-      plannerFooterHint = plannerFooterHint + '\n' + checkinDebugText;
     }
 
     calendarPanelNode = (
       <>
         <View style={styles.previewFocusRow}>
-          <View style={styles.focusTodayCard}>
-            <Text style={styles.focusTodayLabel}>TODAY</Text>
-            <Text style={styles.focusTodayDate}>{formatDayMonth(new Date())}</Text>
-            <Text style={styles.focusTodayMeta}>
+          <View style={[styles.focusTodayCard, heroCardStyle]}>
+            <Text style={[styles.focusTodayLabel, heroMutedTextStyle]}>TODAY</Text>
+            <Text style={[styles.focusTodayDate, heroTitleTextStyle]}>{formatDayMonth(new Date())}</Text>
+            <Text style={[styles.focusTodayMeta, heroMutedTextStyle]}>
               {getNextUpcomingLabel(nextUpcomingItem)}
             </Text>
           </View>
@@ -3327,40 +3532,43 @@ export default function CalendarScreen() {
             onChangeMonth={changeMiniCalendarMonth}
             dateMarkersByDate={dateMarkersByDate}
             onPressTitle={openMonthYearPicker}
-            titleHint="Tap title to choose month"
+            titleHint=""
             footerHint={plannerFooterHint}
           />
         </View>
 
-        <View style={styles.plannerShell}>
+        <View style={[styles.plannerShell, surfaceCardStyle]}>
           <View style={styles.plannerToolbar}>
             <View style={styles.plannerArrowRow}>
               <Pressable
                 onPress={() => changeCalendarWindow(-1)}
                 style={({ pressed }) => [
                   styles.plannerArrowBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.7 }),
                 ]}
               >
-                <Text style={styles.plannerArrowText}>{'<'}</Text>
+                <Text style={[styles.plannerArrowText, secondaryButtonTextStyle]}>{'<'}</Text>
               </Pressable>
               <Pressable
                 onPress={() => setSelectedDate(new Date())}
                 style={({ pressed }) => [
                   styles.plannerTodayBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.85 }),
                 ]}
               >
-                <Text style={styles.plannerTodayBtnText}>Today</Text>
+                <Text style={[styles.plannerTodayBtnText, secondaryButtonTextStyle]}>Today</Text>
               </Pressable>
               <Pressable
                 onPress={() => changeCalendarWindow(1)}
                 style={({ pressed }) => [
                   styles.plannerArrowBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(pressed, { opacity: 0.7 }),
                 ]}
               >
-                <Text style={styles.plannerArrowText}>{'>'}</Text>
+                <Text style={[styles.plannerArrowText, secondaryButtonTextStyle]}>{'>'}</Text>
               </Pressable>
             </View>
 
@@ -3373,14 +3581,16 @@ export default function CalendarScreen() {
                     onPress={() => setSelectedView(viewKey)}
                     style={({ pressed }) => [
                       styles.plannerViewBtn,
-                      getStyleWhen(active, styles.plannerViewBtnActive),
+                      secondaryButtonStyle,
+                      getStyleWhen(active, primaryButtonStyle),
                       getStyleWhen(pressed, { opacity: 0.82 }),
                     ]}
                   >
                     <Text
                       style={[
                         styles.plannerViewBtnText,
-                        getStyleWhen(active, styles.plannerViewBtnTextActive),
+                        secondaryButtonTextStyle,
+                        getStyleWhen(active, primaryButtonTextStyle),
                       ]}
                     >
                       {viewKey}
@@ -3427,12 +3637,12 @@ export default function CalendarScreen() {
   }
 
   let taskSaveButtonNode = (
-    <Text style={styles.taskSaveBtnText}>
+    <Text style={[styles.taskSaveBtnText, primaryButtonTextStyle]}>
       {getTaskSaveButtonText(editingTaskId)}
     </Text>
   );
   if (taskSaving) {
-    taskSaveButtonNode = <ActivityIndicator color="#fff" size="small" />;
+    taskSaveButtonNode = <ActivityIndicator color={theme.primaryText} size="small" />;
   }
 
   let taskCancelNode = null;
@@ -3442,28 +3652,29 @@ export default function CalendarScreen() {
         onPress={() => resetTaskComposer(selectedDate)}
         style={({ pressed }) => [
           styles.taskCancelBtn,
+          secondaryButtonStyle,
           getStyleWhen(pressed, { opacity: 0.82 }),
         ]}
       >
-        <Text style={styles.taskCancelBtnText}>Cancel</Text>
+        <Text style={[styles.taskCancelBtnText, secondaryButtonTextStyle]}>Cancel</Text>
       </Pressable>
     );
   }
 
   let tasksErrorNode = null;
   if (tasksError) {
-    tasksErrorNode = <Text style={styles.taskErrorText}>{tasksError}</Text>;
+    tasksErrorNode = <Text style={[styles.taskErrorText, errorTextStyle]}>{tasksError}</Text>;
   }
 
   let customTaskListNode = null;
   if (tasksLoading) {
     customTaskListNode = (
       <View style={styles.taskLoadingWrap}>
-        <ActivityIndicator />
+        <ActivityIndicator color={theme.primary} />
       </View>
     );
   } else if (customTasks.length === 0) {
-    customTaskListNode = <Text style={styles.empty}>No custom tasks yet.</Text>;
+    customTaskListNode = <Text style={[styles.empty, emptyTextStyle]}>No custom tasks yet.</Text>;
   } else {
     customTaskListNode = (
       <View style={styles.taskList}>
@@ -3471,24 +3682,31 @@ export default function CalendarScreen() {
           const isDeleting = taskDeletingId === String(task.id);
           const isToggling = taskTogglingId === String(task.id);
           return (
-            <View key={'task-' + String(task.id)} style={styles.taskItemCard}>
+            <View key={'task-' + String(task.id)} style={[styles.taskItemCard, surfaceCardStyle]}>
               <Pressable
                 onPress={() => handleToggleTaskCompletion(task)}
                 disabled={isToggling}
                 style={({ pressed }) => [
                   styles.taskCheckBtn,
+                  secondaryButtonStyle,
                   getStyleWhen(task.isCompleted, styles.taskCheckBtnActive),
+                  getStyleWhen(task.isCompleted, primaryButtonStyle),
                   getStyleWhen(isToggling, { opacity: 0.6 }),
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
                 {isToggling ? (
-                  <ActivityIndicator size="small" color={task.isCompleted ? '#fff' : '#2563eb'} />
+                  <ActivityIndicator
+                    size="small"
+                    color={task.isCompleted ? theme.primaryText : theme.primary}
+                  />
                 ) : (
                   <Text
                     style={[
                       styles.taskCheckBtnText,
+                      secondaryButtonTextStyle,
                       getStyleWhen(task.isCompleted, styles.taskCheckBtnTextActive),
+                      getStyleWhen(task.isCompleted, primaryButtonTextStyle),
                     ]}
                   >
                     {getTextWhen(task.isCompleted, '\u2713', '')}
@@ -3500,12 +3718,14 @@ export default function CalendarScreen() {
                 <Text
                   style={[
                     styles.taskItemTitle,
+                    { color: theme.textPrimary },
                     getStyleWhen(task.isCompleted, styles.taskItemTitleDone),
+                    getStyleWhen(task.isCompleted, { color: theme.textMuted }),
                   ]}
                 >
                   {task.title}
                 </Text>
-                <Text style={styles.taskItemMeta}>{formatTaskSchedule(task)}</Text>
+                <Text style={[styles.taskItemMeta, { color: theme.textSecondary }]}>{formatTaskSchedule(task)}</Text>
               </View>
 
               <View style={styles.taskItemActions}>
@@ -3513,21 +3733,23 @@ export default function CalendarScreen() {
                   onPress={() => handleEditTask(task)}
                   style={({ pressed }) => [
                     styles.taskActionBtn,
+                    secondaryButtonStyle,
                     getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
-                  <Text style={styles.taskActionBtnText}>Edit</Text>
+                  <Text style={[styles.taskActionBtnText, secondaryButtonTextStyle]}>Edit</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => handleDeleteTask(task.id)}
                   disabled={isDeleting}
                   style={({ pressed }) => [
                     styles.taskActionBtn,
+                    secondaryButtonStyle,
                     getStyleWhen(isDeleting, { opacity: 0.6 }),
                     getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
-                  <Text style={styles.taskDeleteBtnText}>
+                  <Text style={[styles.taskDeleteBtnText, errorTextStyle]}>
                     {getTextWhen(isDeleting, '...', 'Delete')}
                   </Text>
                 </Pressable>
@@ -3543,14 +3765,17 @@ export default function CalendarScreen() {
   if (showTaskSection) {
     taskSectionNode = (
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>My Tasks</Text>
-        <View style={styles.taskComposerCard}>
+        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>My Tasks</Text>
+        <View style={[styles.taskComposerCard, surfaceCardStyle]}>
           <TextInput
             value={taskForm.title}
             onChangeText={(value) => handleTaskFieldChange('title', value)}
             placeholder="Task name"
-            placeholderTextColor="#9ca3af"
-            style={styles.taskTitleInput}
+            placeholderTextColor={theme.textMuted}
+            style={[
+              styles.taskTitleInput,
+              { backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.textPrimary },
+            ]}
           />
 
           <View style={styles.taskModeRow}>
@@ -3565,14 +3790,16 @@ export default function CalendarScreen() {
                   onPress={() => handleTaskFieldChange('timingMode', mode.id)}
                   style={({ pressed }) => [
                     styles.taskModeChip,
-                    getStyleWhen(active, styles.taskModeChipActive),
+                    secondaryButtonStyle,
+                    getStyleWhen(active, primaryButtonStyle),
                     getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
                   <Text
                     style={[
                       styles.taskModeChipText,
-                      getStyleWhen(active, styles.taskModeChipTextActive),
+                      secondaryButtonTextStyle,
+                      getStyleWhen(active, primaryButtonTextStyle),
                     ]}
                   >
                     {mode.label}
@@ -3586,7 +3813,7 @@ export default function CalendarScreen() {
             <TaskSelectField
               label="Date"
               value={formatPickerDateLabel(taskForm.taskDate)}
-              hint="Tap to choose"
+              hint=""
               onPress={openTaskDatePicker}
             />
 
@@ -3599,6 +3826,7 @@ export default function CalendarScreen() {
               disabled={taskSaving}
               style={({ pressed }) => [
                 styles.taskSaveBtn,
+                primaryButtonStyle,
                 getStyleWhen(taskSaving, { opacity: 0.6 }),
                 getStyleWhen(pressed, { opacity: 0.82 }),
               ]}
@@ -3618,35 +3846,36 @@ export default function CalendarScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.title}>Calendar + Grades</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: theme.textPrimary }]}>Calendar + Grades</Text>
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             Enter a school short name for standard Canvas sites, or a full Canvas host for custom domains.
             {' '}
-            <Text style={styles.subtitleStrong}>Example: ox or canvas.hull.ac.uk</Text>
+            <Text style={[styles.subtitleStrong, { color: theme.textPrimary }]}>Example: ox or canvas.hull.ac.uk</Text>
             .
           </Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>School name</Text>
+        <View style={[styles.card, surfaceCardStyle]}>
+          <Text style={[styles.label, { color: theme.textSecondary }]}>School name</Text>
           <TextInput
             value={schoolInput}
             onChangeText={handleSchoolInputChange}
             placeholder="Example: ox / canvas.hull.ac.uk"
             autoCapitalize="none"
             autoCorrect={false}
-            style={styles.input}
+            placeholderTextColor={theme.textMuted}
+            style={[styles.input, { backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.textPrimary }]}
           />
-          <Text style={styles.inputHint}>
+          <Text style={[styles.inputHint, { color: theme.textSecondary }]}>
             Resolved URL:
             {' '}
             {draftBaseUrl || 'https://school-name.instructure.com'}
           </Text>
 
-          <Text style={[styles.label, { marginTop: 12 }]}>Access Token</Text>
+          <Text style={[styles.label, { marginTop: 12, color: theme.textSecondary }]}>Access Token</Text>
           <TextInput
             value={tokenInput}
             onChangeText={handleTokenInputChange}
@@ -3654,7 +3883,8 @@ export default function CalendarScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
-            style={styles.input}
+            placeholderTextColor={theme.textMuted}
+            style={[styles.input, { backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.textPrimary }]}
           />
 
           <View style={styles.buttonRow}>
@@ -3663,6 +3893,7 @@ export default function CalendarScreen() {
               disabled={loading}
               style={({ pressed }) => [
                 styles.primaryBtn,
+                primaryButtonStyle,
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
@@ -3673,31 +3904,30 @@ export default function CalendarScreen() {
               onPress={handleClear}
               style={({ pressed }) => [
                 styles.ghostBtn,
+                secondaryButtonStyle,
                 getStyleWhen(pressed, { opacity: 0.7 }),
               ]}
             >
-              <Text style={styles.ghostBtnText}>Clear</Text>
+              <Text style={[styles.ghostBtnText, secondaryButtonTextStyle]}>Clear</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.helper}>
-            {getCanvasStorageHelperText(canPersistToBackend)}
-          </Text>
+          {canvasStorageHelperNode}
           {tokenStatusNode}
           {cardErrorNode}
           {lastSyncNode}
         </View>
 
-        <View style={styles.previewSection}>
+        <View style={[styles.previewSection, softSurfaceCardStyle]}>
           <View style={styles.previewHeaderRow}>
             <View style={styles.previewHeaderTextWrap}>
-              <Text style={styles.previewEyebrow}>
+              <Text style={[styles.previewEyebrow, { color: theme.textSecondary }]}>
                 {getPreviewEyebrowText(isConnected)}
               </Text>
-              <Text style={styles.previewTitle}>
+              <Text style={[styles.previewTitle, { color: theme.textPrimary }]}>
                 {getPreviewTitleText(isConnected)}
               </Text>
-              <Text style={styles.previewSubtitle}>
+              <Text style={[styles.previewSubtitle, { color: theme.textSecondary }]}>
                 {getPreviewSubtitleText(isConnected)}
               </Text>
             </View>
@@ -3707,14 +3937,16 @@ export default function CalendarScreen() {
                 onPress={() => setSelectedPanel('calendar')}
                 style={({ pressed }) => [
                   styles.previewTab,
-                  getStyleWhen(selectedPanel === 'calendar', styles.previewTabActive),
+                  secondaryButtonStyle,
+                  getStyleWhen(selectedPanel === 'calendar', primaryButtonStyle),
                   getStyleWhen(pressed, { opacity: 0.85 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.previewTabText,
-                    getStyleWhen(selectedPanel === 'calendar', styles.previewTabActiveText),
+                    secondaryButtonTextStyle,
+                    getStyleWhen(selectedPanel === 'calendar', primaryButtonTextStyle),
                   ]}
                 >
                   calendar
@@ -3724,14 +3956,16 @@ export default function CalendarScreen() {
                 onPress={() => setSelectedPanel('overview')}
                 style={({ pressed }) => [
                   styles.previewTab,
-                  getStyleWhen(selectedPanel === 'overview', styles.previewTabActive),
+                  secondaryButtonStyle,
+                  getStyleWhen(selectedPanel === 'overview', primaryButtonStyle),
                   getStyleWhen(pressed, { opacity: 0.85 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.previewTabText,
-                    getStyleWhen(selectedPanel === 'overview', styles.previewTabActiveText),
+                    secondaryButtonTextStyle,
+                    getStyleWhen(selectedPanel === 'overview', primaryButtonTextStyle),
                   ]}
                 >
                   overview
@@ -3772,7 +4006,7 @@ export default function CalendarScreen() {
               if (nextDate) setTaskDateMonthAnchor(nextDate);
             }}
             dateMarkersByDate={dateMarkersByDate}
-            footerHint="Tap a date to use it for this task."
+            footerHint=""
           />
         </View>
       </BottomSheetPicker>
@@ -3816,7 +4050,7 @@ export default function CalendarScreen() {
         title="Choose month"
         subtitle={MONTH_LABELS[monthYearDraft.month] + ' ' + String(monthYearDraft.year)}
       >
-        <Text style={styles.monthYearSectionTitle}>Year</Text>
+        <Text style={[styles.monthYearSectionTitle, { color: theme.textSecondary }]}>Year</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -3830,14 +4064,16 @@ export default function CalendarScreen() {
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, year }))}
                 style={({ pressed }) => [
                   styles.monthYearYearChip,
-                  getStyleWhen(active, styles.monthYearYearChipActive),
+                  secondaryButtonStyle,
+                  getStyleWhen(active, primaryButtonStyle),
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.monthYearYearChipText,
-                    getStyleWhen(active, styles.monthYearYearChipTextActive),
+                    secondaryButtonTextStyle,
+                    getStyleWhen(active, primaryButtonTextStyle),
                   ]}
                 >
                   {year}
@@ -3847,7 +4083,7 @@ export default function CalendarScreen() {
           })}
         </ScrollView>
 
-        <Text style={styles.monthYearSectionTitle}>Month</Text>
+        <Text style={[styles.monthYearSectionTitle, { color: theme.textSecondary }]}>Month</Text>
         <View style={styles.monthYearGrid}>
           {MONTH_LABELS.map((label, index) => {
             const active = index === monthYearDraft.month;
@@ -3857,14 +4093,16 @@ export default function CalendarScreen() {
                 onPress={() => setMonthYearDraft((prev) => ({ ...prev, month: index }))}
                 style={({ pressed }) => [
                   styles.monthYearCell,
-                  getStyleWhen(active, styles.monthYearCellActive),
+                  secondaryButtonStyle,
+                  getStyleWhen(active, primaryButtonStyle),
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
                 <Text
                   style={[
                     styles.monthYearCellText,
-                    getStyleWhen(active, styles.monthYearCellTextActive),
+                    secondaryButtonTextStyle,
+                    getStyleWhen(active, primaryButtonTextStyle),
                   ]}
                 >
                   {label}
@@ -3882,16 +4120,18 @@ export default function CalendarScreen() {
           setSelectedCalendarItem(null);
         }}
         onConfirm={() => {
-          if (safeSelectedCalendarItem && safeSelectedCalendarItem.htmlUrl) {
-            setCalendarDetailVisible(false);
-            setSelectedCalendarItem(null);
-            openUrl(safeSelectedCalendarItem.htmlUrl);
-            return;
+          if (safeSelectedCalendarItem) {
+            if (safeSelectedCalendarItem.htmlUrl) {
+              setCalendarDetailVisible(false);
+              setSelectedCalendarItem(null);
+              openUrl(safeSelectedCalendarItem.htmlUrl);
+              return;
+            }
           }
           setCalendarDetailVisible(false);
           setSelectedCalendarItem(null);
         }}
-        title={(safeSelectedCalendarItem && safeSelectedCalendarItem.title) || 'Task detail'}
+        title={selectedCalendarDetailTitle}
         subtitle={selectedCalendarDetailSubtitle}
         confirmLabel={getCalendarDetailConfirmLabel(safeSelectedCalendarItem)}
       >
@@ -4071,17 +4311,29 @@ const styles = StyleSheet.create({
   miniCalendarCard: {
     width: '100%',
     borderRadius: 28,
-    backgroundColor: '#111827',
+    backgroundColor: '#161C2B',
     paddingHorizontal: 22,
     paddingTop: 20,
     paddingBottom: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(148, 163, 184, 0.18)',
     shadowColor: '#0f172a',
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
     elevation: 5,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  miniCalendarGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 110,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
   },
   miniCalendarTopRow: {
     flexDirection: 'row',
@@ -4096,7 +4348,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 24,
     fontWeight: '900',
-    color: '#fff',
+    color: '#F8FAFC',
   },
   miniCalendarTitleHint: {
     marginTop: 4,
@@ -4114,12 +4366,14 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   miniCalendarNavText: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#fff',
+    color: '#F8FAFC',
   },
   miniCalendarWeekdays: {
     marginTop: 16,
@@ -4131,7 +4385,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 11,
     fontWeight: '700',
-    color: '#9ca3af',
+    color: '#94A3B8',
   },
   miniCalendarGrid: {
     marginTop: 10,
@@ -4147,44 +4401,44 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   miniCalendarCellMuted: {
-    opacity: 0.38,
+    backgroundColor: 'transparent',
   },
   miniCalendarCellCheckedIn: {
-    backgroundColor: 'rgba(74, 222, 128, 0.16)',
+    backgroundColor: '#F8E8B0',
     borderWidth: 1,
-    borderColor: 'rgba(134, 239, 172, 0.28)',
+    borderColor: 'rgba(217, 164, 65, 0.45)',
   },
   miniCalendarCellCheckedInSelected: {
     borderWidth: 2,
-    borderColor: '#86efac',
+    borderColor: '#D9A441',
   },
   miniCalendarCellSelected: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#4F7DFF',
   },
   miniCalendarCellToday: {
     borderWidth: 1,
-    borderColor: '#f59e0b',
+    borderColor: 'rgba(203, 213, 225, 0.55)',
   },
   miniCalendarCellText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#fff',
+    color: '#F8FAFC',
   },
   miniCalendarCellTextMuted: {
-    color: '#9ca3af',
+    color: '#64748B',
   },
   miniCalendarCellTextCheckedIn: {
-    color: '#d1fae5',
+    color: '#6B4F1D',
   },
   miniCalendarCellTextSelected: {
-    color: '#fff',
+    color: '#FFFFFF',
   },
   miniCalendarDot: {
     marginTop: 4,
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#fbbf24',
+    backgroundColor: '#E56B6F',
   },
   miniCalendarDotRow: {
     marginTop: 4,
@@ -4197,15 +4451,52 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#9FE3C1',
   },
   miniCalendarDotCheckin: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#86efac',
+    backgroundColor: '#E7B94C',
     borderWidth: 1,
-    borderColor: '#ecfdf5',
+    borderColor: 'rgba(255, 248, 220, 0.8)',
+  },
+  miniCalendarLegendRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
+  miniCalendarLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  miniCalendarLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  miniCalendarLegendDotCanvas: {
+    backgroundColor: '#E56B6F',
+  },
+  miniCalendarLegendDotCustom: {
+    backgroundColor: '#9FE3C1',
+  },
+  miniCalendarLegendDotCheckin: {
+    backgroundColor: '#E7B94C',
+  },
+  miniCalendarLegendText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#CBD5E1',
   },
   miniCalendarHint: {
     marginTop: 14,

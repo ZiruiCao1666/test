@@ -15,6 +15,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
 import { getDisplayNameFromUser } from '../../lib/user-display';
+import { useAppTheme } from '../../lib/app-theme';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
@@ -448,10 +449,16 @@ const getPlanSourceLabel = (item) => {
   return 'Canvas';
 };
 
-const getPlanSourceBadgeStyle = (item) => {
+const getPlanSourceBadgeStyle = (item, isDarkTheme) => {
   const safeItem = item || {};
   if (safeItem.source === 'custom') {
+    if (isDarkTheme) {
+      return { backgroundColor: '#1F3A34' };
+    }
     return styles.todoSourceBadgeCustom;
+  }
+  if (isDarkTheme) {
+    return { backgroundColor: '#243B5B' };
   }
   return styles.todoSourceBadgeCanvas;
 };
@@ -587,24 +594,41 @@ const buildPlanRowProps = (item, openPlanItem) => {
   };
 };
 
-const renderAvatarNode = (avatarUrl, avatarInitial) => {
+const renderAvatarNode = (avatarUrl, avatarInitial, fallbackBackgroundColor, fallbackTextColor) => {
   if (avatarUrl) {
     return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
   }
   return (
-    <View style={[styles.avatar, styles.avatarFallback]}>
-      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    <View
+      style={[
+        styles.avatar,
+        styles.avatarFallback,
+        { backgroundColor: fallbackBackgroundColor },
+      ]}
+    >
+      <Text style={[styles.avatarFallbackText, { color: fallbackTextColor }]}>{avatarInitial}</Text>
     </View>
   );
 };
 
-const renderTodoAvatarNode = (avatarUrl, avatarInitial) => {
+const renderTodoAvatarNode = (
+  avatarUrl,
+  avatarInitial,
+  fallbackBackgroundColor,
+  fallbackTextColor
+) => {
   if (avatarUrl) {
     return <Image source={{ uri: avatarUrl }} style={styles.todoAvatar} />;
   }
   return (
-    <View style={[styles.todoAvatar, styles.avatarFallback]}>
-      <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
+    <View
+      style={[
+        styles.todoAvatar,
+        styles.avatarFallback,
+        { backgroundColor: fallbackBackgroundColor },
+      ]}
+    >
+      <Text style={[styles.avatarFallbackText, { color: fallbackTextColor }]}>{avatarInitial}</Text>
     </View>
   );
 };
@@ -646,12 +670,35 @@ const groupPlanItems = (items) => {
 export default function HomeScreen() {
   const { user, isLoaded: userLoaded } = useUser();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
+  const { theme } = useAppTheme();
   const safeUser = user || {};
   const userId = safeUser.id || null;
 
   const username = getDisplayNameFromUser(safeUser);
   const avatarUrl = safeUser.imageUrl || null;
   const avatarInitial = String(username || '').trim().charAt(0).toUpperCase() || 'U';
+  const isDarkTheme = theme.mode === 'dark';
+
+  let canvasBadgeBackgroundColor = '#DBEAFE';
+  let customBadgeBackgroundColor = '#DCFCE7';
+  let linkHintColor = '#2563EB';
+  let warningColor = '#B45309';
+  let errorColor = '#B91C1C';
+  let checkInCircleBackgroundColor = theme.surfaceMuted;
+  let checkInCircleTextColor = theme.textPrimary;
+  let avatarFallbackBackgroundColor = theme.surfaceMuted;
+  let avatarFallbackTextColor = theme.textPrimary;
+  if (isDarkTheme) {
+    canvasBadgeBackgroundColor = '#243B5B';
+    customBadgeBackgroundColor = '#1F3A34';
+    linkHintColor = '#8CB4FF';
+    warningColor = '#F0B36D';
+    errorColor = '#F29B96';
+    checkInCircleBackgroundColor = theme.heroBg;
+    checkInCircleTextColor = theme.textOnDark;
+    avatarFallbackBackgroundColor = theme.secondaryBg;
+    avatarFallbackTextColor = theme.secondaryText;
+  }
 
 
   const [totalSignedDays, setTotalSignedDays] = React.useState(0);
@@ -1248,32 +1295,36 @@ export default function HomeScreen() {
     });
   }, []);
 
-  let lastingDaysValueNode = <ActivityIndicator />;
+  let lastingDaysValueNode = <ActivityIndicator color={theme.primary} />;
   if (summaryReady) {
     let loadingIndicatorNode = null;
     if (loadingSummary) {
-      loadingIndicatorNode = <ActivityIndicator size="small" style={{ marginTop: 6 }} />;
+      loadingIndicatorNode = (
+        <ActivityIndicator color={theme.primary} size="small" style={{ marginTop: 6 }} />
+      );
     }
     lastingDaysValueNode = (
       <>
-        <Text style={styles.cardBig}>
+        <Text style={[styles.cardBig, { color: theme.textPrimary }]}>
           {lastingDays}
-          <Text style={styles.cardBigUnit}> days</Text>
+          <Text style={[styles.cardBigUnit, { color: theme.textPrimary }]}> days</Text>
         </Text>
         {loadingIndicatorNode}
       </>
     );
   }
 
-  let pointsValueNode = <ActivityIndicator />;
+  let pointsValueNode = <ActivityIndicator color={theme.primary} />;
   if (summaryReady) {
     let loadingIndicatorNode = null;
     if (loadingSummary) {
-      loadingIndicatorNode = <ActivityIndicator size="small" style={{ marginTop: 6 }} />;
+      loadingIndicatorNode = (
+        <ActivityIndicator color={theme.primary} size="small" style={{ marginTop: 6 }} />
+      );
     }
     pointsValueNode = (
       <>
-        <Text style={styles.cardBig}>{points}</Text>
+        <Text style={[styles.cardBig, { color: theme.textPrimary }]}>{points}</Text>
         {loadingIndicatorNode}
       </>
     );
@@ -1282,34 +1333,36 @@ export default function HomeScreen() {
   let summaryErrorNode = null;
   if (summaryError) {
     summaryErrorNode = (
-      <Text style={{ marginBottom: 10, fontSize: 12, color: '#b91c1c' }}>
+      <Text style={{ marginBottom: 10, fontSize: 12, color: errorColor }}>
         {summaryError}
       </Text>
     );
   }
 
   let checkInCircleNode = (
-    <Text style={styles.circleText}>
+    <Text style={[styles.circleText, { color: checkInCircleTextColor }]}>
       {getCheckInButtonText(checkedInToday)}
     </Text>
   );
   if (checkingIn) {
-    checkInCircleNode = <ActivityIndicator />;
+    checkInCircleNode = <ActivityIndicator color={theme.primary} />;
   }
 
   let loadingHomePlanNode = null;
   if (loadingHomePlan) {
-    loadingHomePlanNode = <ActivityIndicator style={{ marginVertical: 10 }} />;
+    loadingHomePlanNode = <ActivityIndicator color={theme.primary} style={{ marginVertical: 10 }} />;
   }
 
   let homePlanErrorNode = null;
   if (homePlanError) {
-    homePlanErrorNode = <Text style={styles.todoError}>{homePlanError}</Text>;
+    homePlanErrorNode = <Text style={[styles.todoError, { color: errorColor }]}>{homePlanError}</Text>;
   }
 
   let canvasPlanWarningNode = null;
   if (canvasPlanWarning) {
-    canvasPlanWarningNode = <Text style={styles.todoWarning}>{canvasPlanWarning}</Text>;
+    canvasPlanWarningNode = (
+      <Text style={[styles.todoWarning, { color: warningColor }]}>{canvasPlanWarning}</Text>
+    );
   }
 
   let homePlanEmptyNode = null;
@@ -1317,40 +1370,51 @@ export default function HomeScreen() {
     if (!homePlanError) {
       if (groupedHomePlan.length === 0) {
         homePlanEmptyNode = (
-          <Text style={styles.todoEmpty}>{getPlanEmptyMessage(homeCanvasConnected)}</Text>
+          <Text style={[styles.todoEmpty, { color: theme.textSecondary }]}>
+            {getPlanEmptyMessage(homeCanvasConnected)}
+          </Text>
         );
       }
     }
   }
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.headerRow}>
           <View style={styles.headerSide} />
-          <Text style={styles.headerTitle}>STUDENT MOTIVATION</Text>
+          <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>STUDENT MOTIVATION</Text>
 
           <View style={styles.headerSideRight}>
-            {renderAvatarNode(avatarUrl, avatarInitial)}
+            {renderAvatarNode(
+              avatarUrl,
+              avatarInitial,
+              avatarFallbackBackgroundColor,
+              avatarFallbackTextColor
+            )}
           </View>
         </View>
 
-        <Text style={styles.greeting}>
+        <Text style={[styles.greeting, { color: theme.textPrimary }]}>
           hi <Text style={styles.greetingBold}>{username}</Text>, how are you today?
         </Text>
 
         <View style={styles.statsRow}>
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Lasting days</Text>
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.cardLabel, { color: theme.textPrimary }]}>Lasting days</Text>
             <View style={{ height: 6 }} />
             {lastingDaysValueNode}
-            <Text style={styles.cardHint}>Continuous sign-in builds habits</Text>
+            <Text style={[styles.cardHint, { color: theme.textSecondary }]}>
+              Continuous sign-in builds habits
+            </Text>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>points</Text>
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.cardLabel, { color: theme.textPrimary }]}>points</Text>
             <View style={{ height: 6 }} />
             {pointsValueNode}
-            <Text style={styles.cardHint}>Earn points by daily check-in</Text>
+            <Text style={[styles.cardHint, { color: theme.textSecondary }]}>
+              Earn points by daily check-in
+            </Text>
           </View>
         </View>
 
@@ -1362,6 +1426,11 @@ export default function HomeScreen() {
             disabled={checkingIn || checkedInToday}
             style={({ pressed }) => [
               styles.circle,
+              {
+                backgroundColor: checkInCircleBackgroundColor,
+                borderColor: theme.border,
+                borderWidth: 1,
+              },
               getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
               getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
             ]}
@@ -1370,21 +1439,21 @@ export default function HomeScreen() {
           </Pressable>
 
           <View style={styles.infoRow}>
-            <Text style={styles.star}>*</Text>
+            <Text style={[styles.star, { color: theme.textMuted }]}>*</Text>
             <View style={{ flex: 1 }}>
-              <Text style={styles.infoTitle}>
+              <Text style={[styles.infoTitle, { color: theme.textPrimary }]}>
                 Signed in for a total of {getSummaryValueText(summaryReady, totalSignedDays)} days
               </Text>
-              <Text style={styles.infoSub}>
+              <Text style={[styles.infoSub, { color: theme.textPrimary }]}>
                 {getSummaryStatusText(Boolean(summaryError), checkedInToday)}
               </Text>
-              <View style={styles.progressLine} />
+              <View style={[styles.progressLine, { backgroundColor: theme.border }]} />
             </View>
           </View>
         </View>
 
-        <View style={styles.todoCard}>
-          <Text style={styles.todoTitle}>Things to be done within seven days</Text>
+        <View style={[styles.todoCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[styles.todoTitle, { color: theme.textPrimary }]}>Things to be done within seven days</Text>
           {loadingHomePlanNode}
           {homePlanErrorNode}
           {canvasPlanWarningNode}
@@ -1392,7 +1461,7 @@ export default function HomeScreen() {
 
           {groupedHomePlan.map((section) => (
             <View key={section.key} style={styles.todoSection}>
-              <Text style={styles.todoSectionTitle}>
+              <Text style={[styles.todoSectionTitle, { color: theme.textSecondary }]}>
                 {section.title} ({section.items.length})
               </Text>
 
@@ -1403,34 +1472,41 @@ export default function HomeScreen() {
                   Row = Pressable;
                 }
                 const rowProps = buildPlanRowProps(safeItem, openPlanItem);
-                let todoLinkHintNode = null;
-                if (safeItem.htmlUrl) {
-                  todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
-                }
 
                 return (
                   <Row key={safeItem.id} {...rowProps}>
-                    {renderTodoAvatarNode(avatarUrl, avatarInitial)}
+                    {renderTodoAvatarNode(
+                      avatarUrl,
+                      avatarInitial,
+                      avatarFallbackBackgroundColor,
+                      avatarFallbackTextColor
+                    )}
 
                     <View style={{ flex: 1 }}>
                       <View style={styles.todoTopRow}>
-                        <Text style={styles.todoTop}>{formatDaysLeft(item)}</Text>
+                        <Text style={[styles.todoTop, { color: theme.textPrimary }]}>{formatDaysLeft(item)}</Text>
                       <View
                         style={[
                           styles.todoSourceBadge,
-                          getPlanSourceBadgeStyle(safeItem),
+                          getPlanSourceBadgeStyle(safeItem, isDarkTheme),
                         ]}
                       >
-                        <Text style={styles.todoSourceBadgeText}>
+                        <Text style={[styles.todoSourceBadgeText, { color: theme.textPrimary }]}>
                           {getPlanSourceLabel(safeItem)}
                         </Text>
                       </View>
                       </View>
-                      <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
-                      <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
-                      <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
-                      {todoLinkHintNode}
-                      <View style={styles.todoLine} />
+                      <Text style={[styles.todoText, { color: theme.textSecondary }]}>
+                        {safeItem.title || 'Untitled task'}
+                      </Text>
+                      <Text style={[styles.todoMeta, { color: theme.textMuted }]}>{getPlanDetail(safeItem)}</Text>
+                      <Text style={[styles.todoMetaStrong, { color: theme.textSecondary }]}>
+                        {formatPlanDateTime(safeItem)}
+                      </Text>
+                      {safeItem.htmlUrl ? (
+                        <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open in Canvas</Text>
+                      ) : null}
+                      <View style={[styles.todoLine, { backgroundColor: theme.border }]} />
                     </View>
                   </Row>
                 );
@@ -1444,11 +1520,6 @@ export default function HomeScreen() {
               isExpanded = Boolean(expandedReviewSections[section.key]);
             }
 
-            let toggleHintText = 'Tap to show';
-            if (isExpanded) {
-              toggleHintText = 'Tap to hide';
-            }
-
             let toggleButtonText = 'Show';
             if (isExpanded) {
               toggleButtonText = 'Hide';
@@ -1460,7 +1531,7 @@ export default function HomeScreen() {
                 if (!homePlanError) {
                   if (section.items.length === 0) {
                     currentReviewEmptyNode = (
-                      <Text style={styles.todoEmpty}>
+                      <Text style={[styles.todoEmpty, { color: theme.textSecondary }]}>
                         {getReviewEmptyMessage(section.emptyLabel, homeCanvasConnected)}
                       </Text>
                     );
@@ -1471,7 +1542,7 @@ export default function HomeScreen() {
 
             return (
               <React.Fragment key={section.key}>
-                <View style={styles.todoDivider} />
+                <View style={[styles.todoDivider, { backgroundColor: theme.border }]} />
                 <View style={styles.todoSection}>
                   <Pressable
                     onPress={() => toggleReviewSection(section.key)}
@@ -1481,12 +1552,15 @@ export default function HomeScreen() {
                     ]}
                   >
                     <View style={styles.todoReviewToggleTextWrap}>
-                      <Text style={styles.todoSectionTitle}>{section.title}</Text>
-                      <Text style={styles.todoReviewToggleHint}>{toggleHintText}</Text>
+                      <Text style={[styles.todoSectionTitle, { color: theme.textSecondary }]}>{section.title}</Text>
                     </View>
-                    <Text style={styles.todoReviewToggleIcon}>{toggleButtonText}</Text>
+                    <Text style={[styles.todoReviewToggleIcon, { color: theme.primary }]}>
+                      {toggleButtonText}
+                    </Text>
                   </Pressable>
-                  <Text style={styles.todoReviewSummary}>{section.summaryText}</Text>
+                  <Text style={[styles.todoReviewSummary, { color: theme.textSecondary }]}>
+                    {section.summaryText}
+                  </Text>
                   {currentReviewEmptyNode}
 
                   {isExpanded ? section.items.map((item) => {
@@ -1496,34 +1570,45 @@ export default function HomeScreen() {
                       Row = Pressable;
                     }
                     const rowProps = buildPlanRowProps(safeItem, openPlanItem);
-                    let todoLinkHintNode = null;
-                    if (safeItem.htmlUrl) {
-                      todoLinkHintNode = <Text style={styles.todoLinkHint}>Open in Canvas</Text>;
-                    }
 
                     return (
                       <Row key={safeItem.id} {...rowProps}>
-                        {renderTodoAvatarNode(avatarUrl, avatarInitial)}
+                        {renderTodoAvatarNode(
+                          avatarUrl,
+                          avatarInitial,
+                          avatarFallbackBackgroundColor,
+                          avatarFallbackTextColor
+                        )}
 
                         <View style={{ flex: 1 }}>
                           <View style={styles.todoTopRow}>
-                            <Text style={styles.todoTop}>{getReviewStatusText(safeItem)}</Text>
+                            <Text style={[styles.todoTop, { color: theme.textPrimary }]}>
+                              {getReviewStatusText(safeItem)}
+                            </Text>
                             <View
                               style={[
                                 styles.todoSourceBadge,
-                                getPlanSourceBadgeStyle(safeItem),
+                                getPlanSourceBadgeStyle(safeItem, isDarkTheme),
                               ]}
                             >
-                              <Text style={styles.todoSourceBadgeText}>
+                              <Text style={[styles.todoSourceBadgeText, { color: theme.textPrimary }]}>
                                 {getPlanSourceLabel(safeItem)}
                               </Text>
                             </View>
                           </View>
-                          <Text style={styles.todoText}>{safeItem.title || 'Untitled task'}</Text>
-                          <Text style={styles.todoMeta}>{getPlanDetail(safeItem)}</Text>
-                          <Text style={styles.todoMetaStrong}>{formatPlanDateTime(safeItem)}</Text>
-                          {todoLinkHintNode}
-                          <View style={styles.todoLine} />
+                          <Text style={[styles.todoText, { color: theme.textSecondary }]}>
+                            {safeItem.title || 'Untitled task'}
+                          </Text>
+                          <Text style={[styles.todoMeta, { color: theme.textMuted }]}>
+                            {getPlanDetail(safeItem)}
+                          </Text>
+                          <Text style={[styles.todoMetaStrong, { color: theme.textSecondary }]}>
+                            {formatPlanDateTime(safeItem)}
+                          </Text>
+                          {safeItem.htmlUrl ? (
+                            <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open in Canvas</Text>
+                          ) : null}
+                          <View style={[styles.todoLine, { backgroundColor: theme.border }]} />
                         </View>
                       </Row>
                     );

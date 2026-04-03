@@ -16,14 +16,12 @@ import {
 import { useClerk, useUser } from '@clerk/clerk-expo';
 import * as ImagePicker from 'expo-image-picker';
 import { getCustomDisplayNameFromUser, getDisplayNameFromUser } from '../../lib/user-display';
-import { useAppTheme } from '../../lib/app-theme';
 
 const MAX_NAME_LENGTH = 40;
 
 export default function MyProfileScreen() {
   const { signOut } = useClerk();
   const { user, isLoaded } = useUser();
-  const { themeMode, theme, setThemeMode } = useAppTheme();
   const safeUser = user || {};
   const currentDisplayName = getDisplayNameFromUser(safeUser);
   const currentCustomDisplayName = getCustomDisplayNameFromUser(safeUser);
@@ -263,7 +261,7 @@ export default function MyProfileScreen() {
 
   if (!isLoaded) {
     return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
+      <SafeAreaView style={styles.safe}>
         <View style={styles.loadingWrap}>
           <ActivityIndicator />
         </View>
@@ -279,15 +277,11 @@ export default function MyProfileScreen() {
         disabled={saving}
         style={({ pressed }) => [
           styles.secondaryButton,
-          {
-            backgroundColor: theme.secondaryBg,
-            borderColor: theme.secondaryBorder,
-          },
           pressed ? styles.buttonPressed : null,
           saving ? styles.buttonDisabled : null,
         ]}
       >
-        <Text style={[styles.secondaryButtonText, { color: theme.secondaryText }]}>Reset name</Text>
+        <Text style={styles.secondaryButtonText}>Reset name</Text>
       </Pressable>
     );
   }
@@ -311,33 +305,21 @@ export default function MyProfileScreen() {
         disabled={avatarSaving}
         style={({ pressed }) => [
           styles.headerSecondaryButton,
-          {
-            backgroundColor: theme.secondaryBg,
-            borderColor: theme.secondaryBorder,
-          },
           pressed ? styles.buttonPressed : null,
           avatarSaving ? styles.buttonDisabled : null,
         ]}
       >
-        <Text style={[styles.headerSecondaryButtonText, { color: theme.secondaryText }]}>Remove avatar</Text>
+        <Text style={styles.headerSecondaryButtonText}>Remove avatar</Text>
       </Pressable>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
+    <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
-        <View
-          style={[
-            styles.headerCard,
-            {
-              backgroundColor: theme.heroBg,
-              borderColor: theme.heroBorder,
-            },
-          ]}
-        >
+        <View style={styles.headerCard}>
           <View style={styles.headerTopRow}>
-            <Text style={[styles.headerEyebrow, { color: theme.heroMuted }]}>Profile</Text>
+            <Text style={styles.headerEyebrow}>Profile</Text>
           </View>
 
           <View style={styles.avatarHeroWrap}>
@@ -349,9 +331,7 @@ export default function MyProfileScreen() {
           </View>
 
           <Text style={styles.headerName}>{currentDisplayName}</Text>
-          <Text style={[styles.headerSubtitle, { color: theme.textOnDarkMuted }]}>
-            Student Motivation account
-          </Text>
+          <Text style={styles.headerSubtitle}>Student Motivation account</Text>
 
           <View style={styles.headerButtonColumn}>
             <Pressable
@@ -359,12 +339,11 @@ export default function MyProfileScreen() {
               disabled={avatarSaving}
               style={({ pressed }) => [
                 styles.headerPrimaryButton,
-                { backgroundColor: theme.primary },
                 pressed ? styles.buttonPressed : null,
                 avatarSaving ? styles.buttonDisabled : null,
               ]}
             >
-              <Text style={[styles.headerPrimaryButtonText, { color: theme.primaryText }]}>
+              <Text style={styles.headerPrimaryButtonText}>
                 {avatarSaving ? 'Saving...' : 'Change avatar'}
               </Text>
             </Pressable>
@@ -373,36 +352,20 @@ export default function MyProfileScreen() {
           </View>
         </View>
 
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Display name</Text>
-          <Text style={[styles.currentName, { color: theme.textPrimary }]}>{currentDisplayName}</Text>
+        <View style={styles.card}>
+          <Text style={styles.sectionLabel}>Display name</Text>
+          <Text style={styles.currentName}>{currentDisplayName}</Text>
 
-          <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>Custom display name</Text>
+          <Text style={styles.inputLabel}>Custom display name</Text>
           <TextInput
             value={nameInput}
             onChangeText={setNameInput}
             maxLength={MAX_NAME_LENGTH}
             placeholder="Enter the name you want to show"
-            placeholderTextColor={theme.textMuted}
             autoCapitalize="words"
             autoCorrect={false}
             editable={!saving}
-            style={[
-              styles.input,
-              {
-                backgroundColor: theme.surfaceMuted,
-                borderColor: theme.borderSoft,
-                color: theme.textPrimary,
-              },
-            ]}
+            style={styles.input}
           />
 
           <View style={styles.nameActionRow}>
@@ -412,12 +375,11 @@ export default function MyProfileScreen() {
               style={({ pressed }) => [
                 styles.primaryButton,
                 styles.nameActionPrimary,
-                { backgroundColor: theme.primary },
                 pressed ? styles.buttonPressed : null,
                 saving ? styles.buttonDisabled : null,
               ]}
             >
-              <Text style={[styles.primaryButtonText, { color: theme.primaryText }]}>
+              <Text style={styles.primaryButtonText}>
                 {saving ? 'Saving...' : 'Save name'}
               </Text>
             </Pressable>
@@ -426,92 +388,15 @@ export default function MyProfileScreen() {
           </View>
         </View>
 
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-            },
-          ]}
-        >
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Appearance</Text>
-          <View style={styles.themeControl}>
-            <Pressable
-              onPress={() => setThemeMode('light')}
-              style={({ pressed }) => [
-                styles.themeOption,
-                {
-                  backgroundColor: themeMode === 'light' ? '#FFFFFF' : theme.surfaceMuted,
-                  borderColor: themeMode === 'light' ? theme.primary : theme.borderSoft,
-                },
-                pressed ? styles.buttonPressed : null,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.themeOptionTitle,
-                  {
-                    color: themeMode === 'light' ? theme.textPrimary : theme.textSecondary,
-                  },
-                ]}
-              >
-                Day mode
-              </Text>
-              <Text style={[styles.themeOptionSubtitle, { color: theme.textMuted }]}>
-                Bright background and lighter surfaces
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setThemeMode('dark')}
-              style={({ pressed }) => [
-                styles.themeOption,
-                {
-                  backgroundColor: themeMode === 'dark' ? theme.heroBg : theme.surfaceMuted,
-                  borderColor: themeMode === 'dark' ? theme.primary : theme.borderSoft,
-                },
-                pressed ? styles.buttonPressed : null,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.themeOptionTitle,
-                  {
-                    color: themeMode === 'dark' ? theme.textOnDark : theme.textSecondary,
-                  },
-                ]}
-              >
-                Dark mode
-              </Text>
-              <Text style={[styles.themeOptionSubtitle, { color: theme.textMuted }]}>
-                Darker app chrome with softer contrast
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View
-          style={[
-            styles.dangerCard,
-            {
-              backgroundColor: theme.surfaceDanger,
-              borderColor: theme.borderDanger,
-            },
-          ]}
-        >
+        <View style={styles.dangerCard}>
           <Pressable
             onPress={() => signOut()}
             style={({ pressed }) => [
               styles.signOutButton,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.dangerBorder,
-              },
               pressed ? styles.buttonPressed : null,
             ]}
           >
-            <Text style={[styles.signOutButtonText, { color: theme.dangerText }]}>Sign out</Text>
+            <Text style={styles.signOutButtonText}>Sign out</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -664,24 +549,6 @@ const styles = StyleSheet.create({
     color: '#E8EEF7',
     fontSize: 14,
     fontWeight: '700',
-  },
-  themeControl: {
-    gap: 10,
-  },
-  themeOption: {
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 4,
-  },
-  themeOptionTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  themeOptionSubtitle: {
-    fontSize: 12,
-    lineHeight: 17,
   },
   sectionLabel: {
     fontSize: 12,
