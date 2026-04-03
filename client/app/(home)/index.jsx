@@ -28,7 +28,7 @@ const HOME_REVIEW_DAYS = 365;
 const HOME_PLAN_CACHE_TTL_MS = 60 * 1000;
 const HOME_PLAN_DEFER_MS = 400;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const TOMORROW_NOTE_MAX_LENGTH = 50;
+const TOMORROW_NOTE_MAX_LENGTH = 200;
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REVIEW_RANGE_OPTIONS = [
@@ -1439,7 +1439,7 @@ export default function HomeScreen() {
     const nextTodayNote = normalizeTomorrowNoteInput(safeOptions.todayNote);
     const nextYesterdayNote = normalizeTomorrowNoteInput(safeOptions.yesterdayNote);
     let nextTitle = 'Note for tomorrow';
-    let nextSubtitle = 'Write one short line for tomorrow.';
+    let nextSubtitle = 'Write a note for tomorrow.';
 
     if (safeOptions.mode === 'afterCheckIn') {
       nextTitle = 'Checked in today';
@@ -2096,7 +2096,7 @@ export default function HomeScreen() {
             ) : null}
 
             <Text style={[styles.noteInputLabel, { color: theme.textPrimary }]}>
-              Write one line for tomorrow
+              Write a note for tomorrow
             </Text>
             <TextInput
               value={noteDraft}

@@ -48,7 +48,7 @@ if (process.env.CANVAS_TOKEN_SECRET) {
 }
 const TASK_MODE_DEADLINE = 'deadline'
 const TASK_MODE_RANGE = 'range'
-const NEXT_DAY_NOTE_MAX_LENGTH = 50
+const NEXT_DAY_NOTE_MAX_LENGTH = 200
 
 function normalizeNextDayNote(value) {
   let safeValue = ''
