@@ -581,17 +581,12 @@ const buildPlanRowProps = (item, openPlanItem) => {
   const safeItem = item || {};
   if (safeItem.htmlUrl) {
     return {
-      onPress: () => openPlanItem(safeItem),
-      style: ({ pressed }) => [
-        styles.todoRow,
-        styles.todoRowClickable,
-        getStyleWhen(pressed, { opacity: 0.75 }),
-      ],
+      onPress: function () {
+        openPlanItem(safeItem);
+      },
     };
   }
-  return {
-    style: styles.todoRow,
-  };
+  return {};
 };
 
 const renderAvatarNode = (avatarUrl, avatarInitial, fallbackBackgroundColor, fallbackTextColor) => {
@@ -665,6 +660,76 @@ const groupPlanItems = (items) => {
   });
 
   return sections.filter((section) => section.items.length > 0);
+};
+
+const countTasksDueToday = (items) => {
+  if (!Array.isArray(items)) {
+    return 0;
+  }
+
+  const now = new Date();
+  let total = 0;
+
+  items.forEach((item) => {
+    const timestamp = getItemTimestamp(item);
+    if (timestamp === null) {
+      return;
+    }
+
+    const date = new Date(timestamp);
+    if (date.getFullYear() !== now.getFullYear()) {
+      return;
+    }
+    if (date.getMonth() !== now.getMonth()) {
+      return;
+    }
+    if (date.getDate() !== now.getDate()) {
+      return;
+    }
+
+    total += 1;
+  });
+
+  return total;
+};
+
+const getHomeHeroBadgeText = (dueTodayCount, totalUpcomingCount) => {
+  if (dueTodayCount === 1) {
+    return 'You have 1 task due today';
+  }
+  if (dueTodayCount > 1) {
+    return 'You have ' + String(dueTodayCount) + ' tasks due today';
+  }
+  if (totalUpcomingCount > 0) {
+    return 'Your next task is coming up';
+  }
+  return 'No tasks due today';
+};
+
+const getProgressBarWidth = (completedCount, totalCount) => {
+  if (totalCount <= 0) {
+    return '0%';
+  }
+
+  let percentNumber = (completedCount / totalCount) * 100;
+  if (percentNumber < 0) {
+    percentNumber = 0;
+  }
+  if (percentNumber > 100) {
+    percentNumber = 100;
+  }
+
+  return String(percentNumber) + '%';
+};
+
+const getWeeklyProgressHintText = (completedCount, totalCount) => {
+  if (totalCount <= 0) {
+    return 'No completed tasks yet this week';
+  }
+  if (completedCount >= totalCount) {
+    return 'You completed every task from the last 7 days';
+  }
+  return 'Stay on track for your weekly goal';
 };
 
 export default function HomeScreen() {
@@ -1259,6 +1324,25 @@ export default function HomeScreen() {
 
   const lastingDays = streakDays || totalSignedDays;
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
+  const dueTodayCount = React.useMemo(() => countTasksDueToday(homePlanItems), [homePlanItems]);
+  let totalUpcomingCount = 0;
+  groupedHomePlan.forEach((section) => {
+    const safeSection = section || {};
+    if (Array.isArray(safeSection.items)) {
+      totalUpcomingCount += safeSection.items.length;
+    }
+  });
+  const heroBadgeText = getHomeHeroBadgeText(dueTodayCount, totalUpcomingCount);
+  const weeklyReviewItems = React.useMemo(() => {
+    return filterReviewItemsByDays(recentPlanItems, 7);
+  }, [recentPlanItems]);
+  const weeklyProgressSummary = React.useMemo(() => {
+    return buildReviewSummary(weeklyReviewItems);
+  }, [weeklyReviewItems]);
+  const weeklyCompletedCount = weeklyProgressSummary.completedCount || 0;
+  const weeklyTotalCount = weeklyProgressSummary.totalCount || 0;
+  const weeklyProgressWidth = getProgressBarWidth(weeklyCompletedCount, weeklyTotalCount);
+  const weeklyProgressHintText = getWeeklyProgressHintText(weeklyCompletedCount, weeklyTotalCount);
   const reviewSections = React.useMemo(() => {
     return REVIEW_RANGE_OPTIONS.map((range) => {
       const items = filterReviewItemsByDays(recentPlanItems, range.days);
@@ -1377,83 +1461,191 @@ export default function HomeScreen() {
       }
     }
   }
+
+  let streakBadgeText = String(lastingDays) + '-day streak';
+  let weekCountText = String(totalUpcomingCount) + ' upcoming tasks';
+  if (totalUpcomingCount === 1) {
+    weekCountText = '1 upcoming task';
+  }
+  if (totalUpcomingCount === 0) {
+    weekCountText = 'No upcoming tasks';
+  }
+
+  let checkInStatusText = 'Today - not yet';
+  if (checkedInToday) {
+    checkInStatusText = 'Today - checked in';
+  }
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerSide} />
-          <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>STUDENT MOTIVATION</Text>
-
-          <View style={styles.headerSideRight}>
-            {renderAvatarNode(
-              avatarUrl,
-              avatarInitial,
-              avatarFallbackBackgroundColor,
-              avatarFallbackTextColor
-            )}
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="always"
+      >
+        <View
+          style={[
+            styles.heroCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              shadowColor: isDarkTheme ? '#000000' : '#C9B79D',
+            },
+          ]}
+        >
+          <View style={styles.heroHeaderRow}>
+            <View style={styles.heroAvatarSpacer} />
+            <View style={styles.heroTitleWrap}>
+              <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>STUDENT MOTIVATION</Text>
+            </View>
+            <View style={styles.heroAvatarWrap}>
+              {renderAvatarNode(
+                avatarUrl,
+                avatarInitial,
+                avatarFallbackBackgroundColor,
+                avatarFallbackTextColor
+              )}
+            </View>
           </View>
+          <View style={[styles.heroBadge, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
+            <Text style={[styles.heroBadgeText, { color: theme.primary }]}>{heroBadgeText}</Text>
+          </View>
+          <Text style={[styles.greeting, { color: theme.textPrimary }]}>
+            hi <Text style={styles.greetingBold}>{username}</Text>, how are you today?
+          </Text>
         </View>
 
-        <Text style={[styles.greeting, { color: theme.textPrimary }]}>
-          hi <Text style={styles.greetingBold}>{username}</Text>, how are you today?
-        </Text>
-
         <View style={styles.statsRow}>
-          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.cardLabel, { color: theme.textPrimary }]}>Lasting days</Text>
-            <View style={{ height: 6 }} />
+          <View
+            style={[
+              styles.summaryCard,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+                shadowColor: isDarkTheme ? '#000000' : '#D4C0A5',
+              },
+            ]}
+          >
+            <Text style={[styles.cardLabel, { color: theme.textSecondary }]}>Current streak</Text>
+            <View style={styles.summaryCardGap} />
             {lastingDaysValueNode}
-            <Text style={[styles.cardHint, { color: theme.textSecondary }]}>
-              Continuous sign-in builds habits
-            </Text>
+            <Text style={[styles.cardHint, { color: theme.textMuted }]}>Keep your habit alive</Text>
           </View>
 
-          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.cardLabel, { color: theme.textPrimary }]}>points</Text>
-            <View style={{ height: 6 }} />
+          <View
+            style={[
+              styles.summaryCard,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+                shadowColor: isDarkTheme ? '#000000' : '#D4C0A5',
+              },
+            ]}
+          >
+            <Text style={[styles.cardLabel, { color: theme.textSecondary }]}>Points</Text>
+            <View style={styles.summaryCardGap} />
             {pointsValueNode}
-            <Text style={[styles.cardHint, { color: theme.textSecondary }]}>
-              Earn points by daily check-in
-            </Text>
+            <Text style={[styles.cardHint, { color: theme.textMuted }]}>Earn more from check-in</Text>
           </View>
         </View>
 
         {summaryErrorNode}
 
-        <View style={styles.centerBlock}>
-          <Pressable
-            onPress={onCheckIn}
-            disabled={checkingIn || checkedInToday}
-            style={({ pressed }) => [
-              styles.circle,
-              {
-                backgroundColor: checkInCircleBackgroundColor,
-                borderColor: theme.border,
-                borderWidth: 1,
-              },
-              getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
-              getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
-            ]}
-          >
-            {checkInCircleNode}
-          </Pressable>
+        <View
+          style={[
+            styles.checkInCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
+            },
+          ]}
+        >
+          <View style={[styles.checkInPill, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
+            <Text style={[styles.checkInPillText, { color: theme.primary }]}>Daily check-in</Text>
+          </View>
 
-          <View style={styles.infoRow}>
-            <Text style={[styles.star, { color: theme.textMuted }]}>*</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.infoTitle, { color: theme.textPrimary }]}>
-                Signed in for a total of {getSummaryValueText(summaryReady, totalSignedDays)} days
-              </Text>
-              <Text style={[styles.infoSub, { color: theme.textPrimary }]}>
-                {getSummaryStatusText(Boolean(summaryError), checkedInToday)}
-              </Text>
-              <View style={[styles.progressLine, { backgroundColor: theme.border }]} />
+          <View style={styles.centerBlock}>
+            <Pressable
+              onPress={onCheckIn}
+              disabled={checkingIn || checkedInToday}
+              style={({ pressed }) => [
+                styles.circle,
+                {
+                  backgroundColor: checkInCircleBackgroundColor,
+                  borderColor: theme.border,
+                  borderWidth: 1,
+                  shadowColor: isDarkTheme ? '#000000' : '#D9C7AC',
+                },
+                getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
+                getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
+              ]}
+            >
+              {checkInCircleNode}
+              <Text style={[styles.checkInCircleSubtext, { color: theme.textSecondary }]}>and keep going</Text>
+              <View style={[styles.circleProgressTrack, { backgroundColor: theme.border }]}>
+                <View
+                  style={[
+                    styles.circleProgressFill,
+                    {
+                      backgroundColor: theme.primary,
+                      width: getProgressBarWidth(Math.min(lastingDays, 7), 7),
+                    },
+                  ]}
+                />
+              </View>
+            </Pressable>
+
+            <View
+              style={[
+                styles.streakBadge,
+                { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+              ]}
+            >
+              <Text style={[styles.streakBadgeText, { color: theme.primary }]}>{streakBadgeText}</Text>
+            </View>
+
+            <View style={styles.infoRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.infoTitle, { color: theme.textPrimary }]}>
+                  Signed in for a total of {getSummaryValueText(summaryReady, totalSignedDays)} days
+                </Text>
+                <Text style={[styles.infoSub, { color: theme.textSecondary }]}>{checkInStatusText}</Text>
+                <View style={[styles.progressLine, { backgroundColor: theme.border }]}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        backgroundColor: theme.primary,
+                        width: getProgressBarWidth(Math.min(lastingDays, 7), 7),
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
             </View>
           </View>
         </View>
 
-        <View style={[styles.todoCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.todoTitle, { color: theme.textPrimary }]}>Things to be done within seven days</Text>
+        <View
+          style={[
+            styles.todoCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
+            },
+          ]}
+        >
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={[styles.sectionEyebrow, { color: theme.textMuted }]}>This week</Text>
+              <Text style={[styles.todoTitle, { color: theme.textPrimary }]}>Upcoming tasks</Text>
+            </View>
+            <View style={[styles.sectionCountBadge, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
+              <Text style={[styles.sectionCountText, { color: theme.primary }]}>{weekCountText}</Text>
+            </View>
+          </View>
           {loadingHomePlanNode}
           {homePlanErrorNode}
           {canvasPlanWarningNode}
@@ -1462,7 +1654,7 @@ export default function HomeScreen() {
           {groupedHomePlan.map((section) => (
             <View key={section.key} style={styles.todoSection}>
               <Text style={[styles.todoSectionTitle, { color: theme.textSecondary }]}>
-                {section.title} ({section.items.length})
+                {section.title}
               </Text>
 
               {section.items.map((item) => {
@@ -1472,9 +1664,27 @@ export default function HomeScreen() {
                   Row = Pressable;
                 }
                 const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+                const baseRowStyle = [
+                  styles.todoItemCard,
+                  { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                ];
+                let nextRowStyle = baseRowStyle;
+                if (safeItem.htmlUrl) {
+                  nextRowStyle = function ({ pressed }) {
+                    return [
+                      styles.todoItemCard,
+                      { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                      getStyleWhen(pressed, styles.todoRowPressed),
+                    ];
+                  };
+                }
 
                 return (
-                  <Row key={safeItem.id} {...rowProps}>
+                  <Row
+                    key={safeItem.id}
+                    {...rowProps}
+                    style={nextRowStyle}
+                  >
                     {renderTodoAvatarNode(
                       avatarUrl,
                       avatarInitial,
@@ -1485,18 +1695,18 @@ export default function HomeScreen() {
                     <View style={{ flex: 1 }}>
                       <View style={styles.todoTopRow}>
                         <Text style={[styles.todoTop, { color: theme.textPrimary }]}>{formatDaysLeft(item)}</Text>
-                      <View
-                        style={[
-                          styles.todoSourceBadge,
-                          getPlanSourceBadgeStyle(safeItem, isDarkTheme),
-                        ]}
-                      >
-                        <Text style={[styles.todoSourceBadgeText, { color: theme.textPrimary }]}>
-                          {getPlanSourceLabel(safeItem)}
-                        </Text>
+                        <View
+                          style={[
+                            styles.todoSourceBadge,
+                            getPlanSourceBadgeStyle(safeItem, isDarkTheme),
+                          ]}
+                        >
+                          <Text style={[styles.todoSourceBadgeText, { color: theme.textPrimary }]}>
+                            {getPlanSourceLabel(safeItem)}
+                          </Text>
+                        </View>
                       </View>
-                      </View>
-                      <Text style={[styles.todoText, { color: theme.textSecondary }]}>
+                      <Text style={[styles.todoTaskTitle, { color: theme.textPrimary }]}>
                         {safeItem.title || 'Untitled task'}
                       </Text>
                       <Text style={[styles.todoMeta, { color: theme.textMuted }]}>{getPlanDetail(safeItem)}</Text>
@@ -1504,15 +1714,62 @@ export default function HomeScreen() {
                         {formatPlanDateTime(safeItem)}
                       </Text>
                       {safeItem.htmlUrl ? (
-                        <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open in Canvas</Text>
+                        <View style={[styles.todoActionChip, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
+                          <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open task</Text>
+                        </View>
                       ) : null}
-                      <View style={[styles.todoLine, { backgroundColor: theme.border }]} />
                     </View>
                   </Row>
                 );
               })}
             </View>
           ))}
+        </View>
+
+        <View
+          style={[
+            styles.progressCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
+            },
+          ]}
+        >
+          <Text style={[styles.sectionEyebrow, { color: theme.textMuted }]}>Weekly progress</Text>
+          <Text style={[styles.progressTitle, { color: theme.textPrimary }]}>
+            {weeklyCompletedCount} of {weeklyTotalCount} tasks completed
+          </Text>
+          <View style={[styles.progressTrackLarge, { backgroundColor: theme.border }]}>
+            <View
+              style={[
+                styles.progressFillLarge,
+                {
+                  backgroundColor: theme.primary,
+                  width: weeklyProgressWidth,
+                },
+              ]}
+            />
+          </View>
+          <Text style={[styles.progressCaption, { color: theme.textMuted }]}>{weeklyProgressHintText}</Text>
+        </View>
+
+        <View
+          style={[
+            styles.reviewCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
+            },
+          ]}
+        >
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={[styles.sectionEyebrow, { color: theme.textMuted }]}>Review</Text>
+              <Text style={[styles.todoTitle, { color: theme.textPrimary }]}>Past windows</Text>
+            </View>
+          </View>
 
           {reviewSections.map((section) => {
             let isExpanded = false;
@@ -1570,9 +1827,27 @@ export default function HomeScreen() {
                       Row = Pressable;
                     }
                     const rowProps = buildPlanRowProps(safeItem, openPlanItem);
+                    const baseRowStyle = [
+                      styles.todoItemCard,
+                      { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                    ];
+                    let nextRowStyle = baseRowStyle;
+                    if (safeItem.htmlUrl) {
+                      nextRowStyle = function ({ pressed }) {
+                        return [
+                          styles.todoItemCard,
+                          { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                          getStyleWhen(pressed, styles.todoRowPressed),
+                        ];
+                      };
+                    }
 
                     return (
-                      <Row key={safeItem.id} {...rowProps}>
+                      <Row
+                        key={safeItem.id}
+                        {...rowProps}
+                        style={nextRowStyle}
+                      >
                         {renderTodoAvatarNode(
                           avatarUrl,
                           avatarInitial,
@@ -1596,7 +1871,7 @@ export default function HomeScreen() {
                               </Text>
                             </View>
                           </View>
-                          <Text style={[styles.todoText, { color: theme.textSecondary }]}>
+                          <Text style={[styles.todoTaskTitle, { color: theme.textPrimary }]}>
                             {safeItem.title || 'Untitled task'}
                           </Text>
                           <Text style={[styles.todoMeta, { color: theme.textMuted }]}>
@@ -1606,9 +1881,10 @@ export default function HomeScreen() {
                             {formatPlanDateTime(safeItem)}
                           </Text>
                           {safeItem.htmlUrl ? (
-                            <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open in Canvas</Text>
+                            <View style={[styles.todoActionChip, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
+                              <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open task</Text>
+                            </View>
                           ) : null}
-                          <View style={[styles.todoLine, { backgroundColor: theme.border }]} />
                         </View>
                       </Row>
                     );
@@ -1627,42 +1903,91 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#ffffff' },
-  container: { paddingHorizontal: 18, paddingTop: 10 },
+  container: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 32 },
 
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  headerSide: { width: 34, height: 34 },
-  headerSideRight: { width: 34, height: 34, alignItems: 'flex-end', justifyContent: 'center' },
+  heroCard: {
+    borderWidth: 1,
+    borderRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
+    marginBottom: 18,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.1,
+    shadowRadius: 28,
+    elevation: 4,
+  },
+  heroHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  heroAvatarSpacer: { width: 42 },
+  heroTitleWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  heroAvatarWrap: { width: 42, alignItems: 'flex-end', justifyContent: 'center' },
   headerTitle: {
-    flex: 1,
     textAlign: 'center',
     fontSize: 18,
     fontWeight: '800',
     color: '#111827',
-    letterSpacing: 0.3,
+    letterSpacing: 0.8,
   },
+  heroBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginBottom: 14,
+  },
+  heroBadgeText: { fontSize: 12, fontWeight: '700' },
 
-  avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f3f4f6' },
+  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#f3f4f6' },
   avatarFallback: { backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' },
   avatarFallbackText: { fontSize: 12, fontWeight: '800', color: '#111827' },
 
-  greeting: { fontSize: 14, color: '#111827', marginBottom: 14 },
+  greeting: { fontSize: 16, color: '#111827', lineHeight: 24 },
   greetingBold: { fontWeight: '800' },
 
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 18 },
-  card: {
+  summaryCard: {
     flex: 1,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
     backgroundColor: '#ffffff',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 3,
   },
+  summaryCardGap: { height: 10 },
   cardLabel: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  cardBig: { fontSize: 28, fontWeight: '900', color: '#111827' },
+  cardBig: { fontSize: 30, fontWeight: '900', color: '#111827' },
   cardBigUnit: { fontSize: 16, fontWeight: '800', color: '#111827' },
-  cardHint: { marginTop: 6, fontSize: 12, color: '#6b7280' },
+  cardHint: { marginTop: 8, fontSize: 12, lineHeight: 18, color: '#6b7280' },
 
-  centerBlock: { alignItems: 'center', marginBottom: 18 },
+  checkInCard: {
+    borderWidth: 1,
+    borderRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
+    marginBottom: 18,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  checkInPill: {
+    alignSelf: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  checkInPillText: { fontSize: 13, fontWeight: '800' },
+  centerBlock: { alignItems: 'center' },
   circle: {
     width: 230,
     height: 230,
@@ -1670,6 +1995,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.08,
+    shadowRadius: 30,
+    elevation: 4,
   },
   circleText: {
     fontSize: 22,
@@ -1678,34 +2007,147 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 28,
   },
+  checkInCircleSubtext: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  circleProgressTrack: {
+    width: 120,
+    height: 8,
+    borderRadius: 999,
+    marginTop: 20,
+    overflow: 'hidden',
+  },
+  circleProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  streakBadge: {
+    marginTop: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  streakBadgeText: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
 
-  infoRow: { marginTop: 14, width: '100%', flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  star: { fontSize: 26, color: '#9ca3af', marginTop: 1 },
-  infoTitle: { fontSize: 14, fontWeight: '800', color: '#111827' },
-  infoSub: { marginTop: 6, fontSize: 12, fontWeight: '700', color: '#111827' },
-  progressLine: { marginTop: 10, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '85%' },
+  infoRow: { marginTop: 18, width: '100%', alignItems: 'flex-start' },
+  infoTitle: { fontSize: 16, fontWeight: '800', color: '#111827', textAlign: 'center' },
+  infoSub: { marginTop: 6, fontSize: 13, fontWeight: '600', color: '#111827' },
+  progressLine: {
+    marginTop: 12,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#e5e7eb',
+    width: '100%',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
 
-  todoCard: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 14, padding: 12, backgroundColor: '#ffffff' },
-  todoTitle: { fontSize: 14, fontWeight: '800', color: '#111827', marginBottom: 10 },
+  todoCard: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 24,
+    padding: 18,
+    backgroundColor: '#ffffff',
+    marginBottom: 18,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  progressCard: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 24,
+    padding: 18,
+    backgroundColor: '#ffffff',
+    marginBottom: 18,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  reviewCard: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 24,
+    padding: 18,
+    backgroundColor: '#ffffff',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 3,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 14,
+  },
+  sectionEyebrow: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
+    letterSpacing: 0.3,
+  },
+  sectionCountBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  sectionCountText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  todoTitle: { fontSize: 28, fontWeight: '900', color: '#111827' },
   todoSection: { marginTop: 8 },
-  todoSectionTitle: { fontSize: 12, fontWeight: '800', color: '#374151', marginBottom: 6 },
-  todoRow: { flexDirection: 'row', gap: 10, paddingVertical: 10 },
-  todoRowClickable: { borderRadius: 10 },
-  todoAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f3f4f6', marginTop: 2 },
+  todoSectionTitle: { fontSize: 14, fontWeight: '800', color: '#374151', marginBottom: 10 },
+  todoItemCard: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  todoRowPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.995 }],
+  },
+  todoAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#f3f4f6', marginTop: 2 },
   todoTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  todoTop: { fontSize: 12, fontWeight: '800', color: '#111827' },
+  todoTop: { fontSize: 14, fontWeight: '900', color: '#111827' },
   todoSourceBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   todoSourceBadgeCanvas: { backgroundColor: '#dbeafe' },
   todoSourceBadgeCustom: { backgroundColor: '#dcfce7' },
   todoSourceBadgeText: { fontSize: 10, fontWeight: '800', color: '#111827' },
-  todoText: { marginTop: 4, fontSize: 13, color: '#6b7280' },
-  todoMeta: { marginTop: 4, fontSize: 11, color: '#9ca3af' },
-  todoMetaStrong: { marginTop: 3, fontSize: 11, fontWeight: '700', color: '#374151' },
-  todoLinkHint: { marginTop: 4, fontSize: 10, fontWeight: '700', color: '#2563eb' },
+  todoTaskTitle: { marginTop: 6, fontSize: 15, fontWeight: '800', color: '#111827' },
+  todoMeta: { marginTop: 4, fontSize: 12, color: '#9ca3af' },
+  todoMetaStrong: { marginTop: 4, fontSize: 12, fontWeight: '700', color: '#374151' },
+  todoActionChip: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  todoLinkHint: { fontSize: 11, fontWeight: '800', color: '#2563eb' },
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
-  todoReviewSummary: { fontSize: 11, color: '#6b7280', marginBottom: 6 },
+  todoReviewSummary: { fontSize: 12, color: '#6b7280', marginBottom: 10 },
   todoReviewToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1725,10 +2167,28 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
   },
   todoReviewToggleIcon: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: '#2563eb',
   },
-  todoDivider: { marginTop: 10, marginBottom: 4, height: 1, backgroundColor: '#e5e7eb' },
-  todoLine: { marginTop: 8, height: 3, borderRadius: 2, backgroundColor: '#e5e7eb', width: '88%' },
+  todoDivider: { marginTop: 10, marginBottom: 6, height: 1, backgroundColor: '#e5e7eb' },
+  progressTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+  progressTrackLarge: {
+    height: 10,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  progressFillLarge: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  progressCaption: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
 });
