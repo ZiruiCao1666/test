@@ -15,6 +15,7 @@ import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
+import MakeupCardPanel from '../../components/MakeupCardPanel';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -28,6 +29,7 @@ const FALLBACK_CATALOG = [
 const CATEGORY_LABELS = {
   drinks: 'Drinks',
   coupon: 'Discount Coupons',
+  makeup_card: 'Protection',
 };
 
 function getErrorMessage(error, fallbackMessage) {
@@ -438,6 +440,8 @@ export default function RewardsScreen() {
             </Pressable>
           </View>
         </View>
+
+        <MakeupCardPanel points={points} />
 
         {renderNodeWhen(error, <Text style={styles.errorText}>{error}</Text>)}
 

@@ -40,6 +40,10 @@ if (!databaseUrl) {
 
 const CHECKIN_POINTS = 5
 const NEW_USER_FIRST_WEEK_REWARDS = [1, 2, 3, 5, 8, 10, 10]
+const CHECKIN_TYPE_DAILY = 'daily'
+const CHECKIN_TYPE_MAKEUP = 'makeup'
+const MAKEUP_CARD_REWARD_TITLE = 'Make-up Card'
+const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
 const CANVAS_IV_BYTES = 12
 let CANVAS_TOKEN_SECRET = ''
@@ -83,6 +87,21 @@ function mapRewardRow(row) {
     imageUrl,
     isActive: row.is_active,
   }
+}
+
+function isMakeupCardReward(reward) {
+  let safeReward = {}
+  if (reward) {
+    safeReward = reward
+  }
+
+  if (safeReward.category === MAKEUP_CARD_REWARD_CATEGORY) {
+    return true
+  }
+  if (safeReward.title === MAKEUP_CARD_REWARD_TITLE) {
+    return true
+  }
+  return false
 }
 
 function trimTaskTime(value) {
@@ -1083,6 +1102,79 @@ async function getStreakDays(db, userId, today) {
   return 0
 }
 
+async function getMakeupCardStatus(db, userId, today) {
+  const dateResult = await db.query(
+    `
+    SELECT ($1::date - INTERVAL '1 day')::date AS yesterday
+    `,
+    [today],
+  )
+
+  let yesterday = ''
+  if (dateResult.rows && dateResult.rows.length > 0) {
+    if (dateResult.rows[0] && dateResult.rows[0].yesterday) {
+      yesterday = String(dateResult.rows[0].yesterday)
+    }
+  }
+
+  const userResult = await db.query(
+    `
+    SELECT makeup_cards
+    FROM app_users
+    WHERE clerk_user_id = $1
+    LIMIT 1
+    `,
+    [userId],
+  )
+
+  let makeupCards = 0
+  if (userResult.rows && userResult.rows.length > 0) {
+    if (userResult.rows[0] && userResult.rows[0].makeup_cards != null) {
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+  }
+
+  const yesterdayCheckinResult = await db.query(
+    `
+    SELECT checkin_type
+    FROM app_checkins
+    WHERE clerk_user_id = $1 AND checkin_date = $2
+    LIMIT 1
+    `,
+    [userId, yesterday],
+  )
+
+  let yesterdayCheckedIn = false
+  let yesterdayCheckinType = ''
+  if (yesterdayCheckinResult.rows && yesterdayCheckinResult.rows.length > 0) {
+    yesterdayCheckedIn = true
+    if (
+      yesterdayCheckinResult.rows[0] &&
+      yesterdayCheckinResult.rows[0].checkin_type !== null &&
+      yesterdayCheckinResult.rows[0].checkin_type !== undefined
+    ) {
+      yesterdayCheckinType = String(yesterdayCheckinResult.rows[0].checkin_type)
+    }
+  }
+
+  let canUse = false
+  if (makeupCards > 0) {
+    if (!yesterdayCheckedIn) {
+      canUse = true
+    }
+  }
+
+  return {
+    today,
+    yesterday,
+    makeupCards,
+    yesterdayCheckedIn,
+    yesterdayCheckinType,
+    canUse,
+    streakDays: await getStreakDays(db, userId, today),
+  }
+}
+
 function getCheckinRewardPoints(streakDays) {
   let safeStreakDays = Number(streakDays)
   if (!Number.isFinite(safeStreakDays)) {
@@ -1109,6 +1201,9 @@ async function initDb() {
     ALTER TABLE app_users
       ADD COLUMN IF NOT EXISTS points INT NOT NULL DEFAULT 0;
 
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
+
     CREATE TABLE IF NOT EXISTS app_checkins (
       id BIGSERIAL PRIMARY KEY,
       clerk_user_id TEXT NOT NULL,
@@ -1122,6 +1217,9 @@ async function initDb() {
 
     ALTER TABLE app_checkins
       ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;
+
+    ALTER TABLE app_checkins
+      ADD COLUMN IF NOT EXISTS checkin_type TEXT NOT NULL DEFAULT 'daily';
 
     CREATE TABLE IF NOT EXISTS app_canvas_credentials (
       clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
@@ -1180,6 +1278,7 @@ async function initDb() {
     `
     INSERT INTO app_rewards (title, points_cost, category, image_url, is_active)
     VALUES
+      ('Make-up Card', 100, 'makeup_card', '', TRUE),
       ('Coffee Coupon', 120, 'drinks', '', TRUE),
       ('Latte Coupon', 160, 'drinks', '', TRUE),
       ('Discount Coupon', 200, 'coupon', '', TRUE),
@@ -2052,6 +2151,146 @@ app.put('/checkins/today-note', async function (req, res) {
 })
 
 /**
+ * GET /makeup-card/status
+ * Return the current user's make-up card inventory and whether yesterday can be repaired.
+ */
+app.get('/makeup-card/status', async function (req, res) {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const today = await getLondonToday()
+    const status = await getMakeupCardStatus(pool, userId, today)
+
+    return res.json({
+      ok: true,
+      today: status.today,
+      yesterday: status.yesterday,
+      makeupCards: status.makeupCards,
+      yesterdayCheckedIn: status.yesterdayCheckedIn,
+      yesterdayCheckinType: status.yesterdayCheckinType,
+      canUse: status.canUse,
+      streakDays: status.streakDays,
+    })
+  } catch (e) {
+    console.error('[BE] /makeup-card/status error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * POST /makeup-card/use
+ * Spend one make-up card to create yesterday's check-in without normal daily points.
+ */
+app.post('/makeup-card/use', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const today = await getLondonToday()
+
+    await client.query('BEGIN')
+
+    const status = await getMakeupCardStatus(client, userId, today)
+
+    if (status.makeupCards <= 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No make-up cards available.' })
+    }
+    if (status.yesterdayCheckedIn) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Yesterday is already checked in.' })
+    }
+
+    const inserted = await client.query(
+      `
+      INSERT INTO app_checkins (clerk_user_id, checkin_date, checkin_type)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING
+      RETURNING id
+      `,
+      [userId, status.yesterday, CHECKIN_TYPE_MAKEUP],
+    )
+
+    if (inserted.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Yesterday is already checked in.' })
+    }
+
+    const updatedUser = await client.query(
+      `
+      UPDATE app_users
+      SET makeup_cards = makeup_cards - 1, last_seen_at = NOW()
+      WHERE clerk_user_id = $1 AND makeup_cards > 0
+      RETURNING points, makeup_cards
+      `,
+      [userId],
+    )
+
+    if (updatedUser.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No make-up cards available.' })
+    }
+
+    const totalResult = await client.query(
+      `
+      SELECT COUNT(*)::int AS total_days
+      FROM app_checkins
+      WHERE clerk_user_id = $1
+      `,
+      [userId],
+    )
+
+    const streakDays = await getStreakDays(client, userId, today)
+
+    await client.query('COMMIT')
+
+    let makeupCards = 0
+    let points = 0
+    if (updatedUser.rows && updatedUser.rows.length > 0) {
+      if (updatedUser.rows[0]) {
+        if (updatedUser.rows[0].makeup_cards != null) {
+          makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0
+        }
+        if (updatedUser.rows[0].points != null) {
+          points = Number(updatedUser.rows[0].points) || 0
+        }
+      }
+    }
+
+    let totalDays = 0
+    if (totalResult.rows && totalResult.rows.length > 0) {
+      if (totalResult.rows[0] && totalResult.rows[0].total_days != null) {
+        totalDays = Number(totalResult.rows[0].total_days) || 0
+      }
+    }
+
+    return res.json({
+      ok: true,
+      today,
+      repairedDate: status.yesterday,
+      makeupCards,
+      points,
+      totalDays,
+      streakDays,
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_) {
+      // no-op
+    }
+    console.error('[BE] /makeup-card/use error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
  * GET /rewards/catalog
  * Return all active rewards.
  */
@@ -2122,6 +2361,8 @@ app.post('/rewards/redeem', async function (req, res) {
       return res.status(400).json({ error: 'Reward is not active' })
     }
 
+    const makeupCardReward = isMakeupCardReward(reward)
+
     const pointsResult = await client.query(
       `
       SELECT points
@@ -2149,15 +2390,28 @@ app.post('/rewards/redeem', async function (req, res) {
       })
     }
 
-    const updatedUser = await client.query(
-      `
-      UPDATE app_users
-      SET points = points - $2, last_seen_at = NOW()
-      WHERE clerk_user_id = $1
-      RETURNING points
-      `,
-      [userId, reward.pointsCost],
-    )
+    let updatedUser = null
+    if (makeupCardReward) {
+      updatedUser = await client.query(
+        `
+        UPDATE app_users
+        SET points = points - $2, makeup_cards = makeup_cards + 1, last_seen_at = NOW()
+        WHERE clerk_user_id = $1
+        RETURNING points, makeup_cards
+        `,
+        [userId, reward.pointsCost],
+      )
+    } else {
+      updatedUser = await client.query(
+        `
+        UPDATE app_users
+        SET points = points - $2, last_seen_at = NOW()
+        WHERE clerk_user_id = $1
+        RETURNING points, makeup_cards
+        `,
+        [userId, reward.pointsCost],
+      )
+    }
 
     const orderResult = await client.query(
       `
@@ -2172,17 +2426,22 @@ app.post('/rewards/redeem', async function (req, res) {
 
     const order = orderResult.rows[0]
     let remainingPoints = 0
+    let makeupCards = 0
     if (
       updatedUser.rows &&
       updatedUser.rows.length > 0 &&
       updatedUser.rows[0]
     ) {
       remainingPoints = Number(updatedUser.rows[0].points) || 0
+      if (updatedUser.rows[0].makeup_cards != null) {
+        makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0
+      }
     }
 
     return res.json({
       ok: true,
       remainingPoints,
+      makeupCards,
       order: {
         id: order.id,
         rewardId: reward.id,
@@ -2282,12 +2541,12 @@ app.post('/checkins/today', async function (req, res) {
     // 插入签到记录：如果今天已签，rowCount=0
     const ins = await client.query(
       `
-      INSERT INTO app_checkins (clerk_user_id, checkin_date)
-      VALUES ($1, $2)
+      INSERT INTO app_checkins (clerk_user_id, checkin_date, checkin_type)
+      VALUES ($1, $2, $3)
       ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING
       RETURNING id
       `,
-      [userId, today],
+      [userId, today, CHECKIN_TYPE_DAILY],
     )
 
     const didInsert = ins.rowCount === 1
