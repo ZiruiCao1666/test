@@ -48,6 +48,27 @@ if (process.env.CANVAS_TOKEN_SECRET) {
 }
 const TASK_MODE_DEADLINE = 'deadline'
 const TASK_MODE_RANGE = 'range'
+const NEXT_DAY_NOTE_MAX_LENGTH = 200
+
+function normalizeNextDayNote(value) {
+  let safeValue = ''
+  if (value === null) {
+  } else if (value === undefined) {
+  } else {
+    safeValue = value
+  }
+
+  let safeNote = String(safeValue).trim()
+  if (!safeNote) {
+    return ''
+  }
+
+  if (safeNote.length > NEXT_DAY_NOTE_MAX_LENGTH) {
+    safeNote = safeNote.slice(0, NEXT_DAY_NOTE_MAX_LENGTH)
+  }
+
+  return safeNote
+}
 
 function mapRewardRow(row) {
   let imageUrl = ''
@@ -1096,6 +1117,12 @@ async function initDb() {
       UNIQUE (clerk_user_id, checkin_date)
     );
 
+    ALTER TABLE app_checkins
+      ADD COLUMN IF NOT EXISTS next_day_note TEXT;
+
+    ALTER TABLE app_checkins
+      ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;
+
     CREATE TABLE IF NOT EXISTS app_canvas_credentials (
       clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
       canvas_school TEXT NOT NULL DEFAULT '',
@@ -1877,11 +1904,12 @@ app.get('/checkins/status', async function (req, res) {
     await ensureUserRow(userId)
     const today = await getLondonToday()
 
-    const exists = await pool.query(
+    const todayCheckin = await pool.query(
       `
-      SELECT EXISTS(
-        SELECT 1 FROM app_checkins WHERE clerk_user_id=$1 AND checkin_date=$2
-      ) AS checked_in_today
+      SELECT next_day_note
+      FROM app_checkins
+      WHERE clerk_user_id=$1 AND checkin_date=$2
+      LIMIT 1
       `,
       [userId, today],
     )
@@ -1906,13 +1934,27 @@ app.get('/checkins/status', async function (req, res) {
       currentPoints = points.rows[0].points
     }
 
+    let checkedInToday = false
+    let todayNote = ''
+    if (todayCheckin.rows && todayCheckin.rows.length > 0) {
+      checkedInToday = true
+      if (
+        todayCheckin.rows[0] &&
+        todayCheckin.rows[0].next_day_note !== null &&
+        todayCheckin.rows[0].next_day_note !== undefined
+      ) {
+        todayNote = String(todayCheckin.rows[0].next_day_note)
+      }
+    }
+
     return res.json({
       ok: true,
       today,
-      checkedInToday: Boolean(exists.rows[0].checked_in_today),
+      checkedInToday,
       totalDays: total.rows[0].total_days,
       streakDays: await getStreakDays(pool, userId, today),
       points: currentPoints,
+      todayNote,
     })
   } catch (e) {
     console.error('[BE] /checkins/status error:', e)
@@ -1953,6 +1995,58 @@ app.get('/checkins/dates', async function (req, res) {
     })
   } catch (e) {
     console.error('[BE] /checkins/dates error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * PUT /checkins/today-note
+ * Save or update the current user's note for tomorrow on today's check-in record.
+ */
+app.put('/checkins/today-note', async function (req, res) {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+    const today = await getLondonToday()
+    const safeBody = req.body || {}
+    const nextDayNote = normalizeNextDayNote(safeBody.note)
+
+    const result = await pool.query(
+      `
+      UPDATE app_checkins
+      SET
+        next_day_note = $3,
+        next_day_note_updated_at = NOW()
+      WHERE clerk_user_id = $1 AND checkin_date = $2
+      RETURNING next_day_note
+      `,
+      [userId, today, nextDayNote || null],
+    )
+
+    if (result.rowCount === 0) {
+      return res.status(400).json({ error: 'Check in today before saving a note.' })
+    }
+
+    let savedNote = ''
+    if (
+      result.rows &&
+      result.rows.length > 0 &&
+      result.rows[0] &&
+      result.rows[0].next_day_note !== null &&
+      result.rows[0].next_day_note !== undefined
+    ) {
+      savedNote = String(result.rows[0].next_day_note)
+    }
+
+    return res.json({
+      ok: true,
+      today,
+      todayNote: savedNote,
+    })
+  } catch (e) {
+    console.error('[BE] /checkins/today-note error:', e)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -2201,6 +2295,8 @@ app.post('/checkins/today', async function (req, res) {
     let streakDays = 0
     let gainedPoints = 0
     let totalDays = 0
+    let yesterdayNote = ''
+    let todayNote = ''
 
     // Only the first check-in for the current day should grant points.
     if (didInsert) {
@@ -2220,6 +2316,25 @@ app.post('/checkins/today', async function (req, res) {
       streakDays = await getStreakDays(client, userId, today)
       gainedPoints = getCheckinRewardPoints(streakDays)
 
+      const yesterdayNoteResult = await client.query(
+        `
+        SELECT next_day_note
+        FROM app_checkins
+        WHERE clerk_user_id = $1 AND checkin_date = ($2::date - INTERVAL '1 day')::date
+        LIMIT 1
+        `,
+        [userId, today],
+      )
+      if (
+        yesterdayNoteResult.rows &&
+        yesterdayNoteResult.rows.length > 0 &&
+        yesterdayNoteResult.rows[0] &&
+        yesterdayNoteResult.rows[0].next_day_note !== null &&
+        yesterdayNoteResult.rows[0].next_day_note !== undefined
+      ) {
+        yesterdayNote = String(yesterdayNoteResult.rows[0].next_day_note)
+      }
+
       await client.query(
         `UPDATE app_users SET points = points + $2, last_seen_at = NOW() WHERE clerk_user_id = $1`,
         [userId, gainedPoints],
@@ -2238,6 +2353,25 @@ app.post('/checkins/today', async function (req, res) {
         totalExisting.rows[0].total_days != null
       ) {
         totalDays = Number(totalExisting.rows[0].total_days) || 0
+      }
+
+      const currentNoteResult = await client.query(
+        `
+        SELECT next_day_note
+        FROM app_checkins
+        WHERE clerk_user_id = $1 AND checkin_date = $2
+        LIMIT 1
+        `,
+        [userId, today],
+      )
+      if (
+        currentNoteResult.rows &&
+        currentNoteResult.rows.length > 0 &&
+        currentNoteResult.rows[0] &&
+        currentNoteResult.rows[0].next_day_note !== null &&
+        currentNoteResult.rows[0].next_day_note !== undefined
+      ) {
+        todayNote = String(currentNoteResult.rows[0].next_day_note)
       }
     }
 
@@ -2270,6 +2404,8 @@ app.post('/checkins/today', async function (req, res) {
       totalDays,
       streakDays,
       points: currentPoints,
+      yesterdayNote,
+      todayNote,
     })
   } catch (e) {
     await client.query('ROLLBACK')

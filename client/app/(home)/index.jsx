@@ -8,8 +8,6 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
-  Modal,
-  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
@@ -28,7 +26,6 @@ const HOME_REVIEW_DAYS = 365;
 const HOME_PLAN_CACHE_TTL_MS = 60 * 1000;
 const HOME_PLAN_DEFER_MS = 400;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const TOMORROW_NOTE_MAX_LENGTH = 200;
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REVIEW_RANGE_OPTIONS = [
@@ -480,26 +477,11 @@ const getCheckInButtonText = (checkedInToday) => {
   return 'Click to\ncheck in';
 };
 
-const normalizeTomorrowNoteInput = (value) => {
-  let safeValue = '';
-  if (value === undefined || value === null) {
-    safeValue = '';
-  } else {
-    safeValue = String(value);
+const getCheckInAlertText = (gained) => {
+  if (gained > 0) {
+    return 'Checked in for today (+' + String(gained) + ' points)';
   }
-
-  if (safeValue.length > TOMORROW_NOTE_MAX_LENGTH) {
-    return safeValue.slice(0, TOMORROW_NOTE_MAX_LENGTH);
-  }
-
-  return safeValue;
-};
-
-const getTomorrowNoteSaveButtonText = (saving) => {
-  if (saving) {
-    return 'Saving...';
-  }
-  return 'Save for tomorrow';
+  return 'Already checked in today';
 };
 
 const getPlanEmptyMessage = (canvasConnected) => {
@@ -801,19 +783,11 @@ export default function HomeScreen() {
   const [streakDays, setStreakDays] = React.useState(0);
   const [checkedInToday, setCheckedInToday] = React.useState(false);
   const [points, setPoints] = React.useState(0);
-  const [todayNote, setTodayNote] = React.useState('');
 
   const [loadingSummary, setLoadingSummary] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
-  const [noteModalVisible, setNoteModalVisible] = React.useState(false);
-  const [noteDraft, setNoteDraft] = React.useState('');
-  const [yesterdayNote, setYesterdayNote] = React.useState('');
-  const [noteSaving, setNoteSaving] = React.useState(false);
-  const [noteError, setNoteError] = React.useState('');
-  const [noteModalTitle, setNoteModalTitle] = React.useState('Note for tomorrow');
-  const [noteModalSubtitle, setNoteModalSubtitle] = React.useState('');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
@@ -876,7 +850,6 @@ export default function HomeScreen() {
     setStreakDays(nextStreak);
     setCheckedInToday(Boolean(safeData.checkedInToday));
     setPoints(Number(safeData.points) || 0);
-    setTodayNote(normalizeTomorrowNoteInput(safeData.todayNote));
     setSummaryReady(true);
   }, []);
 
@@ -892,7 +865,6 @@ export default function HomeScreen() {
         streakDays: undefined,
         checkedInToday: Boolean(safeData.checkedInToday),
         points: Number(safeData.points) || 0,
-        todayNote: normalizeTomorrowNoteInput(safeData.todayNote),
         updatedAt: Date.now(),
       };
       if (safeData.streakDays !== undefined) {
@@ -1327,15 +1299,6 @@ export default function HomeScreen() {
       return;
     }
 
-    if (checkedInToday) {
-      openTomorrowNoteModal({
-        mode: 'edit',
-        todayNote,
-        yesterdayNote: '',
-      });
-      return;
-    }
-
     try {
       setCheckingIn(true);
 
@@ -1364,12 +1327,7 @@ export default function HomeScreen() {
       persistSummaryToCache(data);
 
       const gained = Number(data.gainedPoints) || 0;
-      openTomorrowNoteModal({
-        mode: 'afterCheckIn',
-        todayNote: data.todayNote,
-        yesterdayNote: data.yesterdayNote,
-        gainedPoints: gained,
-      });
+      Alert.alert('Check-in', getCheckInAlertText(gained));
     } catch (e) {
       Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
@@ -1433,106 +1391,6 @@ export default function HomeScreen() {
       };
     });
   }, []);
-
-  const openTomorrowNoteModal = React.useCallback((options = {}) => {
-    const safeOptions = options || {};
-    const nextTodayNote = normalizeTomorrowNoteInput(safeOptions.todayNote);
-    const nextYesterdayNote = normalizeTomorrowNoteInput(safeOptions.yesterdayNote);
-    let nextTitle = 'Note for tomorrow';
-    let nextSubtitle = 'Write a note for tomorrow.';
-
-    if (safeOptions.mode === 'afterCheckIn') {
-      nextTitle = 'Checked in today';
-      const gainedPoints = Number(safeOptions.gainedPoints) || 0;
-      if (gainedPoints > 0) {
-        nextSubtitle = '+' + String(gainedPoints) + ' points today';
-      } else {
-        nextSubtitle = 'You can leave a note for tomorrow.';
-      }
-    }
-
-    setNoteDraft(nextTodayNote);
-    setYesterdayNote(nextYesterdayNote);
-    setNoteError('');
-    setNoteModalTitle(nextTitle);
-    setNoteModalSubtitle(nextSubtitle);
-    setNoteModalVisible(true);
-  }, []);
-
-  const closeTomorrowNoteModal = React.useCallback(() => {
-    if (noteSaving) {
-      return;
-    }
-    setNoteModalVisible(false);
-    setNoteError('');
-  }, [noteSaving]);
-
-  const saveTomorrowNote = React.useCallback(async () => {
-    if (noteSaving) {
-      return;
-    }
-
-    try {
-      setNoteSaving(true);
-      setNoteError('');
-
-      if (!API_BASE_URL) {
-        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
-      }
-
-      if (!authLoaded || !isSignedIn) {
-        throw new Error('Not signed in');
-      }
-
-      const token = await getSessionToken();
-      if (!token) {
-        throw new Error('No session token');
-      }
-
-      const safeNote = normalizeTomorrowNoteInput(noteDraft);
-      const saveNoteUrl = API_BASE_URL + '/checkins/today-note';
-      const res = await fetch(saveNoteUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + token,
-        },
-        body: JSON.stringify({ note: safeNote }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to save note for tomorrow'));
-      }
-
-      const savedNote = normalizeTomorrowNoteInput(data.todayNote);
-      setTodayNote(savedNote);
-      setNoteDraft(savedNote);
-      persistSummaryToCache({
-        totalDays: totalSignedDays,
-        streakDays,
-        checkedInToday,
-        points,
-        todayNote: savedNote,
-      });
-      setNoteModalVisible(false);
-    } catch (error) {
-      setNoteError(getErrorMessage(error, 'Failed to save note for tomorrow'));
-    } finally {
-      setNoteSaving(false);
-    }
-  }, [
-    noteSaving,
-    authLoaded,
-    isSignedIn,
-    getSessionToken,
-    noteDraft,
-    persistSummaryToCache,
-    totalSignedDays,
-    streakDays,
-    checkedInToday,
-    points,
-  ]);
 
   let lastingDaysValueNode = <ActivityIndicator color={theme.primary} />;
   if (summaryReady) {
@@ -1631,7 +1489,6 @@ export default function HomeScreen() {
   if (checkedInToday) {
     checkInStatusText = 'Today - checked in';
   }
-  const tomorrowNoteRemainingCount = TOMORROW_NOTE_MAX_LENGTH - noteDraft.length;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
@@ -1720,7 +1577,7 @@ export default function HomeScreen() {
           <View style={styles.centerBlock}>
             <Pressable
               onPress={onCheckIn}
-              disabled={checkingIn}
+              disabled={checkingIn || checkedInToday}
               style={({ pressed }) => [
                 styles.circle,
                 {
@@ -1729,7 +1586,7 @@ export default function HomeScreen() {
                   borderWidth: 1,
                   shadowColor: isDarkTheme ? '#000000' : '#D9C7AC',
                 },
-                getStyleWhen(checkingIn, { opacity: 0.6 }),
+                getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
                 getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
               ]}
             >
@@ -2056,113 +1913,6 @@ export default function HomeScreen() {
 
         <View style={{ height: 24 }} />
       </ScrollView>
-
-      <Modal
-        visible={noteModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeTomorrowNoteModal}
-      >
-        <View style={styles.noteModalOverlay}>
-          <Pressable style={styles.noteModalBackdrop} onPress={closeTomorrowNoteModal} />
-          <View
-            style={[
-              styles.noteModalCard,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-                shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
-              },
-            ]}
-          >
-            <Text style={[styles.noteModalTitle, { color: theme.textPrimary }]}>{noteModalTitle}</Text>
-            <Text style={[styles.noteModalSubtitle, { color: theme.textSecondary }]}>
-              {noteModalSubtitle}
-            </Text>
-
-            {yesterdayNote ? (
-              <View
-                style={[
-                  styles.noteMessageCard,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.borderSoft,
-                  },
-                ]}
-              >
-                <Text style={[styles.noteMessageLabel, { color: theme.textMuted }]}>Yesterday you said</Text>
-                <Text style={[styles.noteMessageText, { color: theme.textPrimary }]}>{yesterdayNote}</Text>
-              </View>
-            ) : null}
-
-            <Text style={[styles.noteInputLabel, { color: theme.textPrimary }]}>
-              Write a note for tomorrow
-            </Text>
-            <TextInput
-              value={noteDraft}
-              onChangeText={(value) => {
-                setNoteDraft(normalizeTomorrowNoteInput(value));
-                if (noteError) {
-                  setNoteError('');
-                }
-              }}
-              placeholder="For example: Start with the hardest task first"
-              placeholderTextColor={theme.textMuted}
-              maxLength={TOMORROW_NOTE_MAX_LENGTH}
-              multiline
-              textAlignVertical="top"
-              style={[
-                styles.noteInput,
-                {
-                  backgroundColor: theme.surfaceMuted,
-                  borderColor: theme.borderSoft,
-                  color: theme.textPrimary,
-                },
-              ]}
-            />
-            <Text style={[styles.noteCounter, { color: theme.textMuted }]}>
-              {String(tomorrowNoteRemainingCount)} characters left
-            </Text>
-
-            {noteError ? (
-              <Text style={[styles.noteErrorText, { color: errorColor }]}>{noteError}</Text>
-            ) : null}
-
-            <View style={styles.noteButtonRow}>
-              <Pressable
-                onPress={closeTomorrowNoteModal}
-                disabled={noteSaving}
-                style={({ pressed }) => [
-                  styles.noteSecondaryButton,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.borderSoft,
-                  },
-                  getStyleWhen(pressed, styles.noteButtonPressed),
-                  getStyleWhen(noteSaving, { opacity: 0.6 }),
-                ]}
-              >
-                <Text style={[styles.noteSecondaryButtonText, { color: theme.textPrimary }]}>Close</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={saveTomorrowNote}
-                disabled={noteSaving}
-                style={({ pressed }) => [
-                  styles.notePrimaryButton,
-                  { backgroundColor: theme.primary },
-                  getStyleWhen(pressed, styles.noteButtonPressed),
-                  getStyleWhen(noteSaving, { opacity: 0.75 }),
-                ]}
-              >
-                <Text style={[styles.notePrimaryButtonText, { color: theme.primaryText }]}>
-                  {getTomorrowNoteSaveButtonText(noteSaving)}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -2446,103 +2196,5 @@ const styles = StyleSheet.create({
   progressCaption: {
     fontSize: 12,
     lineHeight: 18,
-  },
-  noteModalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(17, 24, 39, 0.24)',
-  },
-  noteModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  noteModalCard: {
-    borderWidth: 1,
-    borderRadius: 24,
-    padding: 20,
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.16,
-    shadowRadius: 26,
-    elevation: 6,
-  },
-  noteModalTitle: {
-    fontSize: 24,
-    fontWeight: '900',
-    marginBottom: 6,
-  },
-  noteModalSubtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 16,
-  },
-  noteMessageCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 16,
-  },
-  noteMessageLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  noteMessageText: {
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: '600',
-  },
-  noteInputLabel: {
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 10,
-  },
-  noteInput: {
-    minHeight: 92,
-    borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 8,
-  },
-  noteCounter: {
-    fontSize: 12,
-    marginBottom: 10,
-  },
-  noteErrorText: {
-    fontSize: 12,
-    marginBottom: 12,
-  },
-  noteButtonRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  noteSecondaryButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notePrimaryButton: {
-    flex: 1.2,
-    height: 48,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noteSecondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  notePrimaryButtonText: {
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  noteButtonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.99 }],
   },
 });
