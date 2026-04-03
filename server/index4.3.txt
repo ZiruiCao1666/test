@@ -40,6 +40,8 @@ if (!databaseUrl) {
 
 const CHECKIN_POINTS = 5
 const NEW_USER_FIRST_WEEK_REWARDS = [1, 2, 3, 5, 8, 10, 10]
+const CHECKIN_TYPE_DAILY = 'daily'
+const CHECKIN_TYPE_MAKEUP = 'makeup'
 const MAKEUP_CARD_REWARD_TITLE = 'Make-up Card'
 const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
@@ -1134,7 +1136,7 @@ async function getMakeupCardStatus(db, userId, today) {
 
   const yesterdayCheckinResult = await db.query(
     `
-    SELECT id
+    SELECT checkin_type
     FROM app_checkins
     WHERE clerk_user_id = $1 AND checkin_date = $2
     LIMIT 1
@@ -1143,8 +1145,16 @@ async function getMakeupCardStatus(db, userId, today) {
   )
 
   let yesterdayCheckedIn = false
+  let yesterdayCheckinType = ''
   if (yesterdayCheckinResult.rows && yesterdayCheckinResult.rows.length > 0) {
     yesterdayCheckedIn = true
+    if (
+      yesterdayCheckinResult.rows[0] &&
+      yesterdayCheckinResult.rows[0].checkin_type !== null &&
+      yesterdayCheckinResult.rows[0].checkin_type !== undefined
+    ) {
+      yesterdayCheckinType = String(yesterdayCheckinResult.rows[0].checkin_type)
+    }
   }
 
   let canUse = false
@@ -1159,7 +1169,9 @@ async function getMakeupCardStatus(db, userId, today) {
     yesterday,
     makeupCards,
     yesterdayCheckedIn,
+    yesterdayCheckinType,
     canUse,
+    streakDays: await getStreakDays(db, userId, today),
   }
 }
 
@@ -1205,6 +1217,9 @@ async function initDb() {
 
     ALTER TABLE app_checkins
       ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;
+
+    ALTER TABLE app_checkins
+      ADD COLUMN IF NOT EXISTS checkin_type TEXT NOT NULL DEFAULT 'daily';
 
     CREATE TABLE IF NOT EXISTS app_canvas_credentials (
       clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
@@ -2150,8 +2165,13 @@ app.get('/makeup-card/status', async function (req, res) {
 
     return res.json({
       ok: true,
+      today: status.today,
+      yesterday: status.yesterday,
       makeupCards: status.makeupCards,
+      yesterdayCheckedIn: status.yesterdayCheckedIn,
+      yesterdayCheckinType: status.yesterdayCheckinType,
       canUse: status.canUse,
+      streakDays: status.streakDays,
     })
   } catch (e) {
     console.error('[BE] /makeup-card/status error:', e)
@@ -2187,12 +2207,12 @@ app.post('/makeup-card/use', async function (req, res) {
 
     const inserted = await client.query(
       `
-      INSERT INTO app_checkins (clerk_user_id, checkin_date)
-      VALUES ($1, $2)
+      INSERT INTO app_checkins (clerk_user_id, checkin_date, checkin_type)
+      VALUES ($1, $2, $3)
       ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING
       RETURNING id
       `,
-      [userId, status.yesterday],
+      [userId, status.yesterday, CHECKIN_TYPE_MAKEUP],
     )
 
     if (inserted.rowCount === 0) {
@@ -2224,13 +2244,19 @@ app.post('/makeup-card/use', async function (req, res) {
       [userId],
     )
 
+    const streakDays = await getStreakDays(client, userId, today)
+
     await client.query('COMMIT')
 
     let makeupCards = 0
+    let points = 0
     if (updatedUser.rows && updatedUser.rows.length > 0) {
       if (updatedUser.rows[0]) {
         if (updatedUser.rows[0].makeup_cards != null) {
           makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0
+        }
+        if (updatedUser.rows[0].points != null) {
+          points = Number(updatedUser.rows[0].points) || 0
         }
       }
     }
@@ -2244,8 +2270,12 @@ app.post('/makeup-card/use', async function (req, res) {
 
     return res.json({
       ok: true,
+      today,
+      repairedDate: status.yesterday,
       makeupCards,
+      points,
       totalDays,
+      streakDays,
     })
   } catch (e) {
     try {
@@ -2511,12 +2541,12 @@ app.post('/checkins/today', async function (req, res) {
     // 插入签到记录：如果今天已签，rowCount=0
     const ins = await client.query(
       `
-      INSERT INTO app_checkins (clerk_user_id, checkin_date)
-      VALUES ($1, $2)
+      INSERT INTO app_checkins (clerk_user_id, checkin_date, checkin_type)
+      VALUES ($1, $2, $3)
       ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING
       RETURNING id
       `,
-      [userId, today],
+      [userId, today, CHECKIN_TYPE_DAILY],
     )
 
     const didInsert = ins.rowCount === 1
