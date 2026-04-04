@@ -67,6 +67,8 @@ if (!databaseUrl) {
 
 var CHECKIN_POINTS = 5;
 var NEW_USER_FIRST_WEEK_REWARDS = [1, 2, 3, 5, 8, 10, 10];
+var MAKEUP_CARD_REWARD_TITLE = 'Make-up Card';
+var MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card';
 var CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm';
 var CANVAS_IV_BYTES = 12;
 var CANVAS_TOKEN_SECRET = '';
@@ -99,6 +101,53 @@ function normalizeNextDayNote(value) {
   return safeNote;
 }
 
+function ensureMakeupCardUserColumn(db) {
+  return regeneratorRuntime.async(function ensureMakeupCardUserColumn$(_context) {
+    while (1) {
+      switch (_context.prev = _context.next) {
+        case 0:
+          _context.next = 2;
+          return regeneratorRuntime.awrap(db.query("\n    ALTER TABLE app_users\n      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;\n  "));
+
+        case 2:
+        case "end":
+          return _context.stop();
+      }
+    }
+  });
+}
+
+function getDateText(value) {
+  if (typeof value === 'string') {
+    var safeValue = value.trim();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(safeValue)) {
+      return safeValue;
+    }
+  }
+
+  var parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  var utcDate = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+  return utcDate.toISOString().slice(0, 10);
+}
+
+function getDateTextWithOffset(value, offsetDays) {
+  var baseDateText = getDateText(value);
+
+  if (!baseDateText) {
+    return '';
+  }
+
+  var date = new Date(baseDateText + 'T00:00:00Z');
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 function mapRewardRow(row) {
   var imageUrl = '';
 
@@ -114,6 +163,24 @@ function mapRewardRow(row) {
     imageUrl: imageUrl,
     isActive: row.is_active
   };
+}
+
+function isMakeupCardReward(reward) {
+  var safeReward = {};
+
+  if (reward) {
+    safeReward = reward;
+  }
+
+  if (safeReward.category === MAKEUP_CARD_REWARD_CATEGORY) {
+    return true;
+  }
+
+  if (safeReward.title === MAKEUP_CARD_REWARD_TITLE) {
+    return true;
+  }
+
+  return false;
 }
 
 function trimTaskTime(value) {
@@ -433,9 +500,9 @@ function parseLinkHeader(header) {
 
 function fetchCanvasPage(baseUrl, token, pathOrUrl) {
   var url, response, raw, data, errors, firstError, message, links;
-  return regeneratorRuntime.async(function fetchCanvasPage$(_context) {
+  return regeneratorRuntime.async(function fetchCanvasPage$(_context2) {
     while (1) {
-      switch (_context.prev = _context.next) {
+      switch (_context2.prev = _context2.next) {
         case 0:
           url = baseUrl + pathOrUrl;
 
@@ -443,7 +510,7 @@ function fetchCanvasPage(baseUrl, token, pathOrUrl) {
             url = pathOrUrl;
           }
 
-          _context.next = 4;
+          _context2.next = 4;
           return regeneratorRuntime.awrap(fetch(url, {
             headers: {
               Authorization: 'Bearer ' + token,
@@ -452,12 +519,12 @@ function fetchCanvasPage(baseUrl, token, pathOrUrl) {
           }));
 
         case 4:
-          response = _context.sent;
-          _context.next = 7;
+          response = _context2.sent;
+          _context2.next = 7;
           return regeneratorRuntime.awrap(response.text());
 
         case 7:
-          raw = _context.sent;
+          raw = _context2.sent;
           data = null;
 
           if (raw) {
@@ -469,7 +536,7 @@ function fetchCanvasPage(baseUrl, token, pathOrUrl) {
           }
 
           if (response.ok) {
-            _context.next = 17;
+            _context2.next = 17;
             break;
           }
 
@@ -490,68 +557,10 @@ function fetchCanvasPage(baseUrl, token, pathOrUrl) {
 
         case 17:
           links = parseLinkHeader(response.headers.get('link'));
-          return _context.abrupt("return", {
+          return _context2.abrupt("return", {
             data: data,
             nextUrl: links.next || ''
           });
-
-        case 19:
-        case "end":
-          return _context.stop();
-      }
-    }
-  });
-}
-
-function fetchCanvasPaged(baseUrl, token, path) {
-  var nextUrl, aggregated, visited, _ref, data, newNextUrl;
-
-  return regeneratorRuntime.async(function fetchCanvasPaged$(_context2) {
-    while (1) {
-      switch (_context2.prev = _context2.next) {
-        case 0:
-          nextUrl = path;
-          aggregated = [];
-          visited = new Set();
-
-        case 3:
-          if (!nextUrl) {
-            _context2.next = 18;
-            break;
-          }
-
-          if (!visited.has(nextUrl)) {
-            _context2.next = 6;
-            break;
-          }
-
-          return _context2.abrupt("break", 18);
-
-        case 6:
-          visited.add(nextUrl);
-          _context2.next = 9;
-          return regeneratorRuntime.awrap(fetchCanvasPage(baseUrl, token, nextUrl));
-
-        case 9:
-          _ref = _context2.sent;
-          data = _ref.data;
-          newNextUrl = _ref.nextUrl;
-
-          if (Array.isArray(data)) {
-            _context2.next = 14;
-            break;
-          }
-
-          return _context2.abrupt("return", data);
-
-        case 14:
-          aggregated.push.apply(aggregated, _toConsumableArray(data));
-          nextUrl = newNextUrl;
-          _context2.next = 3;
-          break;
-
-        case 18:
-          return _context2.abrupt("return", aggregated);
 
         case 19:
         case "end":
@@ -561,28 +570,86 @@ function fetchCanvasPaged(baseUrl, token, path) {
   });
 }
 
-function getStoredCanvasCredentials(userId) {
-  var result, row, token, hasEncryptedToken;
-  return regeneratorRuntime.async(function getStoredCanvasCredentials$(_context3) {
+function fetchCanvasPaged(baseUrl, token, path) {
+  var nextUrl, aggregated, visited, _ref, data, newNextUrl;
+
+  return regeneratorRuntime.async(function fetchCanvasPaged$(_context3) {
     while (1) {
       switch (_context3.prev = _context3.next) {
         case 0:
-          _context3.next = 2;
-          return regeneratorRuntime.awrap(ensureUserRow(userId));
+          nextUrl = path;
+          aggregated = [];
+          visited = new Set();
 
-        case 2:
-          _context3.next = 4;
-          return regeneratorRuntime.awrap(_db.pool.query("\n    SELECT canvas_school, canvas_token_ciphertext, canvas_token_iv, canvas_token_tag\n    FROM app_canvas_credentials\n    WHERE clerk_user_id = $1\n    ", [userId]));
-
-        case 4:
-          result = _context3.sent;
-
-          if (!(result.rowCount === 0)) {
-            _context3.next = 7;
+        case 3:
+          if (!nextUrl) {
+            _context3.next = 18;
             break;
           }
 
-          return _context3.abrupt("return", {
+          if (!visited.has(nextUrl)) {
+            _context3.next = 6;
+            break;
+          }
+
+          return _context3.abrupt("break", 18);
+
+        case 6:
+          visited.add(nextUrl);
+          _context3.next = 9;
+          return regeneratorRuntime.awrap(fetchCanvasPage(baseUrl, token, nextUrl));
+
+        case 9:
+          _ref = _context3.sent;
+          data = _ref.data;
+          newNextUrl = _ref.nextUrl;
+
+          if (Array.isArray(data)) {
+            _context3.next = 14;
+            break;
+          }
+
+          return _context3.abrupt("return", data);
+
+        case 14:
+          aggregated.push.apply(aggregated, _toConsumableArray(data));
+          nextUrl = newNextUrl;
+          _context3.next = 3;
+          break;
+
+        case 18:
+          return _context3.abrupt("return", aggregated);
+
+        case 19:
+        case "end":
+          return _context3.stop();
+      }
+    }
+  });
+}
+
+function getStoredCanvasCredentials(userId) {
+  var result, row, token, hasEncryptedToken;
+  return regeneratorRuntime.async(function getStoredCanvasCredentials$(_context4) {
+    while (1) {
+      switch (_context4.prev = _context4.next) {
+        case 0:
+          _context4.next = 2;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 2:
+          _context4.next = 4;
+          return regeneratorRuntime.awrap(_db.pool.query("\n    SELECT canvas_school, canvas_token_ciphertext, canvas_token_iv, canvas_token_tag\n    FROM app_canvas_credentials\n    WHERE clerk_user_id = $1\n    ", [userId]));
+
+        case 4:
+          result = _context4.sent;
+
+          if (!(result.rowCount === 0)) {
+            _context4.next = 7;
+            break;
+          }
+
+          return _context4.abrupt("return", {
             school: '',
             token: ''
           });
@@ -604,14 +671,14 @@ function getStoredCanvasCredentials(userId) {
             token = decryptCanvasToken(row.canvas_token_ciphertext, row.canvas_token_iv, row.canvas_token_tag);
           }
 
-          return _context3.abrupt("return", {
+          return _context4.abrupt("return", {
             school: row.canvas_school ? row.canvas_school : '',
             token: token
           });
 
         case 13:
         case "end":
-          return _context3.stop();
+          return _context4.stop();
       }
     }
   });
@@ -1107,9 +1174,9 @@ function mapCanvasEventToPlanItem(item, index) {
 
 function fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, assignmentIds) {
   var safeAssignmentIds, params, path;
-  return regeneratorRuntime.async(function fetchCanvasSubmissionDetailsForCourse$(_context4) {
+  return regeneratorRuntime.async(function fetchCanvasSubmissionDetailsForCourse$(_context5) {
     while (1) {
-      switch (_context4.prev = _context4.next) {
+      switch (_context5.prev = _context5.next) {
         case 0:
           safeAssignmentIds = [];
 
@@ -1126,19 +1193,19 @@ function fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, assignm
           }
 
           if (!(courseId === '' || courseId === null || courseId === undefined)) {
-            _context4.next = 4;
+            _context5.next = 4;
             break;
           }
 
-          return _context4.abrupt("return", []);
+          return _context5.abrupt("return", []);
 
         case 4:
           if (!(safeAssignmentIds.length === 0)) {
-            _context4.next = 6;
+            _context5.next = 6;
             break;
           }
 
-          return _context4.abrupt("return", []);
+          return _context5.abrupt("return", []);
 
         case 6:
           params = new URLSearchParams();
@@ -1150,11 +1217,11 @@ function fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, assignm
           params.append('include[]', 'assignment');
           params.append('per_page', String(Math.max(50, safeAssignmentIds.length)));
           path = '/api/v1/courses/' + encodeURIComponent(courseId) + '/students/submissions?' + params.toString();
-          return _context4.abrupt("return", fetchCanvasPaged(baseUrl, token, path));
+          return _context5.abrupt("return", fetchCanvasPaged(baseUrl, token, path));
 
         case 14:
         case "end":
-          return _context4.stop();
+          return _context5.stop();
       }
     }
   });
@@ -1162,9 +1229,9 @@ function fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, assignm
 
 function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
   var safeItems, assignmentIdsByCourse, submissionByKey;
-  return regeneratorRuntime.async(function enrichPlanItemsWithSubmissionDetails$(_context6) {
+  return regeneratorRuntime.async(function enrichPlanItemsWithSubmissionDetails$(_context7) {
     while (1) {
-      switch (_context6.prev = _context6.next) {
+      switch (_context7.prev = _context7.next) {
         case 0:
           safeItems = [];
 
@@ -1195,21 +1262,21 @@ function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
             assignmentIdsByCourse[safeItem.courseId].add(String(safeItem.assignmentId));
           });
           submissionByKey = {};
-          _context6.next = 7;
+          _context7.next = 7;
           return regeneratorRuntime.awrap(Promise.all(Object.entries(assignmentIdsByCourse).map(function _callee(_ref2) {
             var _ref3, courseId, assignmentIdsSet, details, safeDetails;
 
-            return regeneratorRuntime.async(function _callee$(_context5) {
+            return regeneratorRuntime.async(function _callee$(_context6) {
               while (1) {
-                switch (_context5.prev = _context5.next) {
+                switch (_context6.prev = _context6.next) {
                   case 0:
                     _ref3 = _slicedToArray(_ref2, 2), courseId = _ref3[0], assignmentIdsSet = _ref3[1];
-                    _context5.prev = 1;
-                    _context5.next = 4;
+                    _context6.prev = 1;
+                    _context6.next = 4;
                     return regeneratorRuntime.awrap(fetchCanvasSubmissionDetailsForCourse(baseUrl, token, courseId, Array.from(assignmentIdsSet)));
 
                   case 4:
-                    details = _context5.sent;
+                    details = _context6.sent;
                     safeDetails = [];
 
                     if (Array.isArray(details)) {
@@ -1236,24 +1303,24 @@ function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
 
                       submissionByKey[String(courseId) + ':' + assignmentId] = safeDetail;
                     });
-                    _context5.next = 13;
+                    _context6.next = 13;
                     break;
 
                   case 10:
-                    _context5.prev = 10;
-                    _context5.t0 = _context5["catch"](1);
-                    console.error('[BE] /home/plan submission detail error:', _context5.t0);
+                    _context6.prev = 10;
+                    _context6.t0 = _context6["catch"](1);
+                    console.error('[BE] /home/plan submission detail error:', _context6.t0);
 
                   case 13:
                   case "end":
-                    return _context5.stop();
+                    return _context6.stop();
                 }
               }
             }, null, null, [[1, 10]]);
           })));
 
         case 7:
-          return _context6.abrupt("return", safeItems.map(function (item) {
+          return _context7.abrupt("return", safeItems.map(function (item) {
             var safeItem = item || {};
 
             if (safeItem.source !== 'canvas') {
@@ -1292,7 +1359,7 @@ function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
 
         case 8:
         case "end":
-          return _context6.stop();
+          return _context7.stop();
       }
     }
   });
@@ -1371,15 +1438,15 @@ function buildReviewSummary(items) {
 
 function getStreakDays(db, userId, today) {
   var r, firstRow;
-  return regeneratorRuntime.async(function getStreakDays$(_context7) {
+  return regeneratorRuntime.async(function getStreakDays$(_context8) {
     while (1) {
-      switch (_context7.prev = _context7.next) {
+      switch (_context8.prev = _context8.next) {
         case 0:
-          _context7.next = 2;
+          _context8.next = 2;
           return regeneratorRuntime.awrap(db.query("\n    WITH ordered AS (\n      SELECT checkin_date,\n             ROW_NUMBER() OVER (ORDER BY checkin_date DESC) AS rn\n      FROM app_checkins\n      WHERE clerk_user_id = $1 AND checkin_date <= $2\n    ),\n    grouped AS (\n      SELECT checkin_date,\n             (checkin_date + rn * INTERVAL '1 day')::date AS grp\n      FROM ordered\n    )\n    SELECT COUNT(*)::int AS streak\n    FROM grouped\n    WHERE grp = (SELECT grp FROM grouped ORDER BY checkin_date DESC LIMIT 1)\n    ", [userId, today]));
 
         case 2:
-          r = _context7.sent;
+          r = _context8.sent;
           firstRow = null;
 
           if (r.rows && r.rows.length > 0) {
@@ -1387,18 +1454,82 @@ function getStreakDays(db, userId, today) {
           }
 
           if (!(firstRow && firstRow.streak != null)) {
-            _context7.next = 7;
+            _context8.next = 7;
             break;
           }
 
-          return _context7.abrupt("return", firstRow.streak);
+          return _context8.abrupt("return", firstRow.streak);
 
         case 7:
-          return _context7.abrupt("return", 0);
+          return _context8.abrupt("return", 0);
 
         case 8:
         case "end":
-          return _context7.stop();
+          return _context8.stop();
+      }
+    }
+  });
+}
+
+function getMakeupCardStatus(db, userId, today) {
+  var yesterday, userResult, makeupCards, yesterdayCheckinResult, yesterdayCheckedIn, canUse;
+  return regeneratorRuntime.async(function getMakeupCardStatus$(_context9) {
+    while (1) {
+      switch (_context9.prev = _context9.next) {
+        case 0:
+          yesterday = getDateTextWithOffset(today, -1);
+
+          if (yesterday) {
+            _context9.next = 3;
+            break;
+          }
+
+          throw new Error('Cannot resolve yesterday date');
+
+        case 3:
+          _context9.next = 5;
+          return regeneratorRuntime.awrap(db.query("\n    SELECT COALESCE(makeup_cards, 0)::int AS makeup_cards\n    FROM app_users\n    WHERE clerk_user_id = $1\n    LIMIT 1\n    ", [userId]));
+
+        case 5:
+          userResult = _context9.sent;
+          makeupCards = 0;
+
+          if (userResult.rows && userResult.rows.length > 0) {
+            if (userResult.rows[0] && userResult.rows[0].makeup_cards != null) {
+              makeupCards = Number(userResult.rows[0].makeup_cards) || 0;
+            }
+          }
+
+          _context9.next = 10;
+          return regeneratorRuntime.awrap(db.query("\n    SELECT id\n    FROM app_checkins\n    WHERE clerk_user_id = $1 AND checkin_date = $2\n    LIMIT 1\n    ", [userId, yesterday]));
+
+        case 10:
+          yesterdayCheckinResult = _context9.sent;
+          yesterdayCheckedIn = false;
+
+          if (yesterdayCheckinResult.rows && yesterdayCheckinResult.rows.length > 0) {
+            yesterdayCheckedIn = true;
+          }
+
+          canUse = false;
+
+          if (makeupCards > 0) {
+            if (!yesterdayCheckedIn) {
+              canUse = true;
+            }
+          }
+
+          return _context9.abrupt("return", {
+            today: today,
+            yesterday: yesterday,
+            makeupCards: makeupCards,
+            yesterdayCheckedIn: yesterdayCheckedIn,
+            canUse: canUse
+          });
+
+        case 16:
+        case "end":
+          return _context9.stop();
       }
     }
   });
@@ -1419,20 +1550,20 @@ function getCheckinRewardPoints(streakDays) {
 }
 
 function initDb() {
-  return regeneratorRuntime.async(function initDb$(_context8) {
+  return regeneratorRuntime.async(function initDb$(_context10) {
     while (1) {
-      switch (_context8.prev = _context8.next) {
+      switch (_context10.prev = _context10.next) {
         case 0:
-          _context8.next = 2;
-          return regeneratorRuntime.awrap(_db.pool.query("\n    CREATE TABLE IF NOT EXISTS app_users (\n      clerk_user_id TEXT PRIMARY KEY,\n      email TEXT,\n      full_name TEXT,\n      avatar_url TEXT,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    ALTER TABLE app_users\n      ADD COLUMN IF NOT EXISTS points INT NOT NULL DEFAULT 0;\n\n    CREATE TABLE IF NOT EXISTS app_checkins (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL,\n      checkin_date DATE NOT NULL,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      UNIQUE (clerk_user_id, checkin_date)\n    );\n\n    ALTER TABLE app_checkins\n      ADD COLUMN IF NOT EXISTS next_day_note TEXT;\n\n    ALTER TABLE app_checkins\n      ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;\n\n    CREATE TABLE IF NOT EXISTS app_canvas_credentials (\n      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      canvas_school TEXT NOT NULL DEFAULT '',\n      canvas_token_ciphertext TEXT,\n      canvas_token_iv TEXT,\n      canvas_token_tag TEXT,\n      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE TABLE IF NOT EXISTS app_rewards (\n      id BIGSERIAL PRIMARY KEY,\n      title TEXT NOT NULL,\n      points_cost INT NOT NULL CHECK (points_cost > 0),\n      category TEXT NOT NULL DEFAULT 'coupon',\n      image_url TEXT,\n      is_active BOOLEAN NOT NULL DEFAULT TRUE,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_rewards_title_unique\n      ON app_rewards (title);\n\n    CREATE TABLE IF NOT EXISTS app_reward_orders (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      reward_id BIGINT NOT NULL REFERENCES app_rewards (id),\n      points_cost INT NOT NULL CHECK (points_cost > 0),\n      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed')),\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE INDEX IF NOT EXISTS idx_app_reward_orders_user_created_at\n      ON app_reward_orders (clerk_user_id, created_at DESC);\n\n    CREATE TABLE IF NOT EXISTS app_custom_tasks (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      title TEXT NOT NULL,\n      task_date DATE NOT NULL,\n      timing_mode TEXT NOT NULL DEFAULT 'deadline'\n        CHECK (timing_mode IN ('deadline', 'range')),\n      due_time TIME,\n      start_time TIME,\n      end_time TIME,\n      is_completed BOOLEAN NOT NULL DEFAULT FALSE,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE INDEX IF NOT EXISTS idx_app_custom_tasks_user_date\n      ON app_custom_tasks (clerk_user_id, task_date ASC, created_at ASC);\n  "));
+          _context10.next = 2;
+          return regeneratorRuntime.awrap(_db.pool.query("\n    CREATE TABLE IF NOT EXISTS app_users (\n      clerk_user_id TEXT PRIMARY KEY,\n      email TEXT,\n      full_name TEXT,\n      avatar_url TEXT,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    ALTER TABLE app_users\n      ADD COLUMN IF NOT EXISTS points INT NOT NULL DEFAULT 0;\n\n    ALTER TABLE app_users\n      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;\n\n    CREATE TABLE IF NOT EXISTS app_checkins (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL,\n      checkin_date DATE NOT NULL,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      UNIQUE (clerk_user_id, checkin_date)\n    );\n\n    ALTER TABLE app_checkins\n      ADD COLUMN IF NOT EXISTS next_day_note TEXT;\n\n    ALTER TABLE app_checkins\n      ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;\n\n    CREATE TABLE IF NOT EXISTS app_canvas_credentials (\n      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      canvas_school TEXT NOT NULL DEFAULT '',\n      canvas_token_ciphertext TEXT,\n      canvas_token_iv TEXT,\n      canvas_token_tag TEXT,\n      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE TABLE IF NOT EXISTS app_rewards (\n      id BIGSERIAL PRIMARY KEY,\n      title TEXT NOT NULL,\n      points_cost INT NOT NULL CHECK (points_cost > 0),\n      category TEXT NOT NULL DEFAULT 'coupon',\n      image_url TEXT,\n      is_active BOOLEAN NOT NULL DEFAULT TRUE,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_rewards_title_unique\n      ON app_rewards (title);\n\n    CREATE TABLE IF NOT EXISTS app_reward_orders (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      reward_id BIGINT NOT NULL REFERENCES app_rewards (id),\n      points_cost INT NOT NULL CHECK (points_cost > 0),\n      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed')),\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE INDEX IF NOT EXISTS idx_app_reward_orders_user_created_at\n      ON app_reward_orders (clerk_user_id, created_at DESC);\n\n    CREATE TABLE IF NOT EXISTS app_custom_tasks (\n      id BIGSERIAL PRIMARY KEY,\n      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,\n      title TEXT NOT NULL,\n      task_date DATE NOT NULL,\n      timing_mode TEXT NOT NULL DEFAULT 'deadline'\n        CHECK (timing_mode IN ('deadline', 'range')),\n      due_time TIME,\n      start_time TIME,\n      end_time TIME,\n      is_completed BOOLEAN NOT NULL DEFAULT FALSE,\n      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n    );\n\n    CREATE INDEX IF NOT EXISTS idx_app_custom_tasks_user_date\n      ON app_custom_tasks (clerk_user_id, task_date ASC, created_at ASC);\n  "));
 
         case 2:
-          _context8.next = 4;
-          return regeneratorRuntime.awrap(_db.pool.query("\n    INSERT INTO app_rewards (title, points_cost, category, image_url, is_active)\n    VALUES\n      ('Coffee Coupon', 120, 'drinks', '', TRUE),\n      ('Latte Coupon', 160, 'drinks', '', TRUE),\n      ('Discount Coupon', 200, 'coupon', '', TRUE),\n      ('Big Discount Coupon', 260, 'coupon', '', TRUE)\n    ON CONFLICT (title) DO NOTHING;\n    "));
+          _context10.next = 4;
+          return regeneratorRuntime.awrap(_db.pool.query("\n    INSERT INTO app_rewards (title, points_cost, category, image_url, is_active)\n    VALUES\n      ('Make-up Card', 100, 'makeup_card', '', TRUE),\n      ('Coffee Coupon', 120, 'drinks', '', TRUE),\n      ('Latte Coupon', 160, 'drinks', '', TRUE),\n      ('Discount Coupon', 200, 'coupon', '', TRUE),\n      ('Big Discount Coupon', 260, 'coupon', '', TRUE)\n    ON CONFLICT (title) DO NOTHING;\n    "));
 
         case 4:
         case "end":
-          return _context8.stop();
+          return _context10.stop();
       }
     }
   });
@@ -1442,24 +1573,24 @@ initDb()["catch"](function (e) {
   console.error('[DB] init failed:', e); // On hosted platforms, keep the service alive so /health can still report DB problems.
 });
 app.get('/health', function _callee2(_req, res) {
-  return regeneratorRuntime.async(function _callee2$(_context9) {
+  return regeneratorRuntime.async(function _callee2$(_context11) {
     while (1) {
-      switch (_context9.prev = _context9.next) {
+      switch (_context11.prev = _context11.next) {
         case 0:
-          _context9.prev = 0;
-          _context9.next = 3;
+          _context11.prev = 0;
+          _context11.next = 3;
           return regeneratorRuntime.awrap(_db.pool.query('SELECT 1'));
 
         case 3:
           res.json({
             ok: true
           });
-          _context9.next = 9;
+          _context11.next = 9;
           break;
 
         case 6:
-          _context9.prev = 6;
-          _context9.t0 = _context9["catch"](0);
+          _context11.prev = 6;
+          _context11.t0 = _context11["catch"](0);
           res.status(500).json({
             ok: false,
             error: 'DB not reachable'
@@ -1467,7 +1598,7 @@ app.get('/health', function _callee2(_req, res) {
 
         case 9:
         case "end":
-          return _context9.stop();
+          return _context11.stop();
       }
     }
   }, null, null, [[0, 6]]);
@@ -1476,20 +1607,20 @@ app.get('/health', function _callee2(_req, res) {
 
 function getLondonToday() {
   var r;
-  return regeneratorRuntime.async(function getLondonToday$(_context10) {
+  return regeneratorRuntime.async(function getLondonToday$(_context12) {
     while (1) {
-      switch (_context10.prev = _context10.next) {
+      switch (_context12.prev = _context12.next) {
         case 0:
-          _context10.next = 2;
+          _context12.next = 2;
           return regeneratorRuntime.awrap(_db.pool.query("SELECT (NOW() AT TIME ZONE 'Europe/London')::date AS today"));
 
         case 2:
-          r = _context10.sent;
-          return _context10.abrupt("return", r.rows[0].today);
+          r = _context12.sent;
+          return _context12.abrupt("return", r.rows[0].today);
 
         case 4:
         case "end":
-          return _context10.stop();
+          return _context12.stop();
       }
     }
   });
@@ -1497,16 +1628,16 @@ function getLondonToday() {
 
 
 function ensureUserRow(userId) {
-  return regeneratorRuntime.async(function ensureUserRow$(_context11) {
+  return regeneratorRuntime.async(function ensureUserRow$(_context13) {
     while (1) {
-      switch (_context11.prev = _context11.next) {
+      switch (_context13.prev = _context13.next) {
         case 0:
-          _context11.next = 2;
+          _context13.next = 2;
           return regeneratorRuntime.awrap(_db.pool.query("\n    INSERT INTO app_users (clerk_user_id, last_seen_at)\n    VALUES ($1, NOW())\n    ON CONFLICT (clerk_user_id) DO UPDATE SET last_seen_at = NOW();\n    ", [userId]));
 
         case 2:
         case "end":
-          return _context11.stop();
+          return _context13.stop();
       }
     }
   });
@@ -1517,28 +1648,28 @@ function ensureUserRow(userId) {
 app.post('/users/sync', function _callee3(req, res) {
   var _getAuth, userId, sessionId, user, primaryEmail, firstEmail, email, fullName, avatarUrl;
 
-  return regeneratorRuntime.async(function _callee3$(_context12) {
+  return regeneratorRuntime.async(function _callee3$(_context14) {
     while (1) {
-      switch (_context12.prev = _context12.next) {
+      switch (_context14.prev = _context14.next) {
         case 0:
-          _context12.prev = 0;
+          _context14.prev = 0;
           _getAuth = (0, _express2.getAuth)(req), userId = _getAuth.userId, sessionId = _getAuth.sessionId;
 
           if (userId) {
-            _context12.next = 4;
+            _context14.next = 4;
             break;
           }
 
-          return _context12.abrupt("return", res.status(401).json({
+          return _context14.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 4:
-          _context12.next = 6;
+          _context14.next = 6;
           return regeneratorRuntime.awrap(_express2.clerkClient.users.getUser(userId));
 
         case 6:
-          user = _context12.sent;
+          user = _context14.sent;
           primaryEmail = null;
 
           if (user.primaryEmailAddress && user.primaryEmailAddress.emailAddress) {
@@ -1554,27 +1685,27 @@ app.post('/users/sync', function _callee3(req, res) {
           email = primaryEmail || firstEmail || null;
           fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || null;
           avatarUrl = user.imageUrl || null;
-          _context12.next = 16;
+          _context14.next = 16;
           return regeneratorRuntime.awrap(_db.pool.query("\n      INSERT INTO app_users (clerk_user_id, email, full_name, avatar_url, last_seen_at)\n      VALUES ($1, $2, $3, $4, NOW())\n      ON CONFLICT (clerk_user_id)\n      DO UPDATE SET\n        email = EXCLUDED.email,\n        full_name = EXCLUDED.full_name,\n        avatar_url = EXCLUDED.avatar_url,\n        last_seen_at = NOW();\n      ", [userId, email, fullName, avatarUrl]));
 
         case 16:
-          return _context12.abrupt("return", res.json({
+          return _context14.abrupt("return", res.json({
             ok: true,
             userId: userId,
             sessionId: sessionId
           }));
 
         case 19:
-          _context12.prev = 19;
-          _context12.t0 = _context12["catch"](0);
-          console.error('[BE] /users/sync error:', _context12.t0);
-          return _context12.abrupt("return", res.status(500).json({
+          _context14.prev = 19;
+          _context14.t0 = _context14["catch"](0);
+          console.error('[BE] /users/sync error:', _context14.t0);
+          return _context14.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 23:
         case "end":
-          return _context12.stop();
+          return _context14.stop();
       }
     }
   }, null, null, [[0, 19]]);
@@ -1587,58 +1718,58 @@ app.post('/users/sync', function _callee3(req, res) {
 app.get('/canvas/credentials', function _callee4(req, res) {
   var _getAuth2, userId, stored;
 
-  return regeneratorRuntime.async(function _callee4$(_context13) {
+  return regeneratorRuntime.async(function _callee4$(_context15) {
     while (1) {
-      switch (_context13.prev = _context13.next) {
+      switch (_context15.prev = _context15.next) {
         case 0:
-          _context13.prev = 0;
+          _context15.prev = 0;
           _getAuth2 = (0, _express2.getAuth)(req), userId = _getAuth2.userId;
 
           if (userId) {
-            _context13.next = 4;
+            _context15.next = 4;
             break;
           }
 
-          return _context13.abrupt("return", res.status(401).json({
+          return _context15.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 4:
-          _context13.prev = 4;
-          _context13.next = 7;
+          _context15.prev = 4;
+          _context15.next = 7;
           return regeneratorRuntime.awrap(getStoredCanvasCredentials(userId));
 
         case 7:
-          stored = _context13.sent;
-          _context13.next = 14;
+          stored = _context15.sent;
+          _context15.next = 14;
           break;
 
         case 10:
-          _context13.prev = 10;
-          _context13.t0 = _context13["catch"](4);
-          console.error('[BE] /canvas/credentials decrypt error:', _context13.t0);
-          return _context13.abrupt("return", res.status(500).json({
+          _context15.prev = 10;
+          _context15.t0 = _context15["catch"](4);
+          console.error('[BE] /canvas/credentials decrypt error:', _context15.t0);
+          return _context15.abrupt("return", res.status(500).json({
             error: 'Saved Canvas token cannot be decrypted. Check CANVAS_TOKEN_SECRET is set and unchanged.'
           }));
 
         case 14:
-          return _context13.abrupt("return", res.json({
+          return _context15.abrupt("return", res.json({
             ok: true,
             school: stored.school,
             token: stored.token
           }));
 
         case 17:
-          _context13.prev = 17;
-          _context13.t1 = _context13["catch"](0);
-          console.error('[BE] /canvas/credentials error:', _context13.t1);
-          return _context13.abrupt("return", res.status(500).json({
+          _context15.prev = 17;
+          _context15.t1 = _context15["catch"](0);
+          console.error('[BE] /canvas/credentials error:', _context15.t1);
+          return _context15.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 21:
         case "end":
-          return _context13.stop();
+          return _context15.stop();
       }
     }
   }, null, null, [[0, 17], [4, 10]]);
@@ -1651,34 +1782,34 @@ app.get('/canvas/credentials', function _callee4(req, res) {
 app.put('/canvas/credentials', function _callee5(req, res) {
   var _getAuth3, userId, safeBody, schoolRaw, tokenRaw, safeSchoolRaw, safeTokenRaw, school, token, encrypted;
 
-  return regeneratorRuntime.async(function _callee5$(_context14) {
+  return regeneratorRuntime.async(function _callee5$(_context16) {
     while (1) {
-      switch (_context14.prev = _context14.next) {
+      switch (_context16.prev = _context16.next) {
         case 0:
-          _context14.prev = 0;
+          _context16.prev = 0;
           _getAuth3 = (0, _express2.getAuth)(req), userId = _getAuth3.userId;
 
           if (userId) {
-            _context14.next = 4;
+            _context16.next = 4;
             break;
           }
 
-          return _context14.abrupt("return", res.status(401).json({
+          return _context16.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 4:
           if (CANVAS_TOKEN_SECRET) {
-            _context14.next = 6;
+            _context16.next = 6;
             break;
           }
 
-          return _context14.abrupt("return", res.status(500).json({
+          return _context16.abrupt("return", res.status(500).json({
             error: 'Missing CANVAS_TOKEN_SECRET on server'
           }));
 
         case 6:
-          _context14.next = 8;
+          _context16.next = 8;
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
         case 8:
@@ -1701,45 +1832,45 @@ app.put('/canvas/credentials', function _callee5(req, res) {
           token = String(safeTokenRaw).trim();
 
           if (!(school.length > 255)) {
-            _context14.next = 19;
+            _context16.next = 19;
             break;
           }
 
-          return _context14.abrupt("return", res.status(400).json({
+          return _context16.abrupt("return", res.status(400).json({
             error: 'School is too long'
           }));
 
         case 19:
           if (!(token.length > 8192)) {
-            _context14.next = 21;
+            _context16.next = 21;
             break;
           }
 
-          return _context14.abrupt("return", res.status(400).json({
+          return _context16.abrupt("return", res.status(400).json({
             error: 'Token is too long'
           }));
 
         case 21:
           encrypted = encryptCanvasToken(token);
-          _context14.next = 24;
+          _context16.next = 24;
           return regeneratorRuntime.awrap(_db.pool.query("\n      INSERT INTO app_canvas_credentials (\n        clerk_user_id,\n        canvas_school,\n        canvas_token_ciphertext,\n        canvas_token_iv,\n        canvas_token_tag,\n        updated_at\n      )\n      VALUES ($1, $2, $3, $4, $5, NOW())\n      ON CONFLICT (clerk_user_id)\n      DO UPDATE SET\n        canvas_school = EXCLUDED.canvas_school,\n        canvas_token_ciphertext = EXCLUDED.canvas_token_ciphertext,\n        canvas_token_iv = EXCLUDED.canvas_token_iv,\n        canvas_token_tag = EXCLUDED.canvas_token_tag,\n        updated_at = NOW()\n      ", [userId, school, encrypted.cipherText, encrypted.iv, encrypted.authTag]));
 
         case 24:
-          return _context14.abrupt("return", res.json({
+          return _context16.abrupt("return", res.json({
             ok: true
           }));
 
         case 27:
-          _context14.prev = 27;
-          _context14.t0 = _context14["catch"](0);
-          console.error('[BE] /canvas/credentials PUT error:', _context14.t0);
-          return _context14.abrupt("return", res.status(500).json({
+          _context16.prev = 27;
+          _context16.t0 = _context16["catch"](0);
+          console.error('[BE] /canvas/credentials PUT error:', _context16.t0);
+          return _context16.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 31:
         case "end":
-          return _context14.stop();
+          return _context16.stop();
       }
     }
   }, null, null, [[0, 27]]);
@@ -1752,42 +1883,42 @@ app.put('/canvas/credentials', function _callee5(req, res) {
 app["delete"]('/canvas/credentials', function _callee6(req, res) {
   var _getAuth4, userId;
 
-  return regeneratorRuntime.async(function _callee6$(_context15) {
+  return regeneratorRuntime.async(function _callee6$(_context17) {
     while (1) {
-      switch (_context15.prev = _context15.next) {
+      switch (_context17.prev = _context17.next) {
         case 0:
-          _context15.prev = 0;
+          _context17.prev = 0;
           _getAuth4 = (0, _express2.getAuth)(req), userId = _getAuth4.userId;
 
           if (userId) {
-            _context15.next = 4;
+            _context17.next = 4;
             break;
           }
 
-          return _context15.abrupt("return", res.status(401).json({
+          return _context17.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 4:
-          _context15.next = 6;
+          _context17.next = 6;
           return regeneratorRuntime.awrap(_db.pool.query("DELETE FROM app_canvas_credentials WHERE clerk_user_id = $1", [userId]));
 
         case 6:
-          return _context15.abrupt("return", res.json({
+          return _context17.abrupt("return", res.json({
             ok: true
           }));
 
         case 9:
-          _context15.prev = 9;
-          _context15.t0 = _context15["catch"](0);
-          console.error('[BE] /canvas/credentials DELETE error:', _context15.t0);
-          return _context15.abrupt("return", res.status(500).json({
+          _context17.prev = 9;
+          _context17.t0 = _context17["catch"](0);
+          console.error('[BE] /canvas/credentials DELETE error:', _context17.t0);
+          return _context17.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 13:
         case "end":
-          return _context15.stop();
+          return _context17.stop();
       }
     }
   }, null, null, [[0, 9]]);
@@ -1800,24 +1931,24 @@ app["delete"]('/canvas/credentials', function _callee6(req, res) {
 app.get('/home/plan', function _callee7(req, res) {
   var _getAuth5, userId, safeQuery, rawDays, rawRecentDays, days, recentDays, nowTs, futureEndTs, pastStartTs, upcomingTaskResult, recentTaskResult, customUpcomingItems, customRecentItems, canvasUpcomingItems, canvasRecentItems, canvasConnected, canvasError, stored, baseUrl, futureStartIso, futureEndIso, recentStartIso, recentEndIso, _ref4, _ref5, rawCourses, rawUpcomingCanvasItems, rawRecentCompletedCanvasItems, rawRecentIncompleteCanvasItems, safeCourses, courseNameById, safeUpcomingCanvasItems, safeRecentCompletedCanvasItems, safeRecentIncompleteCanvasItems, recentCompletedCanvasItems, recentIncompleteCanvasItems, recentCanvasItemMap, normalizedCanvasError, upcomingItems, recentItems, recentSummary;
 
-  return regeneratorRuntime.async(function _callee7$(_context16) {
+  return regeneratorRuntime.async(function _callee7$(_context18) {
     while (1) {
-      switch (_context16.prev = _context16.next) {
+      switch (_context18.prev = _context18.next) {
         case 0:
-          _context16.prev = 0;
+          _context18.prev = 0;
           _getAuth5 = (0, _express2.getAuth)(req), userId = _getAuth5.userId;
 
           if (userId) {
-            _context16.next = 4;
+            _context18.next = 4;
             break;
           }
 
-          return _context16.abrupt("return", res.status(401).json({
+          return _context18.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 4:
-          _context16.next = 6;
+          _context18.next = 6;
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
         case 6:
@@ -1839,32 +1970,32 @@ app.get('/home/plan', function _callee7(req, res) {
           nowTs = Date.now();
           futureEndTs = nowTs + days * 24 * 60 * 60 * 1000;
           pastStartTs = nowTs - recentDays * 24 * 60 * 60 * 1000;
-          _context16.next = 18;
+          _context18.next = 18;
           return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      FROM app_custom_tasks\n      WHERE clerk_user_id = $1\n        AND is_completed = FALSE\n        AND task_date >= (NOW() AT TIME ZONE 'Europe/London')::date\n        AND task_date < ((NOW() AT TIME ZONE 'Europe/London')::date + $2::int)\n      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC\n      ", [userId, days]));
 
         case 18:
-          upcomingTaskResult = _context16.sent;
-          _context16.next = 21;
+          upcomingTaskResult = _context18.sent;
+          _context18.next = 21;
           return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      FROM app_custom_tasks\n      WHERE clerk_user_id = $1\n        AND task_date >= ((NOW() AT TIME ZONE 'Europe/London')::date - $2::int)\n        AND task_date < (NOW() AT TIME ZONE 'Europe/London')::date\n      ORDER BY task_date DESC, COALESCE(start_time, due_time) DESC NULLS LAST, created_at DESC\n      ", [userId, recentDays]));
 
         case 21:
-          recentTaskResult = _context16.sent;
+          recentTaskResult = _context18.sent;
           customUpcomingItems = upcomingTaskResult.rows.map(mapCustomTaskRow).map(mapCustomTaskToPlanItem);
           customRecentItems = recentTaskResult.rows.map(mapCustomTaskRow).map(mapCustomTaskToPlanItem);
           canvasUpcomingItems = [];
           canvasRecentItems = [];
           canvasConnected = false;
           canvasError = '';
-          _context16.prev = 28;
-          _context16.next = 31;
+          _context18.prev = 28;
+          _context18.next = 31;
           return regeneratorRuntime.awrap(getStoredCanvasCredentials(userId));
 
         case 31:
-          stored = _context16.sent;
+          stored = _context18.sent;
           canvasConnected = Boolean(stored.school && stored.token);
 
           if (!canvasConnected) {
-            _context16.next = 65;
+            _context18.next = 65;
             break;
           }
 
@@ -1873,11 +2004,11 @@ app.get('/home/plan', function _callee7(req, res) {
           futureEndIso = new Date(futureEndTs).toISOString();
           recentStartIso = new Date(pastStartTs).toISOString();
           recentEndIso = new Date(nowTs).toISOString();
-          _context16.next = 41;
+          _context18.next = 41;
           return regeneratorRuntime.awrap(Promise.all([fetchCanvasPaged(baseUrl, stored.token, '/api/v1/courses?enrollment_type=student&enrollment_state=active&per_page=100'), fetchCanvasPaged(baseUrl, stored.token, '/api/v1/planner/items?start_date=' + encodeURIComponent(futureStartIso) + '&end_date=' + encodeURIComponent(futureEndIso) + '&filter=incomplete_items&per_page=50'), fetchCanvasPaged(baseUrl, stored.token, '/api/v1/planner/items?start_date=' + encodeURIComponent(recentStartIso) + '&end_date=' + encodeURIComponent(recentEndIso) + '&filter=complete_items&per_page=50'), fetchCanvasPaged(baseUrl, stored.token, '/api/v1/planner/items?start_date=' + encodeURIComponent(recentStartIso) + '&end_date=' + encodeURIComponent(recentEndIso) + '&filter=incomplete_items&per_page=50')]));
 
         case 41:
-          _ref4 = _context16.sent;
+          _ref4 = _context18.sent;
           _ref5 = _slicedToArray(_ref4, 4);
           rawCourses = _ref5[0];
           rawUpcomingCanvasItems = _ref5[1];
@@ -2016,22 +2147,22 @@ app.get('/home/plan', function _callee7(req, res) {
               }
             }
           });
-          _context16.next = 64;
+          _context18.next = 64;
           return regeneratorRuntime.awrap(enrichPlanItemsWithSubmissionDetails(baseUrl, stored.token, Object.values(recentCanvasItemMap)));
 
         case 64:
-          canvasRecentItems = _context16.sent;
+          canvasRecentItems = _context18.sent;
 
         case 65:
-          _context16.next = 73;
+          _context18.next = 73;
           break;
 
         case 67:
-          _context16.prev = 67;
-          _context16.t0 = _context16["catch"](28);
+          _context18.prev = 67;
+          _context18.t0 = _context18["catch"](28);
 
-          if (_context16.t0 instanceof Error) {
-            canvasError = _context16.t0.message;
+          if (_context18.t0 instanceof Error) {
+            canvasError = _context18.t0.message;
           } else {
             canvasError = 'Failed to load Canvas items';
           }
@@ -2042,13 +2173,13 @@ app.get('/home/plan', function _callee7(req, res) {
             canvasConnected = false;
           }
 
-          console.error('[BE] /home/plan canvas error:', _context16.t0);
+          console.error('[BE] /home/plan canvas error:', _context18.t0);
 
         case 73:
           upcomingItems = sortPlanItemsAscending(customUpcomingItems.concat(canvasUpcomingItems));
           recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems));
           recentSummary = buildReviewSummary(recentItems);
-          return _context16.abrupt("return", res.json({
+          return _context18.abrupt("return", res.json({
             ok: true,
             days: days,
             recentDays: recentDays,
@@ -2060,16 +2191,16 @@ app.get('/home/plan', function _callee7(req, res) {
           }));
 
         case 79:
-          _context16.prev = 79;
-          _context16.t1 = _context16["catch"](0);
-          console.error('[BE] /home/plan error:', _context16.t1);
-          return _context16.abrupt("return", res.status(500).json({
+          _context18.prev = 79;
+          _context18.t1 = _context18["catch"](0);
+          console.error('[BE] /home/plan error:', _context18.t1);
+          return _context18.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 83:
         case "end":
-          return _context16.stop();
+          return _context18.stop();
       }
     }
   }, null, null, [[0, 79], [28, 67]]);
@@ -2082,132 +2213,12 @@ app.get('/home/plan', function _callee7(req, res) {
 app.get('/tasks', function _callee8(req, res) {
   var _getAuth6, userId, result;
 
-  return regeneratorRuntime.async(function _callee8$(_context17) {
-    while (1) {
-      switch (_context17.prev = _context17.next) {
-        case 0:
-          _context17.prev = 0;
-          _getAuth6 = (0, _express2.getAuth)(req), userId = _getAuth6.userId;
-
-          if (userId) {
-            _context17.next = 4;
-            break;
-          }
-
-          return _context17.abrupt("return", res.status(401).json({
-            error: 'Unauthenticated'
-          }));
-
-        case 4:
-          _context17.next = 6;
-          return regeneratorRuntime.awrap(ensureUserRow(userId));
-
-        case 6:
-          _context17.next = 8;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      FROM app_custom_tasks\n      WHERE clerk_user_id = $1\n      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC\n      ", [userId]));
-
-        case 8:
-          result = _context17.sent;
-          return _context17.abrupt("return", res.json({
-            ok: true,
-            items: result.rows.map(mapCustomTaskRow)
-          }));
-
-        case 12:
-          _context17.prev = 12;
-          _context17.t0 = _context17["catch"](0);
-          console.error('[BE] /tasks GET error:', _context17.t0);
-          return _context17.abrupt("return", res.status(500).json({
-            error: 'Internal server error'
-          }));
-
-        case 16:
-        case "end":
-          return _context17.stop();
-      }
-    }
-  }, null, null, [[0, 12]]);
-});
-/**
- * POST /tasks
- * Create one custom task for the current user.
- */
-
-app.post('/tasks', function _callee9(req, res) {
-  var _getAuth7, userId, normalized, result;
-
-  return regeneratorRuntime.async(function _callee9$(_context18) {
-    while (1) {
-      switch (_context18.prev = _context18.next) {
-        case 0:
-          _context18.prev = 0;
-          _getAuth7 = (0, _express2.getAuth)(req), userId = _getAuth7.userId;
-
-          if (userId) {
-            _context18.next = 4;
-            break;
-          }
-
-          return _context18.abrupt("return", res.status(401).json({
-            error: 'Unauthenticated'
-          }));
-
-        case 4:
-          _context18.next = 6;
-          return regeneratorRuntime.awrap(ensureUserRow(userId));
-
-        case 6:
-          normalized = normalizeTaskPayload(req.body);
-
-          if (!normalized.error) {
-            _context18.next = 9;
-            break;
-          }
-
-          return _context18.abrupt("return", res.status(400).json({
-            error: normalized.error
-          }));
-
-        case 9:
-          _context18.next = 11;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      INSERT INTO app_custom_tasks (\n        clerk_user_id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      )\n      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())\n      RETURNING\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      ", [userId, normalized.title, normalized.taskDate, normalized.timingMode, normalized.dueTime || null, normalized.startTime || null, normalized.endTime || null, normalized.isCompleted]));
-
-        case 11:
-          result = _context18.sent;
-          return _context18.abrupt("return", res.status(201).json({
-            ok: true,
-            item: mapCustomTaskRow(result.rows[0])
-          }));
-
-        case 15:
-          _context18.prev = 15;
-          _context18.t0 = _context18["catch"](0);
-          console.error('[BE] /tasks POST error:', _context18.t0);
-          return _context18.abrupt("return", res.status(500).json({
-            error: 'Internal server error'
-          }));
-
-        case 19:
-        case "end":
-          return _context18.stop();
-      }
-    }
-  }, null, null, [[0, 15]]);
-});
-/**
- * PUT /tasks/:id
- * Update one custom task.
- */
-
-app.put('/tasks/:id', function _callee10(req, res) {
-  var _getAuth8, userId, safeParams, taskId, normalized, result;
-
-  return regeneratorRuntime.async(function _callee10$(_context19) {
+  return regeneratorRuntime.async(function _callee8$(_context19) {
     while (1) {
       switch (_context19.prev = _context19.next) {
         case 0:
           _context19.prev = 0;
-          _getAuth8 = (0, _express2.getAuth)(req), userId = _getAuth8.userId;
+          _getAuth6 = (0, _express2.getAuth)(req), userId = _getAuth6.userId;
 
           if (userId) {
             _context19.next = 4;
@@ -2223,81 +2234,45 @@ app.put('/tasks/:id', function _callee10(req, res) {
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
         case 6:
-          safeParams = req.params || {};
-          taskId = Number(safeParams.id);
+          _context19.next = 8;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      FROM app_custom_tasks\n      WHERE clerk_user_id = $1\n      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC\n      ", [userId]));
 
-          if (!(!Number.isInteger(taskId) || taskId <= 0)) {
-            _context19.next = 10;
-            break;
-          }
-
-          return _context19.abrupt("return", res.status(400).json({
-            error: 'Invalid task id'
-          }));
-
-        case 10:
-          normalized = normalizeTaskPayload(req.body);
-
-          if (!normalized.error) {
-            _context19.next = 13;
-            break;
-          }
-
-          return _context19.abrupt("return", res.status(400).json({
-            error: normalized.error
-          }));
-
-        case 13:
-          _context19.next = 15;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      UPDATE app_custom_tasks\n      SET\n        title = $3,\n        task_date = $4,\n        timing_mode = $5,\n        due_time = $6,\n        start_time = $7,\n        end_time = $8,\n        is_completed = $9,\n        updated_at = NOW()\n      WHERE id = $1 AND clerk_user_id = $2\n      RETURNING\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      ", [taskId, userId, normalized.title, normalized.taskDate, normalized.timingMode, normalized.dueTime || null, normalized.startTime || null, normalized.endTime || null, normalized.isCompleted]));
-
-        case 15:
+        case 8:
           result = _context19.sent;
-
-          if (!(result.rowCount === 0)) {
-            _context19.next = 18;
-            break;
-          }
-
-          return _context19.abrupt("return", res.status(404).json({
-            error: 'Task not found'
-          }));
-
-        case 18:
           return _context19.abrupt("return", res.json({
             ok: true,
-            item: mapCustomTaskRow(result.rows[0])
+            items: result.rows.map(mapCustomTaskRow)
           }));
 
-        case 21:
-          _context19.prev = 21;
+        case 12:
+          _context19.prev = 12;
           _context19.t0 = _context19["catch"](0);
-          console.error('[BE] /tasks PUT error:', _context19.t0);
+          console.error('[BE] /tasks GET error:', _context19.t0);
           return _context19.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 25:
+        case 16:
         case "end":
           return _context19.stop();
       }
     }
-  }, null, null, [[0, 21]]);
+  }, null, null, [[0, 12]]);
 });
 /**
- * DELETE /tasks/:id
- * Remove one custom task.
+ * POST /tasks
+ * Create one custom task for the current user.
  */
 
-app["delete"]('/tasks/:id', function _callee11(req, res) {
-  var _getAuth9, userId, safeParams, taskId, result;
+app.post('/tasks', function _callee9(req, res) {
+  var _getAuth7, userId, normalized, result;
 
-  return regeneratorRuntime.async(function _callee11$(_context20) {
+  return regeneratorRuntime.async(function _callee9$(_context20) {
     while (1) {
       switch (_context20.prev = _context20.next) {
         case 0:
           _context20.prev = 0;
-          _getAuth9 = (0, _express2.getAuth)(req), userId = _getAuth9.userId;
+          _getAuth7 = (0, _express2.getAuth)(req), userId = _getAuth7.userId;
 
           if (userId) {
             _context20.next = 4;
@@ -2309,68 +2284,61 @@ app["delete"]('/tasks/:id', function _callee11(req, res) {
           }));
 
         case 4:
-          safeParams = req.params || {};
-          taskId = Number(safeParams.id);
+          _context20.next = 6;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
 
-          if (!(!Number.isInteger(taskId) || taskId <= 0)) {
-            _context20.next = 8;
+        case 6:
+          normalized = normalizeTaskPayload(req.body);
+
+          if (!normalized.error) {
+            _context20.next = 9;
             break;
           }
 
           return _context20.abrupt("return", res.status(400).json({
-            error: 'Invalid task id'
+            error: normalized.error
           }));
 
-        case 8:
-          _context20.next = 10;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      DELETE FROM app_custom_tasks\n      WHERE id = $1 AND clerk_user_id = $2\n      RETURNING id\n      ", [taskId, userId]));
+        case 9:
+          _context20.next = 11;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      INSERT INTO app_custom_tasks (\n        clerk_user_id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      )\n      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())\n      RETURNING\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      ", [userId, normalized.title, normalized.taskDate, normalized.timingMode, normalized.dueTime || null, normalized.startTime || null, normalized.endTime || null, normalized.isCompleted]));
 
-        case 10:
+        case 11:
           result = _context20.sent;
-
-          if (!(result.rowCount === 0)) {
-            _context20.next = 13;
-            break;
-          }
-
-          return _context20.abrupt("return", res.status(404).json({
-            error: 'Task not found'
+          return _context20.abrupt("return", res.status(201).json({
+            ok: true,
+            item: mapCustomTaskRow(result.rows[0])
           }));
 
-        case 13:
-          return _context20.abrupt("return", res.json({
-            ok: true
-          }));
-
-        case 16:
-          _context20.prev = 16;
+        case 15:
+          _context20.prev = 15;
           _context20.t0 = _context20["catch"](0);
-          console.error('[BE] /tasks DELETE error:', _context20.t0);
+          console.error('[BE] /tasks POST error:', _context20.t0);
           return _context20.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 20:
+        case 19:
         case "end":
           return _context20.stop();
       }
     }
-  }, null, null, [[0, 16]]);
+  }, null, null, [[0, 15]]);
 });
 /**
- * GET /checkins/status
- * 返回：points、totalDays、checkedInToday
+ * PUT /tasks/:id
+ * Update one custom task.
  */
 
-app.get('/checkins/status', function _callee12(req, res) {
-  var _getAuth10, userId, today, todayCheckin, total, points, currentPoints, checkedInToday, todayNote;
+app.put('/tasks/:id', function _callee10(req, res) {
+  var _getAuth8, userId, safeParams, taskId, normalized, result;
 
-  return regeneratorRuntime.async(function _callee12$(_context21) {
+  return regeneratorRuntime.async(function _callee10$(_context21) {
     while (1) {
       switch (_context21.prev = _context21.next) {
         case 0:
           _context21.prev = 0;
-          _getAuth10 = (0, _express2.getAuth)(req), userId = _getAuth10.userId;
+          _getAuth8 = (0, _express2.getAuth)(req), userId = _getAuth8.userId;
 
           if (userId) {
             _context21.next = 4;
@@ -2386,94 +2354,81 @@ app.get('/checkins/status', function _callee12(req, res) {
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
         case 6:
-          _context21.next = 8;
-          return regeneratorRuntime.awrap(getLondonToday());
+          safeParams = req.params || {};
+          taskId = Number(safeParams.id);
 
-        case 8:
-          today = _context21.sent;
-          _context21.next = 11;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT next_day_note\n      FROM app_checkins\n      WHERE clerk_user_id=$1 AND checkin_date=$2\n      LIMIT 1\n      ", [userId, today]));
-
-        case 11:
-          todayCheckin = _context21.sent;
-          _context21.next = 14;
-          return regeneratorRuntime.awrap(_db.pool.query("SELECT COUNT(*)::int AS total_days FROM app_checkins WHERE clerk_user_id=$1", [userId]));
-
-        case 14:
-          total = _context21.sent;
-          _context21.next = 17;
-          return regeneratorRuntime.awrap(_db.pool.query("SELECT points FROM app_users WHERE clerk_user_id=$1", [userId]));
-
-        case 17:
-          points = _context21.sent;
-          currentPoints = 0;
-
-          if (points.rows && points.rows.length > 0 && points.rows[0] && points.rows[0].points != null) {
-            currentPoints = points.rows[0].points;
+          if (!(!Number.isInteger(taskId) || taskId <= 0)) {
+            _context21.next = 10;
+            break;
           }
 
-          checkedInToday = false;
-          todayNote = '';
+          return _context21.abrupt("return", res.status(400).json({
+            error: 'Invalid task id'
+          }));
 
-          if (todayCheckin.rows && todayCheckin.rows.length > 0) {
-            checkedInToday = true;
+        case 10:
+          normalized = normalizeTaskPayload(req.body);
 
-            if (todayCheckin.rows[0] && todayCheckin.rows[0].next_day_note !== null && todayCheckin.rows[0].next_day_note !== undefined) {
-              todayNote = String(todayCheckin.rows[0].next_day_note);
-            }
+          if (!normalized.error) {
+            _context21.next = 13;
+            break;
           }
 
-          _context21.t0 = res;
-          _context21.t1 = today;
-          _context21.t2 = checkedInToday;
-          _context21.t3 = total.rows[0].total_days;
-          _context21.next = 29;
-          return regeneratorRuntime.awrap(getStreakDays(_db.pool, userId, today));
+          return _context21.abrupt("return", res.status(400).json({
+            error: normalized.error
+          }));
 
-        case 29:
-          _context21.t4 = _context21.sent;
-          _context21.t5 = currentPoints;
-          _context21.t6 = todayNote;
-          _context21.t7 = {
+        case 13:
+          _context21.next = 15;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      UPDATE app_custom_tasks\n      SET\n        title = $3,\n        task_date = $4,\n        timing_mode = $5,\n        due_time = $6,\n        start_time = $7,\n        end_time = $8,\n        is_completed = $9,\n        updated_at = NOW()\n      WHERE id = $1 AND clerk_user_id = $2\n      RETURNING\n        id,\n        title,\n        task_date,\n        timing_mode,\n        due_time,\n        start_time,\n        end_time,\n        is_completed,\n        created_at,\n        updated_at\n      ", [taskId, userId, normalized.title, normalized.taskDate, normalized.timingMode, normalized.dueTime || null, normalized.startTime || null, normalized.endTime || null, normalized.isCompleted]));
+
+        case 15:
+          result = _context21.sent;
+
+          if (!(result.rowCount === 0)) {
+            _context21.next = 18;
+            break;
+          }
+
+          return _context21.abrupt("return", res.status(404).json({
+            error: 'Task not found'
+          }));
+
+        case 18:
+          return _context21.abrupt("return", res.json({
             ok: true,
-            today: _context21.t1,
-            checkedInToday: _context21.t2,
-            totalDays: _context21.t3,
-            streakDays: _context21.t4,
-            points: _context21.t5,
-            todayNote: _context21.t6
-          };
-          return _context21.abrupt("return", _context21.t0.json.call(_context21.t0, _context21.t7));
+            item: mapCustomTaskRow(result.rows[0])
+          }));
 
-        case 36:
-          _context21.prev = 36;
-          _context21.t8 = _context21["catch"](0);
-          console.error('[BE] /checkins/status error:', _context21.t8);
+        case 21:
+          _context21.prev = 21;
+          _context21.t0 = _context21["catch"](0);
+          console.error('[BE] /tasks PUT error:', _context21.t0);
           return _context21.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 40:
+        case 25:
         case "end":
           return _context21.stop();
       }
     }
-  }, null, null, [[0, 36]]);
+  }, null, null, [[0, 21]]);
 });
 /**
- * GET /checkins/dates
- * Return all check-in dates for the current user.
+ * DELETE /tasks/:id
+ * Remove one custom task.
  */
 
-app.get('/checkins/dates', function _callee13(req, res) {
-  var _getAuth11, userId, result;
+app["delete"]('/tasks/:id', function _callee11(req, res) {
+  var _getAuth9, userId, safeParams, taskId, result;
 
-  return regeneratorRuntime.async(function _callee13$(_context22) {
+  return regeneratorRuntime.async(function _callee11$(_context22) {
     while (1) {
       switch (_context22.prev = _context22.next) {
         case 0:
           _context22.prev = 0;
-          _getAuth11 = (0, _express2.getAuth)(req), userId = _getAuth11.userId;
+          _getAuth9 = (0, _express2.getAuth)(req), userId = _getAuth9.userId;
 
           if (userId) {
             _context22.next = 4;
@@ -2485,57 +2440,68 @@ app.get('/checkins/dates', function _callee13(req, res) {
           }));
 
         case 4:
-          _context22.next = 6;
-          return regeneratorRuntime.awrap(ensureUserRow(userId));
+          safeParams = req.params || {};
+          taskId = Number(safeParams.id);
 
-        case 6:
-          _context22.next = 8;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT checkin_date::text AS checkin_date\n      FROM app_checkins\n      WHERE clerk_user_id = $1\n      ORDER BY checkin_date ASC\n      ", [userId]));
+          if (!(!Number.isInteger(taskId) || taskId <= 0)) {
+            _context22.next = 8;
+            break;
+          }
 
-        case 8:
-          result = _context22.sent;
-          return _context22.abrupt("return", res.json({
-            ok: true,
-            items: result.rows.map(function (row) {
-              var checkinDate = '';
-
-              if (row.checkin_date) {
-                checkinDate = row.checkin_date;
-              }
-
-              return String(checkinDate);
-            })
+          return _context22.abrupt("return", res.status(400).json({
+            error: 'Invalid task id'
           }));
 
-        case 12:
-          _context22.prev = 12;
+        case 8:
+          _context22.next = 10;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      DELETE FROM app_custom_tasks\n      WHERE id = $1 AND clerk_user_id = $2\n      RETURNING id\n      ", [taskId, userId]));
+
+        case 10:
+          result = _context22.sent;
+
+          if (!(result.rowCount === 0)) {
+            _context22.next = 13;
+            break;
+          }
+
+          return _context22.abrupt("return", res.status(404).json({
+            error: 'Task not found'
+          }));
+
+        case 13:
+          return _context22.abrupt("return", res.json({
+            ok: true
+          }));
+
+        case 16:
+          _context22.prev = 16;
           _context22.t0 = _context22["catch"](0);
-          console.error('[BE] /checkins/dates error:', _context22.t0);
+          console.error('[BE] /tasks DELETE error:', _context22.t0);
           return _context22.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 16:
+        case 20:
         case "end":
           return _context22.stop();
       }
     }
-  }, null, null, [[0, 12]]);
+  }, null, null, [[0, 16]]);
 });
 /**
- * PUT /checkins/today-note
- * Save or update the current user's note for tomorrow on today's check-in record.
+ * GET /checkins/status
+ * 返回：points、totalDays、checkedInToday
  */
 
-app.put('/checkins/today-note', function _callee14(req, res) {
-  var _getAuth12, userId, today, safeBody, nextDayNote, result, savedNote;
+app.get('/checkins/status', function _callee12(req, res) {
+  var _getAuth10, userId, today, todayCheckin, total, points, currentPoints, checkedInToday, todayNote;
 
-  return regeneratorRuntime.async(function _callee14$(_context23) {
+  return regeneratorRuntime.async(function _callee12$(_context23) {
     while (1) {
       switch (_context23.prev = _context23.next) {
         case 0:
           _context23.prev = 0;
-          _getAuth12 = (0, _express2.getAuth)(req), userId = _getAuth12.userId;
+          _getAuth10 = (0, _express2.getAuth)(req), userId = _getAuth10.userId;
 
           if (userId) {
             _context23.next = 4;
@@ -2556,65 +2522,89 @@ app.put('/checkins/today-note', function _callee14(req, res) {
 
         case 8:
           today = _context23.sent;
-          safeBody = req.body || {};
-          nextDayNote = normalizeNextDayNote(safeBody.note);
-          _context23.next = 13;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      UPDATE app_checkins\n      SET\n        next_day_note = $3,\n        next_day_note_updated_at = NOW()\n      WHERE clerk_user_id = $1 AND checkin_date = $2\n      RETURNING next_day_note\n      ", [userId, today, nextDayNote || null]));
+          _context23.next = 11;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT next_day_note\n      FROM app_checkins\n      WHERE clerk_user_id=$1 AND checkin_date=$2\n      LIMIT 1\n      ", [userId, today]));
 
-        case 13:
-          result = _context23.sent;
+        case 11:
+          todayCheckin = _context23.sent;
+          _context23.next = 14;
+          return regeneratorRuntime.awrap(_db.pool.query("SELECT COUNT(*)::int AS total_days FROM app_checkins WHERE clerk_user_id=$1", [userId]));
 
-          if (!(result.rowCount === 0)) {
-            _context23.next = 16;
-            break;
+        case 14:
+          total = _context23.sent;
+          _context23.next = 17;
+          return regeneratorRuntime.awrap(_db.pool.query("SELECT points FROM app_users WHERE clerk_user_id=$1", [userId]));
+
+        case 17:
+          points = _context23.sent;
+          currentPoints = 0;
+
+          if (points.rows && points.rows.length > 0 && points.rows[0] && points.rows[0].points != null) {
+            currentPoints = points.rows[0].points;
           }
 
-          return _context23.abrupt("return", res.status(400).json({
-            error: 'Check in today before saving a note.'
-          }));
+          checkedInToday = false;
+          todayNote = '';
 
-        case 16:
-          savedNote = '';
+          if (todayCheckin.rows && todayCheckin.rows.length > 0) {
+            checkedInToday = true;
 
-          if (result.rows && result.rows.length > 0 && result.rows[0] && result.rows[0].next_day_note !== null && result.rows[0].next_day_note !== undefined) {
-            savedNote = String(result.rows[0].next_day_note);
+            if (todayCheckin.rows[0] && todayCheckin.rows[0].next_day_note !== null && todayCheckin.rows[0].next_day_note !== undefined) {
+              todayNote = String(todayCheckin.rows[0].next_day_note);
+            }
           }
 
-          return _context23.abrupt("return", res.json({
+          _context23.t0 = res;
+          _context23.t1 = today;
+          _context23.t2 = checkedInToday;
+          _context23.t3 = total.rows[0].total_days;
+          _context23.next = 29;
+          return regeneratorRuntime.awrap(getStreakDays(_db.pool, userId, today));
+
+        case 29:
+          _context23.t4 = _context23.sent;
+          _context23.t5 = currentPoints;
+          _context23.t6 = todayNote;
+          _context23.t7 = {
             ok: true,
-            today: today,
-            todayNote: savedNote
-          }));
+            today: _context23.t1,
+            checkedInToday: _context23.t2,
+            totalDays: _context23.t3,
+            streakDays: _context23.t4,
+            points: _context23.t5,
+            todayNote: _context23.t6
+          };
+          return _context23.abrupt("return", _context23.t0.json.call(_context23.t0, _context23.t7));
 
-        case 21:
-          _context23.prev = 21;
-          _context23.t0 = _context23["catch"](0);
-          console.error('[BE] /checkins/today-note error:', _context23.t0);
+        case 36:
+          _context23.prev = 36;
+          _context23.t8 = _context23["catch"](0);
+          console.error('[BE] /checkins/status error:', _context23.t8);
           return _context23.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 25:
+        case 40:
         case "end":
           return _context23.stop();
       }
     }
-  }, null, null, [[0, 21]]);
+  }, null, null, [[0, 36]]);
 });
 /**
- * GET /rewards/catalog
- * Return all active rewards.
+ * GET /checkins/dates
+ * Return all check-in dates for the current user.
  */
 
-app.get('/rewards/catalog', function _callee15(req, res) {
-  var _getAuth13, userId, rewards;
+app.get('/checkins/dates', function _callee13(req, res) {
+  var _getAuth11, userId, result;
 
-  return regeneratorRuntime.async(function _callee15$(_context24) {
+  return regeneratorRuntime.async(function _callee13$(_context24) {
     while (1) {
       switch (_context24.prev = _context24.next) {
         case 0:
           _context24.prev = 0;
-          _getAuth13 = (0, _express2.getAuth)(req), userId = _getAuth13.userId;
+          _getAuth11 = (0, _express2.getAuth)(req), userId = _getAuth11.userId;
 
           if (userId) {
             _context24.next = 4;
@@ -2631,19 +2621,27 @@ app.get('/rewards/catalog', function _callee15(req, res) {
 
         case 6:
           _context24.next = 8;
-          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT id, title, points_cost, category, image_url, is_active\n      FROM app_rewards\n      WHERE is_active = TRUE\n      ORDER BY points_cost ASC, id ASC\n      "));
+          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT checkin_date::text AS checkin_date\n      FROM app_checkins\n      WHERE clerk_user_id = $1\n      ORDER BY checkin_date ASC\n      ", [userId]));
 
         case 8:
-          rewards = _context24.sent;
+          result = _context24.sent;
           return _context24.abrupt("return", res.json({
             ok: true,
-            items: rewards.rows.map(mapRewardRow)
+            items: result.rows.map(function (row) {
+              var checkinDate = '';
+
+              if (row.checkin_date) {
+                checkinDate = row.checkin_date;
+              }
+
+              return String(checkinDate);
+            })
           }));
 
         case 12:
           _context24.prev = 12;
           _context24.t0 = _context24["catch"](0);
-          console.error('[BE] /rewards/catalog error:', _context24.t0);
+          console.error('[BE] /checkins/dates error:', _context24.t0);
           return _context24.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
@@ -2656,27 +2654,22 @@ app.get('/rewards/catalog', function _callee15(req, res) {
   }, null, null, [[0, 12]]);
 });
 /**
- * POST /rewards/redeem
- * Redeem one reward and deduct points in a DB transaction.
+ * PUT /checkins/today-note
+ * Save or update the current user's note for tomorrow on today's check-in record.
  */
 
-app.post('/rewards/redeem', function _callee16(req, res) {
-  var client, _getAuth14, userId, safeBody, rewardId, rewardResult, reward, pointsResult, currentPoints, updatedUser, orderResult, order, remainingPoints;
+app.put('/checkins/today-note', function _callee14(req, res) {
+  var _getAuth12, userId, today, safeBody, nextDayNote, result, savedNote;
 
-  return regeneratorRuntime.async(function _callee16$(_context25) {
+  return regeneratorRuntime.async(function _callee14$(_context25) {
     while (1) {
       switch (_context25.prev = _context25.next) {
         case 0:
-          _context25.next = 2;
-          return regeneratorRuntime.awrap(_db.pool.connect());
-
-        case 2:
-          client = _context25.sent;
-          _context25.prev = 3;
-          _getAuth14 = (0, _express2.getAuth)(req), userId = _getAuth14.userId;
+          _context25.prev = 0;
+          _getAuth12 = (0, _express2.getAuth)(req), userId = _getAuth12.userId;
 
           if (userId) {
-            _context25.next = 7;
+            _context25.next = 4;
             break;
           }
 
@@ -2684,174 +2677,75 @@ app.post('/rewards/redeem', function _callee16(req, res) {
             error: 'Unauthenticated'
           }));
 
-        case 7:
-          _context25.next = 9;
+        case 4:
+          _context25.next = 6;
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
-        case 9:
+        case 6:
+          _context25.next = 8;
+          return regeneratorRuntime.awrap(getLondonToday());
+
+        case 8:
+          today = _context25.sent;
           safeBody = req.body || {};
-          rewardId = Number(safeBody.rewardId);
-
-          if (!(!Number.isInteger(rewardId) || rewardId <= 0)) {
-            _context25.next = 13;
-            break;
-          }
-
-          return _context25.abrupt("return", res.status(400).json({
-            error: 'Invalid rewardId'
-          }));
+          nextDayNote = normalizeNextDayNote(safeBody.note);
+          _context25.next = 13;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      UPDATE app_checkins\n      SET\n        next_day_note = $3,\n        next_day_note_updated_at = NOW()\n      WHERE clerk_user_id = $1 AND checkin_date = $2\n      RETURNING next_day_note\n      ", [userId, today, nextDayNote || null]));
 
         case 13:
-          _context25.next = 15;
-          return regeneratorRuntime.awrap(client.query('BEGIN'));
+          result = _context25.sent;
 
-        case 15:
-          _context25.next = 17;
-          return regeneratorRuntime.awrap(client.query("\n      SELECT id, title, points_cost, category, image_url, is_active\n      FROM app_rewards\n      WHERE id = $1\n      FOR UPDATE\n      ", [rewardId]));
-
-        case 17:
-          rewardResult = _context25.sent;
-
-          if (!(rewardResult.rowCount === 0)) {
-            _context25.next = 22;
+          if (!(result.rowCount === 0)) {
+            _context25.next = 16;
             break;
           }
 
-          _context25.next = 21;
-          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
-
-        case 21:
-          return _context25.abrupt("return", res.status(404).json({
-            error: 'Reward not found'
-          }));
-
-        case 22:
-          reward = mapRewardRow(rewardResult.rows[0]);
-
-          if (reward.isActive) {
-            _context25.next = 27;
-            break;
-          }
-
-          _context25.next = 26;
-          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
-
-        case 26:
           return _context25.abrupt("return", res.status(400).json({
-            error: 'Reward is not active'
+            error: 'Check in today before saving a note.'
           }));
 
-        case 27:
-          _context25.next = 29;
-          return regeneratorRuntime.awrap(client.query("\n      SELECT points\n      FROM app_users\n      WHERE clerk_user_id = $1\n      FOR UPDATE\n      ", [userId]));
+        case 16:
+          savedNote = '';
 
-        case 29:
-          pointsResult = _context25.sent;
-          currentPoints = 0;
-
-          if (pointsResult.rows && pointsResult.rows.length > 0 && pointsResult.rows[0]) {
-            currentPoints = Number(pointsResult.rows[0].points) || 0;
-          }
-
-          if (!(currentPoints < reward.pointsCost)) {
-            _context25.next = 36;
-            break;
-          }
-
-          _context25.next = 35;
-          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
-
-        case 35:
-          return _context25.abrupt("return", res.status(409).json({
-            error: 'INSUFFICIENT_POINTS',
-            currentPoints: currentPoints,
-            requiredPoints: reward.pointsCost
-          }));
-
-        case 36:
-          _context25.next = 38;
-          return regeneratorRuntime.awrap(client.query("\n      UPDATE app_users\n      SET points = points - $2, last_seen_at = NOW()\n      WHERE clerk_user_id = $1\n      RETURNING points\n      ", [userId, reward.pointsCost]));
-
-        case 38:
-          updatedUser = _context25.sent;
-          _context25.next = 41;
-          return regeneratorRuntime.awrap(client.query("\n      INSERT INTO app_reward_orders (clerk_user_id, reward_id, points_cost, status, created_at)\n      VALUES ($1, $2, $3, 'completed', NOW())\n      RETURNING id, status, created_at\n      ", [userId, reward.id, reward.pointsCost]));
-
-        case 41:
-          orderResult = _context25.sent;
-          _context25.next = 44;
-          return regeneratorRuntime.awrap(client.query('COMMIT'));
-
-        case 44:
-          order = orderResult.rows[0];
-          remainingPoints = 0;
-
-          if (updatedUser.rows && updatedUser.rows.length > 0 && updatedUser.rows[0]) {
-            remainingPoints = Number(updatedUser.rows[0].points) || 0;
+          if (result.rows && result.rows.length > 0 && result.rows[0] && result.rows[0].next_day_note !== null && result.rows[0].next_day_note !== undefined) {
+            savedNote = String(result.rows[0].next_day_note);
           }
 
           return _context25.abrupt("return", res.json({
             ok: true,
-            remainingPoints: remainingPoints,
-            order: {
-              id: order.id,
-              rewardId: reward.id,
-              title: reward.title,
-              category: reward.category,
-              imageUrl: reward.imageUrl,
-              pointsCost: reward.pointsCost,
-              status: order.status,
-              createdAt: order.created_at
-            }
+            today: today,
+            todayNote: savedNote
           }));
 
-        case 50:
-          _context25.prev = 50;
-          _context25.t0 = _context25["catch"](3);
-          _context25.prev = 52;
-          _context25.next = 55;
-          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
-
-        case 55:
-          _context25.next = 59;
-          break;
-
-        case 57:
-          _context25.prev = 57;
-          _context25.t1 = _context25["catch"](52);
-
-        case 59:
-          console.error('[BE] /rewards/redeem error:', _context25.t0);
+        case 21:
+          _context25.prev = 21;
+          _context25.t0 = _context25["catch"](0);
+          console.error('[BE] /checkins/today-note error:', _context25.t0);
           return _context25.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
-        case 61:
-          _context25.prev = 61;
-          client.release();
-          return _context25.finish(61);
-
-        case 64:
+        case 25:
         case "end":
           return _context25.stop();
       }
     }
-  }, null, null, [[3, 50, 61, 64], [52, 57]]);
+  }, null, null, [[0, 21]]);
 });
 /**
- * GET /rewards/orders
- * Return current user's redemption orders.
+ * GET /makeup-card/status
+ * Return the current user's make-up card inventory and whether yesterday can be repaired.
  */
 
-app.get('/rewards/orders', function _callee17(req, res) {
-  var _getAuth15, userId, orders;
+app.get('/makeup-card/status', function _callee15(req, res) {
+  var _getAuth13, userId, today, status;
 
-  return regeneratorRuntime.async(function _callee17$(_context26) {
+  return regeneratorRuntime.async(function _callee15$(_context26) {
     while (1) {
       switch (_context26.prev = _context26.next) {
         case 0:
           _context26.prev = 0;
-          _getAuth15 = (0, _express2.getAuth)(req), userId = _getAuth15.userId;
+          _getAuth13 = (0, _express2.getAuth)(req), userId = _getAuth13.userId;
 
           if (userId) {
             _context26.next = 4;
@@ -2864,15 +2758,533 @@ app.get('/rewards/orders', function _callee17(req, res) {
 
         case 4:
           _context26.next = 6;
-          return regeneratorRuntime.awrap(ensureUserRow(userId));
+          return regeneratorRuntime.awrap(ensureMakeupCardUserColumn(_db.pool));
 
         case 6:
           _context26.next = 8;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 8:
+          _context26.next = 10;
+          return regeneratorRuntime.awrap(getLondonToday());
+
+        case 10:
+          today = _context26.sent;
+          _context26.next = 13;
+          return regeneratorRuntime.awrap(getMakeupCardStatus(_db.pool, userId, today));
+
+        case 13:
+          status = _context26.sent;
+          return _context26.abrupt("return", res.json({
+            ok: true,
+            makeupCards: status.makeupCards,
+            yesterdayMissed: !status.yesterdayCheckedIn,
+            canUse: status.canUse
+          }));
+
+        case 17:
+          _context26.prev = 17;
+          _context26.t0 = _context26["catch"](0);
+          console.error('[BE] /makeup-card/status error:', _context26.t0);
+          return _context26.abrupt("return", res.status(500).json({
+            error: 'Internal server error'
+          }));
+
+        case 21:
+        case "end":
+          return _context26.stop();
+      }
+    }
+  }, null, null, [[0, 17]]);
+});
+/**
+ * POST /makeup-card/use
+ * Spend one make-up card to create yesterday's check-in without normal daily points.
+ */
+
+app.post('/makeup-card/use', function _callee16(req, res) {
+  var client, _getAuth14, userId, today, status, inserted, updatedUser, totalResult, makeupCards, totalDays;
+
+  return regeneratorRuntime.async(function _callee16$(_context27) {
+    while (1) {
+      switch (_context27.prev = _context27.next) {
+        case 0:
+          _context27.next = 2;
+          return regeneratorRuntime.awrap(_db.pool.connect());
+
+        case 2:
+          client = _context27.sent;
+          _context27.prev = 3;
+          _getAuth14 = (0, _express2.getAuth)(req), userId = _getAuth14.userId;
+
+          if (userId) {
+            _context27.next = 7;
+            break;
+          }
+
+          return _context27.abrupt("return", res.status(401).json({
+            error: 'Unauthenticated'
+          }));
+
+        case 7:
+          _context27.next = 9;
+          return regeneratorRuntime.awrap(ensureMakeupCardUserColumn(client));
+
+        case 9:
+          _context27.next = 11;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 11:
+          _context27.next = 13;
+          return regeneratorRuntime.awrap(getLondonToday());
+
+        case 13:
+          today = _context27.sent;
+          _context27.next = 16;
+          return regeneratorRuntime.awrap(client.query('BEGIN'));
+
+        case 16:
+          _context27.next = 18;
+          return regeneratorRuntime.awrap(getMakeupCardStatus(client, userId, today));
+
+        case 18:
+          status = _context27.sent;
+
+          if (!(status.makeupCards <= 0)) {
+            _context27.next = 23;
+            break;
+          }
+
+          _context27.next = 22;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 22:
+          return _context27.abrupt("return", res.status(409).json({
+            error: 'No make-up cards available.'
+          }));
+
+        case 23:
+          if (!status.yesterdayCheckedIn) {
+            _context27.next = 27;
+            break;
+          }
+
+          _context27.next = 26;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 26:
+          return _context27.abrupt("return", res.status(409).json({
+            error: 'Yesterday is already checked in.'
+          }));
+
+        case 27:
+          _context27.next = 29;
+          return regeneratorRuntime.awrap(client.query("\n      INSERT INTO app_checkins (clerk_user_id, checkin_date)\n      VALUES ($1, $2)\n      ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING\n      RETURNING id\n      ", [userId, status.yesterday]));
+
+        case 29:
+          inserted = _context27.sent;
+
+          if (!(inserted.rowCount === 0)) {
+            _context27.next = 34;
+            break;
+          }
+
+          _context27.next = 33;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 33:
+          return _context27.abrupt("return", res.status(409).json({
+            error: 'Yesterday is already checked in.'
+          }));
+
+        case 34:
+          _context27.next = 36;
+          return regeneratorRuntime.awrap(client.query("\n      UPDATE app_users\n      SET makeup_cards = makeup_cards - 1, last_seen_at = NOW()\n      WHERE clerk_user_id = $1 AND makeup_cards > 0\n      RETURNING points, makeup_cards\n      ", [userId]));
+
+        case 36:
+          updatedUser = _context27.sent;
+
+          if (!(updatedUser.rowCount === 0)) {
+            _context27.next = 41;
+            break;
+          }
+
+          _context27.next = 40;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 40:
+          return _context27.abrupt("return", res.status(409).json({
+            error: 'No make-up cards available.'
+          }));
+
+        case 41:
+          _context27.next = 43;
+          return regeneratorRuntime.awrap(client.query("\n      SELECT COUNT(*)::int AS total_days\n      FROM app_checkins\n      WHERE clerk_user_id = $1\n      ", [userId]));
+
+        case 43:
+          totalResult = _context27.sent;
+          _context27.next = 46;
+          return regeneratorRuntime.awrap(client.query('COMMIT'));
+
+        case 46:
+          makeupCards = 0;
+
+          if (updatedUser.rows && updatedUser.rows.length > 0) {
+            if (updatedUser.rows[0]) {
+              if (updatedUser.rows[0].makeup_cards != null) {
+                makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0;
+              }
+            }
+          }
+
+          totalDays = 0;
+
+          if (totalResult.rows && totalResult.rows.length > 0) {
+            if (totalResult.rows[0] && totalResult.rows[0].total_days != null) {
+              totalDays = Number(totalResult.rows[0].total_days) || 0;
+            }
+          }
+
+          return _context27.abrupt("return", res.json({
+            ok: true,
+            makeupCards: makeupCards,
+            totalDays: totalDays
+          }));
+
+        case 53:
+          _context27.prev = 53;
+          _context27.t0 = _context27["catch"](3);
+          _context27.prev = 55;
+          _context27.next = 58;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 58:
+          _context27.next = 62;
+          break;
+
+        case 60:
+          _context27.prev = 60;
+          _context27.t1 = _context27["catch"](55);
+
+        case 62:
+          console.error('[BE] /makeup-card/use error:', _context27.t0);
+          return _context27.abrupt("return", res.status(500).json({
+            error: 'Internal server error'
+          }));
+
+        case 64:
+          _context27.prev = 64;
+          client.release();
+          return _context27.finish(64);
+
+        case 67:
+        case "end":
+          return _context27.stop();
+      }
+    }
+  }, null, null, [[3, 53, 64, 67], [55, 60]]);
+});
+/**
+ * GET /rewards/catalog
+ * Return all active rewards.
+ */
+
+app.get('/rewards/catalog', function _callee17(req, res) {
+  var _getAuth15, userId, rewards;
+
+  return regeneratorRuntime.async(function _callee17$(_context28) {
+    while (1) {
+      switch (_context28.prev = _context28.next) {
+        case 0:
+          _context28.prev = 0;
+          _getAuth15 = (0, _express2.getAuth)(req), userId = _getAuth15.userId;
+
+          if (userId) {
+            _context28.next = 4;
+            break;
+          }
+
+          return _context28.abrupt("return", res.status(401).json({
+            error: 'Unauthenticated'
+          }));
+
+        case 4:
+          _context28.next = 6;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 6:
+          _context28.next = 8;
+          return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT id, title, points_cost, category, image_url, is_active\n      FROM app_rewards\n      WHERE is_active = TRUE\n      ORDER BY points_cost ASC, id ASC\n      "));
+
+        case 8:
+          rewards = _context28.sent;
+          return _context28.abrupt("return", res.json({
+            ok: true,
+            items: rewards.rows.map(mapRewardRow)
+          }));
+
+        case 12:
+          _context28.prev = 12;
+          _context28.t0 = _context28["catch"](0);
+          console.error('[BE] /rewards/catalog error:', _context28.t0);
+          return _context28.abrupt("return", res.status(500).json({
+            error: 'Internal server error'
+          }));
+
+        case 16:
+        case "end":
+          return _context28.stop();
+      }
+    }
+  }, null, null, [[0, 12]]);
+});
+/**
+ * POST /rewards/redeem
+ * Redeem one reward and deduct points in a DB transaction.
+ */
+
+app.post('/rewards/redeem', function _callee18(req, res) {
+  var client, _getAuth16, userId, safeBody, rewardId, rewardResult, reward, makeupCardReward, pointsResult, currentPoints, updatedUser, orderResult, order, remainingPoints, makeupCards;
+
+  return regeneratorRuntime.async(function _callee18$(_context29) {
+    while (1) {
+      switch (_context29.prev = _context29.next) {
+        case 0:
+          _context29.next = 2;
+          return regeneratorRuntime.awrap(_db.pool.connect());
+
+        case 2:
+          client = _context29.sent;
+          _context29.prev = 3;
+          _getAuth16 = (0, _express2.getAuth)(req), userId = _getAuth16.userId;
+
+          if (userId) {
+            _context29.next = 7;
+            break;
+          }
+
+          return _context29.abrupt("return", res.status(401).json({
+            error: 'Unauthenticated'
+          }));
+
+        case 7:
+          _context29.next = 9;
+          return regeneratorRuntime.awrap(ensureMakeupCardUserColumn(client));
+
+        case 9:
+          _context29.next = 11;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 11:
+          safeBody = req.body || {};
+          rewardId = Number(safeBody.rewardId);
+
+          if (!(!Number.isInteger(rewardId) || rewardId <= 0)) {
+            _context29.next = 15;
+            break;
+          }
+
+          return _context29.abrupt("return", res.status(400).json({
+            error: 'Invalid rewardId'
+          }));
+
+        case 15:
+          _context29.next = 17;
+          return regeneratorRuntime.awrap(client.query('BEGIN'));
+
+        case 17:
+          _context29.next = 19;
+          return regeneratorRuntime.awrap(client.query("\n      SELECT id, title, points_cost, category, image_url, is_active\n      FROM app_rewards\n      WHERE id = $1\n      FOR UPDATE\n      ", [rewardId]));
+
+        case 19:
+          rewardResult = _context29.sent;
+
+          if (!(rewardResult.rowCount === 0)) {
+            _context29.next = 24;
+            break;
+          }
+
+          _context29.next = 23;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 23:
+          return _context29.abrupt("return", res.status(404).json({
+            error: 'Reward not found'
+          }));
+
+        case 24:
+          reward = mapRewardRow(rewardResult.rows[0]);
+
+          if (reward.isActive) {
+            _context29.next = 29;
+            break;
+          }
+
+          _context29.next = 28;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 28:
+          return _context29.abrupt("return", res.status(400).json({
+            error: 'Reward is not active'
+          }));
+
+        case 29:
+          makeupCardReward = isMakeupCardReward(reward);
+          _context29.next = 32;
+          return regeneratorRuntime.awrap(client.query("\n      SELECT points\n      FROM app_users\n      WHERE clerk_user_id = $1\n      FOR UPDATE\n      ", [userId]));
+
+        case 32:
+          pointsResult = _context29.sent;
+          currentPoints = 0;
+
+          if (pointsResult.rows && pointsResult.rows.length > 0 && pointsResult.rows[0]) {
+            currentPoints = Number(pointsResult.rows[0].points) || 0;
+          }
+
+          if (!(currentPoints < reward.pointsCost)) {
+            _context29.next = 39;
+            break;
+          }
+
+          _context29.next = 38;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 38:
+          return _context29.abrupt("return", res.status(409).json({
+            error: 'INSUFFICIENT_POINTS',
+            currentPoints: currentPoints,
+            requiredPoints: reward.pointsCost
+          }));
+
+        case 39:
+          updatedUser = null;
+
+          if (!makeupCardReward) {
+            _context29.next = 46;
+            break;
+          }
+
+          _context29.next = 43;
+          return regeneratorRuntime.awrap(client.query("\n        UPDATE app_users\n        SET points = points - $2, makeup_cards = makeup_cards + 1, last_seen_at = NOW()\n        WHERE clerk_user_id = $1\n        RETURNING points, makeup_cards\n        ", [userId, reward.pointsCost]));
+
+        case 43:
+          updatedUser = _context29.sent;
+          _context29.next = 49;
+          break;
+
+        case 46:
+          _context29.next = 48;
+          return regeneratorRuntime.awrap(client.query("\n        UPDATE app_users\n        SET points = points - $2, last_seen_at = NOW()\n        WHERE clerk_user_id = $1\n        RETURNING points, makeup_cards\n        ", [userId, reward.pointsCost]));
+
+        case 48:
+          updatedUser = _context29.sent;
+
+        case 49:
+          _context29.next = 51;
+          return regeneratorRuntime.awrap(client.query("\n      INSERT INTO app_reward_orders (clerk_user_id, reward_id, points_cost, status, created_at)\n      VALUES ($1, $2, $3, 'completed', NOW())\n      RETURNING id, status, created_at\n      ", [userId, reward.id, reward.pointsCost]));
+
+        case 51:
+          orderResult = _context29.sent;
+          _context29.next = 54;
+          return regeneratorRuntime.awrap(client.query('COMMIT'));
+
+        case 54:
+          order = orderResult.rows[0];
+          remainingPoints = 0;
+          makeupCards = 0;
+
+          if (updatedUser.rows && updatedUser.rows.length > 0 && updatedUser.rows[0]) {
+            remainingPoints = Number(updatedUser.rows[0].points) || 0;
+
+            if (updatedUser.rows[0].makeup_cards != null) {
+              makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0;
+            }
+          }
+
+          return _context29.abrupt("return", res.json({
+            ok: true,
+            remainingPoints: remainingPoints,
+            makeupCards: makeupCards,
+            order: {
+              id: order.id,
+              rewardId: reward.id,
+              title: reward.title,
+              category: reward.category,
+              imageUrl: reward.imageUrl,
+              pointsCost: reward.pointsCost,
+              status: order.status,
+              createdAt: order.created_at
+            }
+          }));
+
+        case 61:
+          _context29.prev = 61;
+          _context29.t0 = _context29["catch"](3);
+          _context29.prev = 63;
+          _context29.next = 66;
+          return regeneratorRuntime.awrap(client.query('ROLLBACK'));
+
+        case 66:
+          _context29.next = 70;
+          break;
+
+        case 68:
+          _context29.prev = 68;
+          _context29.t1 = _context29["catch"](63);
+
+        case 70:
+          console.error('[BE] /rewards/redeem error:', _context29.t0);
+          return _context29.abrupt("return", res.status(500).json({
+            error: 'Internal server error'
+          }));
+
+        case 72:
+          _context29.prev = 72;
+          client.release();
+          return _context29.finish(72);
+
+        case 75:
+        case "end":
+          return _context29.stop();
+      }
+    }
+  }, null, null, [[3, 61, 72, 75], [63, 68]]);
+});
+/**
+ * GET /rewards/orders
+ * Return current user's redemption orders.
+ */
+
+app.get('/rewards/orders', function _callee19(req, res) {
+  var _getAuth17, userId, orders;
+
+  return regeneratorRuntime.async(function _callee19$(_context30) {
+    while (1) {
+      switch (_context30.prev = _context30.next) {
+        case 0:
+          _context30.prev = 0;
+          _getAuth17 = (0, _express2.getAuth)(req), userId = _getAuth17.userId;
+
+          if (userId) {
+            _context30.next = 4;
+            break;
+          }
+
+          return _context30.abrupt("return", res.status(401).json({
+            error: 'Unauthenticated'
+          }));
+
+        case 4:
+          _context30.next = 6;
+          return regeneratorRuntime.awrap(ensureUserRow(userId));
+
+        case 6:
+          _context30.next = 8;
           return regeneratorRuntime.awrap(_db.pool.query("\n      SELECT\n        o.id,\n        o.reward_id,\n        o.points_cost,\n        o.status,\n        o.created_at,\n        r.title,\n        r.category,\n        r.image_url\n      FROM app_reward_orders o\n      JOIN app_rewards r ON r.id = o.reward_id\n      WHERE o.clerk_user_id = $1\n      ORDER BY o.created_at DESC\n      LIMIT 200\n      ", [userId]));
 
         case 8:
-          orders = _context26.sent;
-          return _context26.abrupt("return", res.json({
+          orders = _context30.sent;
+          return _context30.abrupt("return", res.json({
             ok: true,
             items: orders.rows.map(function (row) {
               var imageUrl = '';
@@ -2895,16 +3307,16 @@ app.get('/rewards/orders', function _callee17(req, res) {
           }));
 
         case 12:
-          _context26.prev = 12;
-          _context26.t0 = _context26["catch"](0);
-          console.error('[BE] /rewards/orders error:', _context26.t0);
-          return _context26.abrupt("return", res.status(500).json({
+          _context30.prev = 12;
+          _context30.t0 = _context30["catch"](0);
+          console.error('[BE] /rewards/orders error:', _context30.t0);
+          return _context30.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 16:
         case "end":
-          return _context26.stop();
+          return _context30.stop();
       }
     }
   }, null, null, [[0, 12]]);
@@ -2915,49 +3327,49 @@ app.get('/rewards/orders', function _callee17(req, res) {
  * 返回：points、totalDays、checkedInToday、gainedPoints
  */
 
-app.post('/checkins/today', function _callee18(req, res) {
-  var client, _getAuth16, userId, today, ins, didInsert, streakDays, gainedPoints, totalDays, yesterdayNote, todayNote, totalAfterInsert, yesterdayNoteResult, totalExisting, currentNoteResult, points, returnedGainedPoints, currentPoints;
+app.post('/checkins/today', function _callee20(req, res) {
+  var client, _getAuth18, userId, today, ins, didInsert, streakDays, gainedPoints, totalDays, yesterdayNote, todayNote, totalAfterInsert, yesterdayNoteResult, totalExisting, currentNoteResult, points, returnedGainedPoints, currentPoints;
 
-  return regeneratorRuntime.async(function _callee18$(_context27) {
+  return regeneratorRuntime.async(function _callee20$(_context31) {
     while (1) {
-      switch (_context27.prev = _context27.next) {
+      switch (_context31.prev = _context31.next) {
         case 0:
-          _context27.next = 2;
+          _context31.next = 2;
           return regeneratorRuntime.awrap(_db.pool.connect());
 
         case 2:
-          client = _context27.sent;
-          _context27.prev = 3;
-          _getAuth16 = (0, _express2.getAuth)(req), userId = _getAuth16.userId;
+          client = _context31.sent;
+          _context31.prev = 3;
+          _getAuth18 = (0, _express2.getAuth)(req), userId = _getAuth18.userId;
 
           if (userId) {
-            _context27.next = 7;
+            _context31.next = 7;
             break;
           }
 
-          return _context27.abrupt("return", res.status(401).json({
+          return _context31.abrupt("return", res.status(401).json({
             error: 'Unauthenticated'
           }));
 
         case 7:
-          _context27.next = 9;
+          _context31.next = 9;
           return regeneratorRuntime.awrap(ensureUserRow(userId));
 
         case 9:
-          _context27.next = 11;
+          _context31.next = 11;
           return regeneratorRuntime.awrap(getLondonToday());
 
         case 11:
-          today = _context27.sent;
-          _context27.next = 14;
+          today = _context31.sent;
+          _context31.next = 14;
           return regeneratorRuntime.awrap(client.query('BEGIN'));
 
         case 14:
-          _context27.next = 16;
+          _context31.next = 16;
           return regeneratorRuntime.awrap(client.query("\n      INSERT INTO app_checkins (clerk_user_id, checkin_date)\n      VALUES ($1, $2)\n      ON CONFLICT (clerk_user_id, checkin_date) DO NOTHING\n      RETURNING id\n      ", [userId, today]));
 
         case 16:
-          ins = _context27.sent;
+          ins = _context31.sent;
           didInsert = ins.rowCount === 1;
           streakDays = 0;
           gainedPoints = 0;
@@ -2966,76 +3378,76 @@ app.post('/checkins/today', function _callee18(req, res) {
           todayNote = ''; // Only the first check-in for the current day should grant points.
 
           if (!didInsert) {
-            _context27.next = 40;
+            _context31.next = 40;
             break;
           }
 
-          _context27.next = 26;
+          _context31.next = 26;
           return regeneratorRuntime.awrap(client.query("SELECT COUNT(*)::int AS total_days FROM app_checkins WHERE clerk_user_id=$1", [userId]));
 
         case 26:
-          totalAfterInsert = _context27.sent;
+          totalAfterInsert = _context31.sent;
 
           if (totalAfterInsert.rows && totalAfterInsert.rows.length > 0 && totalAfterInsert.rows[0] && totalAfterInsert.rows[0].total_days != null) {
             totalDays = Number(totalAfterInsert.rows[0].total_days) || 0;
           }
 
-          _context27.next = 30;
+          _context31.next = 30;
           return regeneratorRuntime.awrap(getStreakDays(client, userId, today));
 
         case 30:
-          streakDays = _context27.sent;
+          streakDays = _context31.sent;
           gainedPoints = getCheckinRewardPoints(streakDays);
-          _context27.next = 34;
+          _context31.next = 34;
           return regeneratorRuntime.awrap(client.query("\n        SELECT next_day_note\n        FROM app_checkins\n        WHERE clerk_user_id = $1 AND checkin_date = ($2::date - INTERVAL '1 day')::date\n        LIMIT 1\n        ", [userId, today]));
 
         case 34:
-          yesterdayNoteResult = _context27.sent;
+          yesterdayNoteResult = _context31.sent;
 
           if (yesterdayNoteResult.rows && yesterdayNoteResult.rows.length > 0 && yesterdayNoteResult.rows[0] && yesterdayNoteResult.rows[0].next_day_note !== null && yesterdayNoteResult.rows[0].next_day_note !== undefined) {
             yesterdayNote = String(yesterdayNoteResult.rows[0].next_day_note);
           }
 
-          _context27.next = 38;
+          _context31.next = 38;
           return regeneratorRuntime.awrap(client.query("UPDATE app_users SET points = points + $2, last_seen_at = NOW() WHERE clerk_user_id = $1", [userId, gainedPoints]));
 
         case 38:
-          _context27.next = 51;
+          _context31.next = 51;
           break;
 
         case 40:
-          _context27.next = 42;
+          _context31.next = 42;
           return regeneratorRuntime.awrap(getStreakDays(client, userId, today));
 
         case 42:
-          streakDays = _context27.sent;
-          _context27.next = 45;
+          streakDays = _context31.sent;
+          _context31.next = 45;
           return regeneratorRuntime.awrap(client.query("SELECT COUNT(*)::int AS total_days FROM app_checkins WHERE clerk_user_id=$1", [userId]));
 
         case 45:
-          totalExisting = _context27.sent;
+          totalExisting = _context31.sent;
 
           if (totalExisting.rows && totalExisting.rows.length > 0 && totalExisting.rows[0] && totalExisting.rows[0].total_days != null) {
             totalDays = Number(totalExisting.rows[0].total_days) || 0;
           }
 
-          _context27.next = 49;
+          _context31.next = 49;
           return regeneratorRuntime.awrap(client.query("\n        SELECT next_day_note\n        FROM app_checkins\n        WHERE clerk_user_id = $1 AND checkin_date = $2\n        LIMIT 1\n        ", [userId, today]));
 
         case 49:
-          currentNoteResult = _context27.sent;
+          currentNoteResult = _context31.sent;
 
           if (currentNoteResult.rows && currentNoteResult.rows.length > 0 && currentNoteResult.rows[0] && currentNoteResult.rows[0].next_day_note !== null && currentNoteResult.rows[0].next_day_note !== undefined) {
             todayNote = String(currentNoteResult.rows[0].next_day_note);
           }
 
         case 51:
-          _context27.next = 53;
+          _context31.next = 53;
           return regeneratorRuntime.awrap(client.query("SELECT points FROM app_users WHERE clerk_user_id=$1", [userId]));
 
         case 53:
-          points = _context27.sent;
-          _context27.next = 56;
+          points = _context31.sent;
+          _context31.next = 56;
           return regeneratorRuntime.awrap(client.query('COMMIT'));
 
         case 56:
@@ -3051,7 +3463,7 @@ app.post('/checkins/today', function _callee18(req, res) {
             currentPoints = points.rows[0].points;
           }
 
-          return _context27.abrupt("return", res.json({
+          return _context31.abrupt("return", res.json({
             ok: true,
             today: today,
             checkedInToday: true,
@@ -3064,25 +3476,25 @@ app.post('/checkins/today', function _callee18(req, res) {
           }));
 
         case 63:
-          _context27.prev = 63;
-          _context27.t0 = _context27["catch"](3);
-          _context27.next = 67;
+          _context31.prev = 63;
+          _context31.t0 = _context31["catch"](3);
+          _context31.next = 67;
           return regeneratorRuntime.awrap(client.query('ROLLBACK'));
 
         case 67:
-          console.error('[BE] /checkins/today error:', _context27.t0);
-          return _context27.abrupt("return", res.status(500).json({
+          console.error('[BE] /checkins/today error:', _context31.t0);
+          return _context31.abrupt("return", res.status(500).json({
             error: 'Internal server error'
           }));
 
         case 69:
-          _context27.prev = 69;
+          _context31.prev = 69;
           client.release();
-          return _context27.finish(69);
+          return _context31.finish(69);
 
         case 72:
         case "end":
-          return _context27.stop();
+          return _context31.stop();
       }
     }
   }, null, null, [[3, 63, 69, 72]]);
