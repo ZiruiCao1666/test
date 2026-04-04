@@ -477,8 +477,15 @@ const getCheckInButtonText = (checkedInToday) => {
   return 'Click to\ncheck in';
 };
 
-const getCheckInAlertText = (gained) => {
+const getCheckInAlertText = (gained, awardedMakeupCard) => {
   if (gained > 0) {
+    if (awardedMakeupCard) {
+      return (
+        'Checked in for today (+' +
+        String(gained) +
+        ' points). You earned 1 make-up card.'
+      );
+    }
     return 'Checked in for today (+' + String(gained) + ' points)';
   }
   return 'Already checked in today';
@@ -1327,7 +1334,8 @@ export default function HomeScreen() {
       persistSummaryToCache(data);
 
       const gained = Number(data.gainedPoints) || 0;
-      Alert.alert('Check-in', getCheckInAlertText(gained));
+      const awardedMakeupCard = Boolean(data.awardedMakeupCard);
+      Alert.alert('Check-in', getCheckInAlertText(gained, awardedMakeupCard));
     } catch (e) {
       Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
