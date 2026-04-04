@@ -72,6 +72,43 @@ function normalizeNextDayNote(value) {
   return safeNote
 }
 
+async function ensureMakeupCardUserColumn(db) {
+  await db.query(`
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
+  `)
+}
+
+function getDateText(value) {
+  if (typeof value === 'string') {
+    const safeValue = value.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(safeValue)) {
+      return safeValue
+    }
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return ''
+  }
+
+  const utcDate = new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()),
+  )
+  return utcDate.toISOString().slice(0, 10)
+}
+
+function getDateTextWithOffset(value, offsetDays) {
+  const baseDateText = getDateText(value)
+  if (!baseDateText) {
+    return ''
+  }
+
+  const date = new Date(baseDateText + 'T00:00:00Z')
+  date.setUTCDate(date.getUTCDate() + offsetDays)
+  return date.toISOString().slice(0, 10)
+}
+
 function mapRewardRow(row) {
   let imageUrl = ''
   if (row.image_url) {
@@ -1101,23 +1138,14 @@ async function getStreakDays(db, userId, today) {
 }
 
 async function getMakeupCardStatus(db, userId, today) {
-  const dateResult = await db.query(
-    `
-    SELECT ($1::date - INTERVAL '1 day')::date AS yesterday
-    `,
-    [today],
-  )
-
-  let yesterday = ''
-  if (dateResult.rows && dateResult.rows.length > 0) {
-    if (dateResult.rows[0] && dateResult.rows[0].yesterday) {
-      yesterday = String(dateResult.rows[0].yesterday)
-    }
+  const yesterday = getDateTextWithOffset(today, -1)
+  if (!yesterday) {
+    throw new Error('Cannot resolve yesterday date')
   }
 
   const userResult = await db.query(
     `
-    SELECT makeup_cards
+    SELECT COALESCE(makeup_cards, 0)::int AS makeup_cards
     FROM app_users
     WHERE clerk_user_id = $1
     LIMIT 1
@@ -2144,6 +2172,7 @@ app.get('/makeup-card/status', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
+    await ensureMakeupCardUserColumn(pool)
     await ensureUserRow(userId)
     const today = await getLondonToday()
     const status = await getMakeupCardStatus(pool, userId, today)
@@ -2170,6 +2199,7 @@ app.post('/makeup-card/use', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
+    await ensureMakeupCardUserColumn(client)
     await ensureUserRow(userId)
     const today = await getLondonToday()
 
@@ -2301,6 +2331,7 @@ app.post('/rewards/redeem', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
+    await ensureMakeupCardUserColumn(client)
     await ensureUserRow(userId)
 
     const safeBody = req.body || {}

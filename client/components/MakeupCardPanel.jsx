@@ -79,6 +79,13 @@ function getUseButtonText(usingCard, status) {
   return 'Use for yesterday';
 }
 
+function getRetryButtonText(loading) {
+  if (loading) {
+    return 'Loading...';
+  }
+  return 'Retry';
+}
+
 export default function MakeupCardPanel(props) {
   const safeProps = props || {};
   const points = safeProps.points;
@@ -92,11 +99,7 @@ export default function MakeupCardPanel(props) {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const [status, setStatus] = React.useState({
-    makeupCards: 0,
-    canUse: false,
-    yesterdayMissed: false,
-  });
+  const [status, setStatus] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [usingCard, setUsingCard] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -116,6 +119,8 @@ export default function MakeupCardPanel(props) {
 
   const loadStatus = React.useCallback(async function (silent = false) {
     if (!authLoaded || !isSignedIn) {
+      setStatus(null);
+      setError('');
       setLoading(false);
       return;
     }
@@ -224,11 +229,49 @@ export default function MakeupCardPanel(props) {
   }, [usingCard, fetchWithTimeout]);
 
   let bodyNode = null;
-  if (loading) {
+  if (loading && !status) {
     bodyNode = (
       <View style={styles.loadingWrap}>
         <ActivityIndicator color={theme.primary} />
       </View>
+    );
+  } else if (!status) {
+    bodyNode = (
+      <>
+        <Text style={[styles.summaryText, { color: theme.textPrimary }]}>
+          Cannot load make-up card status
+        </Text>
+
+        {error ? (
+          <Text
+            style={[
+              styles.errorText,
+              { color: isDarkTheme ? '#F29B96' : '#B91C1C' },
+            ]}
+          >
+            {error}
+          </Text>
+        ) : null}
+
+        <Pressable
+          onPress={function () {
+            loadStatus(false);
+          }}
+          disabled={loading}
+          style={function ({ pressed }) {
+            return [
+              styles.retryButton,
+              { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+              getStyleWhen(loading, { opacity: 0.6 }),
+              getStyleWhen(pressed, { opacity: 0.8 }),
+            ];
+          }}
+        >
+          <Text style={[styles.retryButtonText, { color: theme.textPrimary }]}>
+            {getRetryButtonText(loading)}
+          </Text>
+        </Pressable>
+      </>
     );
   } else {
     bodyNode = (
@@ -357,6 +400,18 @@ const styles = StyleSheet.create({
   useButtonText: {
     fontSize: 12,
     fontWeight: '800',
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  retryButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   errorText: {
     marginTop: 8,
