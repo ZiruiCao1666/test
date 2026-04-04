@@ -1343,7 +1343,7 @@ export default function HomeScreen() {
     }
   };
 
-  const lastingDays = streakDays || totalSignedDays;
+  const lastingDays = Math.max(0, Number(streakDays) || 0);
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
   const dueTodayCount = React.useMemo(() => countTasksDueToday(homePlanItems), [homePlanItems]);
   let totalUpcomingCount = 0;
