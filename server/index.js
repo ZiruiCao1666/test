@@ -1107,6 +1107,36 @@ function buildReviewSummary(items) {
 }
 
 async function getStreakDays(db, userId, today) {
+  const todayText = getDateText(today)
+  const yesterdayText = getDateTextWithOffset(today, -1)
+
+  if (!todayText || !yesterdayText) {
+    return 0
+  }
+
+  let anchorDate = ''
+  const anchorResult = await db.query(
+    `
+    SELECT checkin_date::text AS checkin_date
+    FROM app_checkins
+    WHERE clerk_user_id = $1
+      AND checkin_date IN ($2::date, $3::date)
+    ORDER BY checkin_date DESC
+    LIMIT 1
+    `,
+    [userId, todayText, yesterdayText],
+  )
+
+  if (anchorResult.rows && anchorResult.rows.length > 0) {
+    if (anchorResult.rows[0] && anchorResult.rows[0].checkin_date) {
+      anchorDate = String(anchorResult.rows[0].checkin_date)
+    }
+  }
+
+  if (!anchorDate) {
+    return 0
+  }
+
   const r = await db.query(
     `
     WITH ordered AS (
@@ -1124,7 +1154,7 @@ async function getStreakDays(db, userId, today) {
     FROM grouped
     WHERE grp = (SELECT grp FROM grouped ORDER BY checkin_date DESC LIMIT 1)
     `,
-    [userId, today],
+    [userId, anchorDate],
   )
 
   let firstRow = null
