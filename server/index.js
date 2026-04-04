@@ -2151,6 +2151,7 @@ app.get('/makeup-card/status', async function (req, res) {
     return res.json({
       ok: true,
       makeupCards: status.makeupCards,
+      yesterdayMissed: !status.yesterdayCheckedIn,
       canUse: status.canUse,
     })
   } catch (e) {

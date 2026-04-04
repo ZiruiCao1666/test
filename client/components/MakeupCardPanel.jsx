@@ -56,6 +56,14 @@ function getStatusSummary(status) {
   return 'You have 0 make-up cards';
 }
 
+function getYesterdayStatusText(status) {
+  const safeStatus = status || {};
+  if (safeStatus.yesterdayMissed) {
+    return 'Yesterday missed';
+  }
+  return 'Yesterday covered';
+}
+
 function getUseButtonText(usingCard, status) {
   const safeStatus = status || {};
 
@@ -87,6 +95,7 @@ export default function MakeupCardPanel(props) {
   const [status, setStatus] = React.useState({
     makeupCards: 0,
     canUse: false,
+    yesterdayMissed: false,
   });
   const [loading, setLoading] = React.useState(true);
   const [usingCard, setUsingCard] = React.useState(false);
@@ -142,6 +151,7 @@ export default function MakeupCardPanel(props) {
       setStatus({
         makeupCards: Number(data.makeupCards) || 0,
         canUse: Boolean(data.canUse),
+        yesterdayMissed: Boolean(data.yesterdayMissed),
       });
     } catch (error) {
       setError(getErrorMessage(error, 'Failed to load make-up card status'));
@@ -200,9 +210,10 @@ export default function MakeupCardPanel(props) {
       setStatus({
         makeupCards: Number(data.makeupCards) || 0,
         canUse: false,
+        yesterdayMissed: false,
       });
 
-      Alert.alert('Yesterday repaired', '1 make-up card was used.');
+      Alert.alert('Yesterday repaired', 'Yesterday is now checked in and your streak continues.');
     } catch (error) {
       const message = getErrorMessage(error, 'Failed to use make-up card');
       setError(message);
@@ -225,6 +236,20 @@ export default function MakeupCardPanel(props) {
         <Text style={[styles.summaryText, { color: theme.textPrimary }]}>
           {getStatusSummary(status)}
         </Text>
+
+        <View
+          style={[
+            styles.statusChip,
+            {
+              backgroundColor: theme.surfaceMuted,
+              borderColor: theme.borderSoft,
+            },
+          ]}
+        >
+          <Text style={[styles.statusChipText, { color: theme.textSecondary }]}>
+            {getYesterdayStatusText(status)}
+          </Text>
+        </View>
 
         <Pressable
           onPress={onUseCard}
@@ -309,6 +334,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     lineHeight: 20,
+  },
+  statusChip: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  statusChipText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   useButton: {
     alignSelf: 'flex-start',
