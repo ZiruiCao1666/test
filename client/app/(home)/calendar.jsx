@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Modal,
+  Alert,
 } from 'react-native';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
@@ -361,6 +362,37 @@ const getTaskRewardNoticeText = (rewardResult) => {
     return 'No reward for an overdue task';
   }
   return '';
+};
+
+const getTaskRewardPopupMessage = (rewardResult) => {
+  const safeRewardResult = rewardResult || {};
+  if (!safeRewardResult.granted) {
+    return '';
+  }
+
+  let dailyCountAfterGrant = Number(safeRewardResult.dailyCountAfterGrant);
+  if (!Number.isFinite(dailyCountAfterGrant) || dailyCountAfterGrant <= 0) {
+    dailyCountAfterGrant = 1;
+  }
+
+  let dailyLimit = Number(safeRewardResult.dailyLimit);
+  if (!Number.isFinite(dailyLimit) || dailyLimit <= 0) {
+    dailyLimit = 2;
+  }
+
+  let gainedPoints = Number(safeRewardResult.gainedPoints);
+  if (!Number.isFinite(gainedPoints) || gainedPoints <= 0) {
+    gainedPoints = 1;
+  }
+
+  return (
+    '完成每日任务 ' +
+    String(dailyCountAfterGrant) +
+    '/' +
+    String(dailyLimit) +
+    '\n积分 +' +
+    String(gainedPoints)
+  );
 };
 
 const getCanvasConnectButtonText = (isConnected) => {
@@ -2374,7 +2406,13 @@ export default function CalendarScreen() {
       await fetchCustomTasks({ silent: true });
       setTasksError('');
       if (payload.isCompleted) {
-        setTasksNotice(getTaskRewardNoticeText(saveResponse.rewardResult));
+        const rewardPopupMessage = getTaskRewardPopupMessage(saveResponse.rewardResult);
+        if (rewardPopupMessage) {
+          setTasksNotice('');
+          Alert.alert('Task reward', rewardPopupMessage);
+        } else {
+          setTasksNotice(getTaskRewardNoticeText(saveResponse.rewardResult));
+        }
       } else {
         setTasksNotice('');
       }

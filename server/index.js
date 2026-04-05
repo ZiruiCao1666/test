@@ -214,6 +214,8 @@ async function tryGrantTaskReward(
       reason: 'user_not_found',
       gainedPoints: 0,
       totalPoints: 0,
+      dailyCountAfterGrant: 0,
+      dailyLimit,
     }
   }
 
@@ -239,6 +241,8 @@ async function tryGrantTaskReward(
       reason: 'already_rewarded',
       gainedPoints: 0,
       totalPoints: currentPoints,
+      dailyCountAfterGrant: 0,
+      dailyLimit,
     }
   }
 
@@ -263,6 +267,8 @@ async function tryGrantTaskReward(
       reason: 'daily_cap_reached',
       gainedPoints: 0,
       totalPoints: currentPoints,
+      dailyCountAfterGrant: dailyCount,
+      dailyLimit,
     }
   }
 
@@ -288,6 +294,8 @@ async function tryGrantTaskReward(
       reason: 'already_rewarded',
       gainedPoints: 0,
       totalPoints: currentPoints,
+      dailyCountAfterGrant: dailyCount,
+      dailyLimit,
     }
   }
 
@@ -311,6 +319,8 @@ async function tryGrantTaskReward(
     reason: 'ok',
     gainedPoints: points,
     totalPoints,
+    dailyCountAfterGrant: dailyCount + 1,
+    dailyLimit,
   }
 }
 
