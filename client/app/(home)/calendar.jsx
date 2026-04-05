@@ -20,7 +20,7 @@ import { useAppTheme } from '../../lib/app-theme';
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
-const HOME_PLAN_CACHE_PREFIX = 'home_plan_v1';
+const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 
 const normalizeBaseUrl = (value) => {
@@ -2334,6 +2334,7 @@ export default function CalendarScreen() {
       if (savedTask) {
         normalizedSavedTask = normalizeCustomTask(savedTask, selectedDate);
       }
+      await clearHomePlanCacheForCurrentUser();
       await fetchCustomTasks({ silent: true });
       setTasksError('');
       setTasksNotice('');
@@ -2403,6 +2404,7 @@ export default function CalendarScreen() {
         isCompleted: !safeTask.isCompleted,
       };
       const saveResponse = await saveTaskToBackend(safeTask.id, payload);
+      await clearHomePlanCacheForCurrentUser();
       await fetchCustomTasks({ silent: true });
       setTasksError('');
       if (payload.isCompleted) {
@@ -2447,6 +2449,7 @@ export default function CalendarScreen() {
       if (!response.ok) {
         throw new Error(getApiErrorMessage(data, 'Failed to delete task (HTTP ' + String(response.status) + ')'));
       }
+      await clearHomePlanCacheForCurrentUser();
       setCustomTasks((prev) => prev.filter((item) => String(item.id) !== String(taskId)));
       if (String(editingTaskId) === String(taskId)) {
         resetTaskComposer(selectedDate);

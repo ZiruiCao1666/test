@@ -19,7 +19,7 @@ import { useAppTheme } from '../../lib/app-theme';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v2';
-const HOME_PLAN_CACHE_PREFIX = 'home_plan_v1';
+const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 const HOME_PLAN_DAYS = 7;
 const HOME_REVIEW_DAYS = 365;
@@ -782,10 +782,10 @@ const getStreakCycleDays = (streakDays) => {
 
 const getWeeklyProgressHintText = (completedCount, totalCount) => {
   if (totalCount <= 0) {
-    return 'No completed tasks yet this week';
+    return 'No tasks scheduled for this week';
   }
   if (completedCount >= totalCount) {
-    return 'You completed every task from the last 7 days';
+    return 'You completed every task for this week';
   }
   return 'Stay on track for your weekly goal';
 };
@@ -835,6 +835,10 @@ export default function HomeScreen() {
   const [summaryReady, setSummaryReady] = React.useState(false);
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
+  const [weeklyProgressSummary, setWeeklyProgressSummary] = React.useState({
+    totalCount: 0,
+    completedCount: 0,
+  });
   const [loadingHomePlan, setLoadingHomePlan] = React.useState(false);
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
@@ -955,6 +959,17 @@ export default function HomeScreen() {
       nextRecentItems = safeData.recentItems;
     }
 
+    let nextWeeklySummary = {
+      totalCount: 0,
+      completedCount: 0,
+    };
+    if (safeData.weeklySummary) {
+      nextWeeklySummary = {
+        totalCount: Number(safeData.weeklySummary.totalCount) || 0,
+        completedCount: Number(safeData.weeklySummary.completedCount) || 0,
+      };
+    }
+
     let nextCanvasConnected = false;
     if (safeData.canvasConnected) {
       nextCanvasConnected = true;
@@ -969,6 +984,7 @@ export default function HomeScreen() {
 
     setHomePlanItems(nextItems);
     setRecentPlanItems(nextRecentItems);
+    setWeeklyProgressSummary(nextWeeklySummary);
     setHomeCanvasConnected(nextCanvasConnected);
     setCanvasPlanWarning(nextCanvasWarning);
     setHomePlanError(null);
@@ -992,6 +1008,10 @@ export default function HomeScreen() {
       const payload = {
         items: [],
         recentItems: [],
+        weeklySummary: {
+          totalCount: 0,
+          completedCount: 0,
+        },
         canvasConnected: Boolean(safeData.canvasConnected),
         canvasError: '',
         updatedAt: Date.now(),
@@ -1002,6 +1022,12 @@ export default function HomeScreen() {
       }
       if (Array.isArray(safeData.recentItems)) {
         payload.recentItems = safeData.recentItems;
+      }
+      if (safeData.weeklySummary) {
+        payload.weeklySummary = {
+          totalCount: Number(safeData.weeklySummary.totalCount) || 0,
+          completedCount: Number(safeData.weeklySummary.completedCount) || 0,
+        };
       }
       if (typeof safeData.canvasError === 'string') {
         payload.canvasError = safeData.canvasError.trim();
@@ -1240,12 +1266,14 @@ export default function HomeScreen() {
       applyHomePlanData({
         items,
         recentItems,
+        weeklySummary: data.weeklySummary,
         canvasConnected: nextCanvasConnected,
         canvasError: nextCanvasError,
       });
       persistHomePlanToCache({
         items,
         recentItems,
+        weeklySummary: data.weeklySummary,
         canvasConnected: nextCanvasConnected,
         canvasError: nextCanvasError,
       });
@@ -1393,12 +1421,6 @@ export default function HomeScreen() {
     }
   });
   const heroBadgeText = getHomeHeroBadgeText(dueTodayCount, totalUpcomingCount);
-  const weeklyReviewItems = React.useMemo(() => {
-    return filterReviewItemsByDays(recentPlanItems, 7);
-  }, [recentPlanItems]);
-  const weeklyProgressSummary = React.useMemo(() => {
-    return buildReviewSummary(weeklyReviewItems);
-  }, [weeklyReviewItems]);
   const weeklyCompletedCount = weeklyProgressSummary.completedCount || 0;
   const weeklyTotalCount = weeklyProgressSummary.totalCount || 0;
   const weeklyProgressWidth = getProgressBarWidth(weeklyCompletedCount, weeklyTotalCount);

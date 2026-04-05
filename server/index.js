@@ -120,6 +120,34 @@ function getDateTextWithOffset(value, offsetDays) {
   return date.toISOString().slice(0, 10)
 }
 
+function getWeekWindowFromDateText(dateText) {
+  const safeDateText = String(dateText || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeDateText)) {
+    return {
+      weekStart: '',
+      weekEndExclusive: '',
+    }
+  }
+
+  const baseDate = new Date(safeDateText + 'T00:00:00Z')
+  const utcDay = baseDate.getUTCDay()
+  let daysFromMonday = utcDay - 1
+  if (utcDay === 0) {
+    daysFromMonday = 6
+  }
+
+  const weekStartDate = new Date(baseDate)
+  weekStartDate.setUTCDate(baseDate.getUTCDate() - daysFromMonday)
+
+  const weekEndExclusiveDate = new Date(weekStartDate)
+  weekEndExclusiveDate.setUTCDate(weekStartDate.getUTCDate() + 7)
+
+  return {
+    weekStart: weekStartDate.toISOString().slice(0, 10),
+    weekEndExclusive: weekEndExclusiveDate.toISOString().slice(0, 10),
+  }
+}
+
 function buildCanvasTaskRewardSourceId(courseId, assignmentId) {
   let safeCourseId = ''
   if (courseId !== null && courseId !== undefined) {
@@ -1866,9 +1894,15 @@ app.get('/home/plan', async function (req, res) {
       recentDays = Math.min(Math.max(rawRecentDays, 1), 365)
     }
 
+    const today = await getLondonToday()
+    const weeklyWindow = getWeekWindowFromDateText(today)
     const nowTs = Date.now()
     const futureEndTs = nowTs + days * 24 * 60 * 60 * 1000
     const pastStartTs = nowTs - recentDays * 24 * 60 * 60 * 1000
+    const weekStartTs = new Date(weeklyWindow.weekStart + 'T00:00:00Z').getTime()
+    const weekEndExclusiveTs = new Date(weeklyWindow.weekEndExclusive + 'T00:00:00Z').getTime()
+    const weekStartIso = weeklyWindow.weekStart + 'T00:00:00Z'
+    const weekEndExclusiveIso = weeklyWindow.weekEndExclusive + 'T00:00:00Z'
 
     const upcomingTaskResult = await pool.query(
       `
@@ -1915,6 +1949,28 @@ app.get('/home/plan', async function (req, res) {
       [userId, recentDays],
     )
 
+    const weeklyTaskResult = await pool.query(
+      `
+      SELECT
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      FROM app_custom_tasks
+      WHERE clerk_user_id = $1
+        AND task_date >= $2
+        AND task_date < $3
+      ORDER BY task_date ASC, COALESCE(start_time, due_time) ASC NULLS LAST, created_at ASC
+      `,
+      [userId, weeklyWindow.weekStart, weeklyWindow.weekEndExclusive],
+    )
+
     const customUpcomingItems = upcomingTaskResult.rows
       .map(mapCustomTaskRow)
       .map(mapCustomTaskToPlanItem)
@@ -1923,8 +1979,13 @@ app.get('/home/plan', async function (req, res) {
       .map(mapCustomTaskRow)
       .map(mapCustomTaskToPlanItem)
 
+    const customWeeklyItems = weeklyTaskResult.rows
+      .map(mapCustomTaskRow)
+      .map(mapCustomTaskToPlanItem)
+
     let canvasUpcomingItems = []
     let canvasRecentItems = []
+    let canvasWeeklyItems = []
     let canvasConnected = false
     let canvasError = ''
 
@@ -1939,7 +2000,14 @@ app.get('/home/plan', async function (req, res) {
         const recentStartIso = new Date(pastStartTs).toISOString()
         const recentEndIso = new Date(nowTs).toISOString()
 
-        const [rawCourses, rawUpcomingCanvasItems, rawRecentCompletedCanvasItems, rawRecentIncompleteCanvasItems] = await Promise.all([
+        const [
+          rawCourses,
+          rawUpcomingCanvasItems,
+          rawRecentCompletedCanvasItems,
+          rawRecentIncompleteCanvasItems,
+          rawWeeklyCompletedCanvasItems,
+          rawWeeklyIncompleteCanvasItems,
+        ] = await Promise.all([
           fetchCanvasPaged(
             baseUrl,
             stored.token,
@@ -1970,6 +2038,24 @@ app.get('/home/plan', async function (req, res) {
               encodeURIComponent(recentStartIso) +
               '&end_date=' +
               encodeURIComponent(recentEndIso) +
+              '&filter=incomplete_items&per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            '/api/v1/planner/items?start_date=' +
+              encodeURIComponent(weekStartIso) +
+              '&end_date=' +
+              encodeURIComponent(weekEndExclusiveIso) +
+              '&filter=complete_items&per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            stored.token,
+            '/api/v1/planner/items?start_date=' +
+              encodeURIComponent(weekStartIso) +
+              '&end_date=' +
+              encodeURIComponent(weekEndExclusiveIso) +
               '&filter=incomplete_items&per_page=50',
           ),
         ])
@@ -2011,6 +2097,14 @@ app.get('/home/plan', async function (req, res) {
         let safeRecentIncompleteCanvasItems = []
         if (Array.isArray(rawRecentIncompleteCanvasItems)) {
           safeRecentIncompleteCanvasItems = rawRecentIncompleteCanvasItems
+        }
+        let safeWeeklyCompletedCanvasItems = []
+        if (Array.isArray(rawWeeklyCompletedCanvasItems)) {
+          safeWeeklyCompletedCanvasItems = rawWeeklyCompletedCanvasItems
+        }
+        let safeWeeklyIncompleteCanvasItems = []
+        if (Array.isArray(rawWeeklyIncompleteCanvasItems)) {
+          safeWeeklyIncompleteCanvasItems = rawWeeklyIncompleteCanvasItems
         }
 
         canvasUpcomingItems = safeUpcomingCanvasItems
@@ -2076,6 +2170,48 @@ app.get('/home/plan', async function (req, res) {
             return true
           })
 
+        const weeklyCompletedCanvasItems = safeWeeklyCompletedCanvasItems
+          .map(function (item, index) {
+            return mapCanvasEventToPlanItem(item, index, {
+              baseUrl,
+              courseNameById,
+              isCompleted: true,
+            })
+          })
+          .filter(function (item) {
+            if (!item) {
+              return false
+            }
+            if (item.sortTs < weekStartTs) {
+              return false
+            }
+            if (item.sortTs >= weekEndExclusiveTs) {
+              return false
+            }
+            return true
+          })
+
+        const weeklyIncompleteCanvasItems = safeWeeklyIncompleteCanvasItems
+          .map(function (item, index) {
+            return mapCanvasEventToPlanItem(item, index, {
+              baseUrl,
+              courseNameById,
+              isCompleted: false,
+            })
+          })
+          .filter(function (item) {
+            if (!item) {
+              return false
+            }
+            if (item.sortTs < weekStartTs) {
+              return false
+            }
+            if (item.sortTs >= weekEndExclusiveTs) {
+              return false
+            }
+            return true
+          })
+
         const recentCanvasItemMap = {}
         recentCompletedCanvasItems.forEach(function (item) {
           if (item) {
@@ -2098,6 +2234,21 @@ app.get('/home/plan', async function (req, res) {
           stored.token,
           Object.values(recentCanvasItemMap),
         )
+
+        const weeklyCanvasItemMap = {}
+        weeklyCompletedCanvasItems.forEach(function (item) {
+          if (item && item.id) {
+            weeklyCanvasItemMap[item.id] = item
+          }
+        })
+        weeklyIncompleteCanvasItems.forEach(function (item) {
+          if (item && item.id) {
+            if (!weeklyCanvasItemMap[item.id]) {
+              weeklyCanvasItemMap[item.id] = item
+            }
+          }
+        })
+        canvasWeeklyItems = Object.values(weeklyCanvasItemMap)
       }
     } catch (canvasLoadError) {
       if (canvasLoadError instanceof Error) {
@@ -2119,6 +2270,8 @@ app.get('/home/plan', async function (req, res) {
     let recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
     recentItems = await annotateCanvasRewardStateForPlanItems(userId, recentItems)
     const recentSummary = buildReviewSummary(recentItems)
+    const weeklyItems = sortPlanItemsAscending(customWeeklyItems.concat(canvasWeeklyItems))
+    const weeklySummary = buildReviewSummary(weeklyItems)
 
     return res.json({
       ok: true,
@@ -2129,6 +2282,7 @@ app.get('/home/plan', async function (req, res) {
       items: stripPlanSortTs(upcomingItems),
       recentItems: stripPlanSortTs(recentItems),
       recentSummary,
+      weeklySummary,
     })
   } catch (e) {
     console.error('[BE] /home/plan error:', e)
