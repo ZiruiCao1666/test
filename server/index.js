@@ -121,8 +121,8 @@ function getDateTextWithOffset(value, offsetDays) {
 }
 
 function getWeekWindowFromDateText(dateText) {
-  const safeDateText = String(dateText || '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeDateText)) {
+  const safeDateText = getDateText(dateText)
+  if (safeDateText === '') {
     return {
       weekStart: '',
       weekEndExclusive: '',

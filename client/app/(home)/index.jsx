@@ -1109,6 +1109,10 @@ export default function HomeScreen() {
       });
     });
 
+    setWeeklyProgressSummary({
+      totalCount: 0,
+      completedCount: 0,
+    });
     setHomeCanvasConnected(false);
     setCanvasPlanWarning('');
     setHomePlanError(null);
