@@ -132,8 +132,16 @@ async function ensureRewardStateSchema(db) {
       pending_reward_source TEXT NOT NULL DEFAULT '',
       pending_reward_code TEXT NOT NULL DEFAULT '',
       pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb,
+      pending_reward_selected_index INT NOT NULL DEFAULT -1,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE app_user_reward_state
+      ADD COLUMN IF NOT EXISTS pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+    ALTER TABLE app_user_reward_state
+      ADD COLUMN IF NOT EXISTS pending_reward_selected_index INT NOT NULL DEFAULT -1;
   `)
 }
 
@@ -1701,6 +1709,25 @@ function rollStreakDrawReward() {
   }
 }
 
+function rollStreakDrawChoices(count = 3) {
+  const choices = []
+  const usedCodes = new Set()
+  let guard = 0
+
+  while (choices.length < count && guard < 100) {
+    guard += 1
+    const rolledReward = rollStreakDrawReward()
+    if (usedCodes.has(rolledReward.code)) {
+      continue
+    }
+
+    usedCodes.add(rolledReward.code)
+    choices.push(rolledReward)
+  }
+
+  return choices
+}
+
 function parsePendingRewardPayload(value) {
   if (!value) {
     return {}
@@ -1719,6 +1746,39 @@ function parsePendingRewardPayload(value) {
   return {}
 }
 
+function parsePendingRewardChoices(value) {
+  let safeValue = value
+  if (!safeValue) {
+    return []
+  }
+
+  if (typeof safeValue === 'string') {
+    try {
+      safeValue = JSON.parse(safeValue)
+    } catch (_error) {
+      return []
+    }
+  }
+
+  if (!Array.isArray(safeValue)) {
+    return []
+  }
+
+  return safeValue
+    .map(function (item) {
+      const safeItem = item || {}
+      const code = String(safeItem.code || '').trim()
+      if (code === '') {
+        return null
+      }
+      return {
+        code,
+        payload: parsePendingRewardPayload(safeItem.payload),
+      }
+    })
+    .filter(Boolean)
+}
+
 function mapPendingReward(code, payload) {
   const definition = getDrawRewardDefinition(code)
   if (!definition.code) {
@@ -1729,6 +1789,51 @@ function mapPendingReward(code, payload) {
     title: definition.title,
     description: definition.description,
     payload: payload || {},
+  }
+}
+
+function mapPendingDraw(choices, selectedIndex, source) {
+  const safeChoices = Array.isArray(choices) ? choices : []
+  if (safeChoices.length === 0) {
+    return null
+  }
+
+  const safeSelectedIndex = Number.isInteger(selectedIndex) ? selectedIndex : -1
+  const revealed = safeSelectedIndex >= 0 && safeSelectedIndex < safeChoices.length
+
+  return {
+    source: String(source || '').trim(),
+    revealed,
+    selectedIndex: revealed ? safeSelectedIndex : -1,
+    choices: safeChoices.map(function (choice, index) {
+      if (!revealed) {
+        return {
+          index,
+          selected: false,
+          revealed: false,
+        }
+      }
+
+      const mappedChoice = mapPendingReward(choice.code, choice.payload)
+      if (!mappedChoice) {
+        return {
+          index,
+          selected: index === safeSelectedIndex,
+          revealed: true,
+          title: 'Unknown reward',
+          description: '',
+          code: '',
+          payload: {},
+        }
+      }
+
+      return {
+        ...mappedChoice,
+        index,
+        selected: index === safeSelectedIndex,
+        revealed: true,
+      }
+    }),
   }
 }
 
@@ -1744,6 +1849,31 @@ function mapRewardStateRow(row, today, makeupCards = 0) {
 
   const pendingRewardCode = String(safeRow.pending_reward_code || '').trim()
   const pendingRewardPayload = parsePendingRewardPayload(safeRow.pending_reward_payload)
+  let pendingRewardChoices = parsePendingRewardChoices(safeRow.pending_reward_choices)
+  let pendingRewardSelectedIndex = Number(safeRow.pending_reward_selected_index)
+  if (!Number.isInteger(pendingRewardSelectedIndex)) {
+    pendingRewardSelectedIndex = -1
+  }
+
+  if (pendingRewardChoices.length === 0 && pendingRewardCode !== '') {
+    pendingRewardChoices = [
+      {
+        code: pendingRewardCode,
+        payload: pendingRewardPayload,
+      },
+    ]
+    pendingRewardSelectedIndex = 0
+  }
+
+  const pendingDraw = mapPendingDraw(
+    pendingRewardChoices,
+    pendingRewardSelectedIndex,
+    safeRow.pending_reward_source,
+  )
+  let pendingReward = null
+  if (pendingDraw && pendingDraw.revealed) {
+    pendingReward = pendingDraw.choices[pendingDraw.selectedIndex] || null
+  }
 
   return {
     milestoneDraws: Number(safeRow.milestone_draws) || 0,
@@ -1757,7 +1887,10 @@ function mapRewardStateRow(row, today, makeupCards = 0) {
     weeklyCustomBonusWeekKey,
     makeupCards,
     pendingRewardSource: String(safeRow.pending_reward_source || '').trim(),
-    pendingReward: mapPendingReward(pendingRewardCode, pendingRewardPayload),
+    pendingRewardChoices,
+    pendingRewardSelectedIndex,
+    pendingDraw,
+    pendingReward,
   }
 }
 
@@ -1880,6 +2013,9 @@ function applyAcceptedDrawReward(rewardState, rewardCode, rewardPayload, today) 
   }
 
   nextState.pendingRewardSource = ''
+  nextState.pendingRewardChoices = []
+  nextState.pendingRewardSelectedIndex = -1
+  nextState.pendingDraw = null
   nextState.pendingReward = null
 
   return {
@@ -2007,6 +2143,8 @@ async function initDb() {
       pending_reward_source TEXT NOT NULL DEFAULT '',
       pending_reward_code TEXT NOT NULL DEFAULT '',
       pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb,
+      pending_reward_selected_index INT NOT NULL DEFAULT -1,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `)
@@ -2913,7 +3051,9 @@ app.put('/tasks/:id', async function (req, res) {
               weekly_custom_bonus_week_key,
               pending_reward_source,
               pending_reward_code,
-              pending_reward_payload
+              pending_reward_payload,
+              pending_reward_choices,
+              pending_reward_selected_index
             FROM app_user_reward_state
             WHERE clerk_user_id = $1
             FOR UPDATE
@@ -3111,7 +3251,9 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
           weekly_custom_bonus_week_key,
           pending_reward_source,
           pending_reward_code,
-          pending_reward_payload
+          pending_reward_payload,
+          pending_reward_choices,
+          pending_reward_selected_index
         FROM app_user_reward_state
         WHERE clerk_user_id = $1
         FOR UPDATE
@@ -3380,7 +3522,9 @@ app.get('/streak-draw/state', async function (req, res) {
         weekly_custom_bonus_week_key,
         pending_reward_source,
         pending_reward_code,
-        pending_reward_payload
+        pending_reward_payload,
+        pending_reward_choices,
+        pending_reward_selected_index
       FROM app_user_reward_state
       WHERE clerk_user_id = $1
       `,
@@ -3443,7 +3587,9 @@ app.post('/streak-draw/open', async function (req, res) {
         weekly_custom_bonus_week_key,
         pending_reward_source,
         pending_reward_code,
-        pending_reward_payload
+        pending_reward_payload,
+        pending_reward_choices,
+        pending_reward_selected_index
       FROM app_user_reward_state
       WHERE clerk_user_id = $1
       FOR UPDATE
@@ -3467,9 +3613,9 @@ app.post('/streak-draw/open', async function (req, res) {
     }
 
     const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
-    if (rewardState.pendingReward) {
+    if (rewardState.pendingDraw) {
       await client.query('ROLLBACK')
-      return res.status(409).json({ error: 'Accept or reroll the current draw result first.' })
+      return res.status(409).json({ error: 'Finish the current draw before opening another one.' })
     }
 
     if (source === DRAW_SOURCE_MILESTONE && rewardState.milestoneDraws <= 0) {
@@ -3481,7 +3627,7 @@ app.post('/streak-draw/open', async function (req, res) {
       return res.status(409).json({ error: 'No extra draw ticket is available.' })
     }
 
-    const rolledReward = rollStreakDrawReward()
+    const rolledChoices = rollStreakDrawChoices(3)
     const nextMilestoneDraws =
       source === DRAW_SOURCE_MILESTONE ? rewardState.milestoneDraws - 1 : rewardState.milestoneDraws
     const nextDrawTickets =
@@ -3494,8 +3640,10 @@ app.post('/streak-draw/open', async function (req, res) {
         milestone_draws = $2,
         draw_tickets = $3,
         pending_reward_source = $4,
-        pending_reward_code = $5,
-        pending_reward_payload = $6::jsonb,
+        pending_reward_code = '',
+        pending_reward_payload = '{}'::jsonb,
+        pending_reward_choices = $5::jsonb,
+        pending_reward_selected_index = -1,
         updated_at = NOW()
       WHERE clerk_user_id = $1
       `,
@@ -3504,8 +3652,7 @@ app.post('/streak-draw/open', async function (req, res) {
         nextMilestoneDraws,
         nextDrawTickets,
         source,
-        rolledReward.code,
-        JSON.stringify(rolledReward.payload || {}),
+        JSON.stringify(rolledChoices),
       ],
     )
 
@@ -3518,7 +3665,10 @@ app.post('/streak-draw/open', async function (req, res) {
         milestoneDraws: nextMilestoneDraws,
         drawTickets: nextDrawTickets,
         pendingRewardSource: source,
-        pendingReward: mapPendingReward(rolledReward.code, rolledReward.payload),
+        pendingRewardChoices: rolledChoices,
+        pendingRewardSelectedIndex: -1,
+        pendingDraw: mapPendingDraw(rolledChoices, -1, source),
+        pendingReward: null,
       },
     })
   } catch (e) {
@@ -3535,8 +3685,134 @@ app.post('/streak-draw/open', async function (req, res) {
 })
 
 /**
+ * POST /streak-draw/select
+ * Pick one hidden reward card from the current three-card draw.
+ */
+app.post('/streak-draw/select', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureMakeupCardUserColumn(client)
+    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId)
+    await ensureRewardStateRow(userId, client)
+
+    const safeBody = req.body || {}
+    const selectedIndex = Number(safeBody.index)
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex > 2) {
+      return res.status(400).json({ error: 'Invalid card index' })
+    }
+
+    const today = await getLondonToday(client)
+
+    await client.query('BEGIN')
+
+    const rewardStateResult = await client.query(
+      `
+      SELECT
+        milestone_draws,
+        draw_tickets,
+        reroll_tickets,
+        next_checkin_multiplier,
+        next_task_bonus_points,
+        bonus_checkins_remaining,
+        bonus_per_checkin,
+        weekly_custom_bonus_per_task,
+        weekly_custom_bonus_week_key,
+        pending_reward_source,
+        pending_reward_code,
+        pending_reward_payload,
+        pending_reward_choices,
+        pending_reward_selected_index
+      FROM app_user_reward_state
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    const userResult = await client.query(
+      `
+      SELECT makeup_cards
+      FROM app_users
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    let makeupCards = 0
+    if (userResult.rows && userResult.rows.length > 0 && userResult.rows[0]) {
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+
+    const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
+    if (!rewardState.pendingDraw) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No draw is waiting for a selection.' })
+    }
+    if (rewardState.pendingDraw.revealed) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'The current draw is already selected.' })
+    }
+    if (selectedIndex >= rewardState.pendingRewardChoices.length) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Invalid card index' })
+    }
+
+    const selectedReward = rewardState.pendingRewardChoices[selectedIndex]
+
+    await client.query(
+      `
+      UPDATE app_user_reward_state
+      SET
+        pending_reward_code = $2,
+        pending_reward_payload = $3::jsonb,
+        pending_reward_selected_index = $4,
+        updated_at = NOW()
+      WHERE clerk_user_id = $1
+      `,
+      [
+        userId,
+        selectedReward.code,
+        JSON.stringify(selectedReward.payload || {}),
+        selectedIndex,
+      ],
+    )
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      state: {
+        ...rewardState,
+        pendingRewardSelectedIndex: selectedIndex,
+        pendingDraw: mapPendingDraw(
+          rewardState.pendingRewardChoices,
+          selectedIndex,
+          rewardState.pendingRewardSource,
+        ),
+        pendingReward: mapPendingReward(selectedReward.code, selectedReward.payload),
+      },
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_rollbackError) {
+      // no-op
+    }
+    console.error('[BE] /streak-draw/select error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
  * POST /streak-draw/reroll
- * Spend one reroll ticket to replace the current pending reward.
+ * Spend one reroll ticket to replace the current three-card draw.
  */
 app.post('/streak-draw/reroll', async function (req, res) {
   const client = await pool.connect()
@@ -3567,7 +3843,9 @@ app.post('/streak-draw/reroll', async function (req, res) {
         weekly_custom_bonus_week_key,
         pending_reward_source,
         pending_reward_code,
-        pending_reward_payload
+        pending_reward_payload,
+        pending_reward_choices,
+        pending_reward_selected_index
       FROM app_user_reward_state
       WHERE clerk_user_id = $1
       FOR UPDATE
@@ -3591,16 +3869,20 @@ app.post('/streak-draw/reroll', async function (req, res) {
     }
 
     const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
-    if (!rewardState.pendingReward) {
+    if (!rewardState.pendingDraw) {
       await client.query('ROLLBACK')
       return res.status(409).json({ error: 'No pending reward to reroll.' })
+    }
+    if (!rewardState.pendingDraw.revealed) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Pick one card before using reroll.' })
     }
     if (rewardState.rerollTickets <= 0) {
       await client.query('ROLLBACK')
       return res.status(409).json({ error: 'No reroll ticket is available.' })
     }
 
-    const rerolledReward = rollStreakDrawReward()
+    const rerolledChoices = rollStreakDrawChoices(3)
     const nextRerollTickets = rewardState.rerollTickets - 1
 
     await client.query(
@@ -3608,16 +3890,17 @@ app.post('/streak-draw/reroll', async function (req, res) {
       UPDATE app_user_reward_state
       SET
         reroll_tickets = $2,
-        pending_reward_code = $3,
-        pending_reward_payload = $4::jsonb,
+        pending_reward_code = '',
+        pending_reward_payload = '{}'::jsonb,
+        pending_reward_choices = $3::jsonb,
+        pending_reward_selected_index = -1,
         updated_at = NOW()
       WHERE clerk_user_id = $1
       `,
       [
         userId,
         nextRerollTickets,
-        rerolledReward.code,
-        JSON.stringify(rerolledReward.payload || {}),
+        JSON.stringify(rerolledChoices),
       ],
     )
 
@@ -3628,7 +3911,10 @@ app.post('/streak-draw/reroll', async function (req, res) {
       state: {
         ...rewardState,
         rerollTickets: nextRerollTickets,
-        pendingReward: mapPendingReward(rerolledReward.code, rerolledReward.payload),
+        pendingRewardChoices: rerolledChoices,
+        pendingRewardSelectedIndex: -1,
+        pendingDraw: mapPendingDraw(rerolledChoices, -1, rewardState.pendingRewardSource),
+        pendingReward: null,
       },
     })
   } catch (e) {
@@ -3677,7 +3963,9 @@ app.post('/streak-draw/accept', async function (req, res) {
         weekly_custom_bonus_week_key,
         pending_reward_source,
         pending_reward_code,
-        pending_reward_payload
+        pending_reward_payload,
+        pending_reward_choices,
+        pending_reward_selected_index
       FROM app_user_reward_state
       WHERE clerk_user_id = $1
       FOR UPDATE
@@ -3703,9 +3991,13 @@ app.post('/streak-draw/accept', async function (req, res) {
     }
 
     const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
-    if (!rewardState.pendingReward) {
+    if (!rewardState.pendingDraw) {
       await client.query('ROLLBACK')
       return res.status(409).json({ error: 'No pending reward to accept.' })
+    }
+    if (!rewardState.pendingDraw.revealed || !rewardState.pendingReward) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Pick one card before accepting the reward.' })
     }
 
     const acceptedReward = rewardState.pendingReward
@@ -3748,6 +4040,8 @@ app.post('/streak-draw/accept', async function (req, res) {
         pending_reward_source = '',
         pending_reward_code = '',
         pending_reward_payload = '{}'::jsonb,
+        pending_reward_choices = '[]'::jsonb,
+        pending_reward_selected_index = -1,
         updated_at = NOW()
       WHERE clerk_user_id = $1
       `,
@@ -4292,7 +4586,9 @@ app.post('/checkins/today', async function (req, res) {
           weekly_custom_bonus_week_key,
           pending_reward_source,
           pending_reward_code,
-          pending_reward_payload
+          pending_reward_payload,
+          pending_reward_choices,
+          pending_reward_selected_index
         FROM app_user_reward_state
         WHERE clerk_user_id = $1
         FOR UPDATE
@@ -4429,6 +4725,8 @@ app.post('/checkins/today', async function (req, res) {
           pending_reward_source = $11,
           pending_reward_code = $12,
           pending_reward_payload = $13::jsonb,
+          pending_reward_choices = $14::jsonb,
+          pending_reward_selected_index = $15,
           updated_at = NOW()
         WHERE clerk_user_id = $1
         `,
@@ -4450,6 +4748,10 @@ app.post('/checkins/today', async function (req, res) {
               ? (checkinBonusResult.nextState.pendingReward.payload || {})
               : {},
           ),
+          JSON.stringify(checkinBonusResult.nextState.pendingRewardChoices || []),
+          Number.isInteger(checkinBonusResult.nextState.pendingRewardSelectedIndex)
+            ? checkinBonusResult.nextState.pendingRewardSelectedIndex
+            : -1,
         ],
       )
 

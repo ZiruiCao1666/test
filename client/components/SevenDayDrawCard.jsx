@@ -44,6 +44,14 @@ async function readJsonSafely(response) {
 
 function getSummaryText(streakDays, state) {
   const safeState = state || {};
+  const pendingDraw = safeState.pendingDraw || null;
+  if (pendingDraw) {
+    if (pendingDraw.revealed) {
+      return 'Your cards are revealed. Accept the selected reward or reroll the set.';
+    }
+    return 'Pick 1 of 3 hidden reward cards.';
+  }
+
   const milestoneDraws = Number(safeState.milestoneDraws) || 0;
   const drawTickets = Number(safeState.drawTickets) || 0;
 
@@ -280,6 +288,25 @@ export default function SevenDayDrawCard(props) {
     }
   }, [workingAction, callAction]);
 
+  const selectCard = React.useCallback(async function (index) {
+    if (workingAction) {
+      return;
+    }
+
+    try {
+      setWorkingAction('select-' + String(index));
+      setError('');
+      const data = await callAction('/streak-draw/select', { index }, 'Failed to select a reward card');
+      setState(data.state || null);
+    } catch (selectError) {
+      const message = getErrorMessage(selectError, 'Failed to select a reward card');
+      setError(message);
+      Alert.alert('Selection failed', message);
+    } finally {
+      setWorkingAction('');
+    }
+  }, [workingAction, callAction]);
+
   const acceptDraw = React.useCallback(async function () {
     if (workingAction) {
       return;
@@ -351,7 +378,7 @@ export default function SevenDayDrawCard(props) {
     const drawTickets = Number(state.drawTickets) || 0;
     const rerollTickets = Number(state.rerollTickets) || 0;
     const makeupCards = Number(state.makeupCards) || 0;
-    const pendingReward = state.pendingReward || null;
+    const pendingDraw = state.pendingDraw || null;
 
     bodyNode = (
       <View style={styles.blockWrap}>
@@ -378,45 +405,110 @@ export default function SevenDayDrawCard(props) {
           </View>
         </View>
 
-        {pendingReward ? (
+        {pendingDraw ? (
           <View style={[styles.pendingCard, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
             <Text style={[styles.pendingEyebrow, { color: theme.textMuted }]}>Current draw</Text>
-            <Text style={[styles.pendingTitle, { color: theme.textPrimary }]}>{pendingReward.title}</Text>
-            <Text style={[styles.pendingDescription, { color: theme.textSecondary }]}>
-              {pendingReward.description}
-            </Text>
 
-            <View style={styles.actionRow}>
-              <Pressable
-                onPress={acceptDraw}
-                disabled={workingAction !== ''}
-                style={({ pressed }) => [
-                  styles.primaryButton,
-                  { backgroundColor: theme.primary },
-                  getStyleWhen(pressed, { opacity: 0.82 }),
-                  getStyleWhen(workingAction !== '', { opacity: 0.6 }),
-                ]}
-              >
-                <Text style={[styles.primaryButtonText, { color: theme.primaryText }]}>
-                  {workingAction === 'accept' ? 'Accepting...' : 'Accept'}
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={rerollDraw}
-                disabled={workingAction !== '' || rerollTickets <= 0}
-                style={({ pressed }) => [
-                  styles.secondaryButton,
-                  { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder },
-                  getStyleWhen(pressed, { opacity: 0.82 }),
-                  getStyleWhen(workingAction !== '' || rerollTickets <= 0, { opacity: 0.6 }),
-                ]}
-              >
-                <Text style={[styles.secondaryButtonText, { color: theme.secondaryText }]}>
-                  {workingAction === 'reroll' ? 'Rerolling...' : 'Reroll'}
-                </Text>
-              </Pressable>
+            <View style={styles.choiceGrid}>
+              {pendingDraw.choices.map(function (choice) {
+                const isSelected = Boolean(choice.selected);
+                const isRevealed = Boolean(choice.revealed);
+                return (
+                  <Pressable
+                    key={String(choice.index)}
+                    onPress={function () {
+                      if (!pendingDraw.revealed) {
+                        selectCard(choice.index);
+                      }
+                    }}
+                    disabled={workingAction !== '' || pendingDraw.revealed}
+                    style={({ pressed }) => [
+                      styles.choiceCard,
+                      {
+                        backgroundColor: isSelected ? theme.surface : theme.screenBg,
+                        borderColor: isSelected ? theme.primary : theme.borderSoft,
+                      },
+                      getStyleWhen(isSelected, styles.choiceCardSelected),
+                      getStyleWhen(
+                        pendingDraw.revealed && !isSelected,
+                        { opacity: 0.7 },
+                      ),
+                      getStyleWhen(
+                        !pendingDraw.revealed && workingAction !== '',
+                        { opacity: 0.6 },
+                      ),
+                      getStyleWhen(
+                        !pendingDraw.revealed && pressed,
+                        { opacity: 0.82, transform: [{ scale: 0.99 }] },
+                      ),
+                    ]}
+                  >
+                    <Text style={[styles.choiceIndex, { color: theme.textMuted }]}>
+                      Card {choice.index + 1}
+                    </Text>
+                    {isRevealed ? (
+                      <>
+                        <Text style={[styles.choiceTitle, { color: theme.textPrimary }]}>
+                          {choice.title}
+                        </Text>
+                        <Text style={[styles.choiceDescription, { color: theme.textSecondary }]}>
+                          {choice.description}
+                        </Text>
+                        <Text style={[styles.choiceState, { color: isSelected ? theme.primary : theme.textMuted }]}>
+                          {isSelected ? 'Selected' : 'Not chosen'}
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={[styles.choiceHiddenTitle, { color: theme.textPrimary }]}>
+                          Hidden reward
+                        </Text>
+                        <Text style={[styles.choiceDescription, { color: theme.textSecondary }]}>
+                          Tap to reveal this card.
+                        </Text>
+                        <Text style={[styles.choiceState, { color: theme.primary }]}>
+                          {workingAction === 'select-' + String(choice.index) ? 'Opening...' : 'Pick'}
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
+
+            {pendingDraw.revealed ? (
+              <View style={styles.actionRow}>
+                <Pressable
+                  onPress={acceptDraw}
+                  disabled={workingAction !== ''}
+                  style={({ pressed }) => [
+                    styles.primaryButton,
+                    { backgroundColor: theme.primary },
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                    getStyleWhen(workingAction !== '', { opacity: 0.6 }),
+                  ]}
+                >
+                  <Text style={[styles.primaryButtonText, { color: theme.primaryText }]}>
+                    {workingAction === 'accept' ? 'Accepting...' : 'Accept'}
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={rerollDraw}
+                  disabled={workingAction !== '' || rerollTickets <= 0}
+                  style={({ pressed }) => [
+                    styles.secondaryButton,
+                    { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder },
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                    getStyleWhen(workingAction !== '' || rerollTickets <= 0, { opacity: 0.6 }),
+                  ]}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: theme.secondaryText }]}>
+                    {workingAction === 'reroll' ? 'Rerolling...' : 'Reroll'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         ) : (
           <View style={styles.actionRow}>
@@ -577,6 +669,52 @@ const styles = StyleSheet.create({
   pendingDescription: {
     fontSize: 13,
     lineHeight: 19,
+  },
+  choiceGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  choiceCard: {
+    flexGrow: 1,
+    flexBasis: '30%',
+    minWidth: 90,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 150,
+  },
+  choiceCardSelected: {
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 2,
+  },
+  choiceIndex: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  choiceTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+  choiceHiddenTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  choiceDescription: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  choiceState: {
+    marginTop: 12,
+    fontSize: 11,
+    fontWeight: '800',
   },
   actionRow: {
     flexDirection: 'row',
