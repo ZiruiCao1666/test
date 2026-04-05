@@ -825,6 +825,68 @@ const buildTaskDateTimeIso = (task) => {
   return taskDate + 'T12:00:00';
 };
 
+const getTaskDeadlineDate = (task) => {
+  const safeTask = task || {};
+  const taskDate = String(safeTask.taskDate || '').trim();
+  if (!isValidDateInput(taskDate)) {
+    return null;
+  }
+
+  if (safeTask.timingMode === 'range') {
+    if (isValidTimeInput(safeTask.endTime)) {
+      return toSafeDate(taskDate + 'T' + String(safeTask.endTime).trim() + ':00');
+    }
+    if (isValidTimeInput(safeTask.startTime)) {
+      return toSafeDate(taskDate + 'T' + String(safeTask.startTime).trim() + ':00');
+    }
+  }
+
+  if (isValidTimeInput(safeTask.dueTime)) {
+    return toSafeDate(taskDate + 'T' + String(safeTask.dueTime).trim() + ':00');
+  }
+  return toSafeDate(taskDate + 'T12:00:00');
+};
+
+const getTaskSortMeta = (task, nowTs) => {
+  const safeTask = task || {};
+  const deadlineDate = getTaskDeadlineDate(safeTask);
+  let deadlineTs = Number.POSITIVE_INFINITY;
+  if (deadlineDate) {
+    deadlineTs = deadlineDate.getTime();
+  }
+
+  let completionTs = Number.POSITIVE_INFINITY;
+  if (safeTask.isCompleted) {
+    const completedDate = toSafeDate(safeTask.updatedAt);
+    if (completedDate) {
+      completionTs = completedDate.getTime();
+    }
+  }
+
+  let bucket = 0;
+  if (safeTask.isCompleted) {
+    if (deadlineTs <= nowTs - 3 * ONE_DAY_MS) {
+      bucket = 4;
+    } else if (completionTs <= nowTs - ONE_DAY_MS) {
+      bucket = 4;
+    } else {
+      bucket = 2;
+    }
+  } else if (deadlineTs < nowTs) {
+    if (deadlineTs <= nowTs - 3 * ONE_DAY_MS) {
+      bucket = 3;
+    } else {
+      bucket = 1;
+    }
+  }
+
+  return {
+    bucket,
+    deadlineTs,
+    completionTs,
+  };
+};
+
 const formatTaskSchedule = (task) => {
   const safeTask = task || {};
   const dateLabel = formatShortDate(safeTask.taskDate || '');
@@ -1322,17 +1384,23 @@ const sortTasks = (items) => {
     safeItems = items;
   }
   return safeItems.slice().sort((left, right) => {
-    const leftDate = toSafeDate(buildTaskDateTimeIso(left));
-    const rightDate = toSafeDate(buildTaskDateTimeIso(right));
-    let leftTs = Number.POSITIVE_INFINITY;
-    let rightTs = Number.POSITIVE_INFINITY;
-    if (leftDate) {
-      leftTs = leftDate.getTime();
+    const nowTs = Date.now();
+    const leftMeta = getTaskSortMeta(left, nowTs);
+    const rightMeta = getTaskSortMeta(right, nowTs);
+
+    if (leftMeta.bucket !== rightMeta.bucket) {
+      return leftMeta.bucket - rightMeta.bucket;
     }
-    if (rightDate) {
-      rightTs = rightDate.getTime();
+
+    if (leftMeta.bucket === 2 || leftMeta.bucket === 4) {
+      if (leftMeta.completionTs !== rightMeta.completionTs) {
+        return rightMeta.completionTs - leftMeta.completionTs;
+      }
+    } else if (leftMeta.deadlineTs !== rightMeta.deadlineTs) {
+      return leftMeta.deadlineTs - rightMeta.deadlineTs;
     }
-    return leftTs - rightTs;
+
+    return String(left.title || '').localeCompare(String(right.title || ''));
   });
 };
 

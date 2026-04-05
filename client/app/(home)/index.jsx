@@ -16,6 +16,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
+import SevenDayDrawCard from '../../components/SevenDayDrawCard';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v2';
@@ -477,16 +478,26 @@ const getCheckInButtonText = (checkedInToday) => {
   return 'Click to\ncheck in';
 };
 
-const getCheckInAlertText = (gained, awardedMakeupCard) => {
+const getCheckInAlertText = (gained, awardedMakeupCard, awardedMilestoneDraw) => {
   if (gained > 0) {
-    if (awardedMakeupCard) {
-      return (
-        'Checked in for today (+' +
-        String(gained) +
-        ' points). You earned 1 make-up card.'
-      );
+    let message = 'Checked in for today (+' + String(gained) + ' points)';
+
+    if (awardedMakeupCard && awardedMilestoneDraw) {
+      message += '. You earned 1 make-up card and unlocked 1 streak draw.';
+      return message;
     }
-    return 'Checked in for today (+' + String(gained) + ' points)';
+
+    if (awardedMakeupCard) {
+      message += '. You earned 1 make-up card.';
+      return message;
+    }
+
+    if (awardedMilestoneDraw) {
+      message += '. You unlocked 1 streak draw.';
+      return message;
+    }
+
+    return message;
   }
   return 'Already checked in today';
 };
@@ -1406,7 +1417,11 @@ export default function HomeScreen() {
 
       const gained = Number(data.gainedPoints) || 0;
       const awardedMakeupCard = Boolean(data.awardedMakeupCard);
-      Alert.alert('Check-in', getCheckInAlertText(gained, awardedMakeupCard));
+      const awardedMilestoneDraw = Boolean(data.awardedMilestoneDraw);
+      Alert.alert(
+        'Check-in',
+        getCheckInAlertText(gained, awardedMakeupCard, awardedMilestoneDraw),
+      );
     } catch (e) {
       Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
@@ -1832,6 +1847,13 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        <SevenDayDrawCard
+          streakDays={streakDays}
+          onPointsUpdated={function (nextPoints) {
+            setPoints(Number(nextPoints) || 0);
+          }}
+        />
+
         <View
           style={[
             styles.todoCard,
@@ -1843,7 +1865,7 @@ export default function HomeScreen() {
           ]}
         >
           <View style={styles.sectionHeaderRow}>
-            <View>
+            <View style={styles.sectionHeaderTextWrap}>
               <Text style={[styles.sectionEyebrow, { color: theme.textMuted }]}>This week</Text>
               <Text style={[styles.todoTitle, { color: theme.textPrimary }]}>Upcoming tasks</Text>
             </View>
@@ -2351,6 +2373,10 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 14,
   },
+  sectionHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
   sectionEyebrow: {
     fontSize: 13,
     fontWeight: '700',
@@ -2358,14 +2384,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   sectionCountBadge: {
+    flexShrink: 1,
+    maxWidth: '42%',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,
+    overflow: 'hidden',
   },
   sectionCountText: {
     fontSize: 11,
     fontWeight: '800',
+    flexShrink: 1,
   },
   todoTitle: { fontSize: 28, fontWeight: '900', color: '#111827' },
   todoSection: { marginTop: 8 },

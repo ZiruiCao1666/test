@@ -47,6 +47,32 @@ const CANVAS_TASK_REWARD_POINTS = 10
 const CANVAS_TASK_DAILY_REWARD_LIMIT = 1
 const MAKEUP_CARD_REWARD_TITLE = 'Make-up Card'
 const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
+const DRAW_SOURCE_MILESTONE = 'milestone'
+const DRAW_SOURCE_TICKET = 'ticket'
+const DRAW_REWARD_POINTS_10 = 'points_10'
+const DRAW_REWARD_POINTS_20 = 'points_20'
+const DRAW_REWARD_POINTS_30 = 'points_30'
+const DRAW_REWARD_DRAW_TICKET = 'draw_ticket'
+const DRAW_REWARD_MAKEUP_CARD = 'makeup_card'
+const DRAW_REWARD_CHECKIN_X2 = 'checkin_x2'
+const DRAW_REWARD_CHECKIN_X3 = 'checkin_x3'
+const DRAW_REWARD_NEXT_TASK_10 = 'next_task_bonus_10'
+const DRAW_REWARD_NEXT_3_CHECKINS_5 = 'next_3_checkins_bonus_5'
+const DRAW_REWARD_WEEKLY_CUSTOM_1 = 'weekly_custom_bonus_1'
+const DRAW_REWARD_REROLL_TICKET = 'reroll_ticket'
+const STREAK_DRAW_REWARD_POOL = [
+  { code: DRAW_REWARD_POINTS_10, weight: 24 },
+  { code: DRAW_REWARD_POINTS_20, weight: 18 },
+  { code: DRAW_REWARD_POINTS_30, weight: 8 },
+  { code: DRAW_REWARD_DRAW_TICKET, weight: 10 },
+  { code: DRAW_REWARD_MAKEUP_CARD, weight: 8 },
+  { code: DRAW_REWARD_CHECKIN_X2, weight: 10 },
+  { code: DRAW_REWARD_CHECKIN_X3, weight: 4 },
+  { code: DRAW_REWARD_NEXT_TASK_10, weight: 8 },
+  { code: DRAW_REWARD_NEXT_3_CHECKINS_5, weight: 6 },
+  { code: DRAW_REWARD_WEEKLY_CUSTOM_1, weight: 2 },
+  { code: DRAW_REWARD_REROLL_TICKET, weight: 2 },
+]
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
 const CANVAS_IV_BYTES = 12
 let CANVAS_TOKEN_SECRET = ''
@@ -87,6 +113,27 @@ async function ensureMakeupCardUserColumn(db) {
 
     ALTER TABLE app_users
       ADD COLUMN IF NOT EXISTS has_claimed_14_day_makeup_card BOOLEAN NOT NULL DEFAULT FALSE;
+  `)
+}
+
+async function ensureRewardStateSchema(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS app_user_reward_state (
+      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      milestone_draws INT NOT NULL DEFAULT 0,
+      draw_tickets INT NOT NULL DEFAULT 0,
+      reroll_tickets INT NOT NULL DEFAULT 0,
+      next_checkin_multiplier INT NOT NULL DEFAULT 1,
+      next_task_bonus_points INT NOT NULL DEFAULT 0,
+      bonus_checkins_remaining INT NOT NULL DEFAULT 0,
+      bonus_per_checkin INT NOT NULL DEFAULT 0,
+      weekly_custom_bonus_per_task INT NOT NULL DEFAULT 0,
+      weekly_custom_bonus_week_key TEXT NOT NULL DEFAULT '',
+      pending_reward_source TEXT NOT NULL DEFAULT '',
+      pending_reward_code TEXT NOT NULL DEFAULT '',
+      pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `)
 }
 
@@ -1514,6 +1561,334 @@ function getCheckinRewardPoints(streakDays, useNewUserBonusPhase) {
   return getRewardPointsFromSequence(streakDays, RESTART_STREAK_REWARDS)
 }
 
+async function ensureRewardStateRow(userId, db = pool) {
+  await db.query(
+    `
+    INSERT INTO app_user_reward_state (clerk_user_id, updated_at)
+    VALUES ($1, NOW())
+    ON CONFLICT (clerk_user_id) DO UPDATE SET updated_at = NOW()
+    `,
+    [userId],
+  )
+}
+
+function getCurrentWeekKey(today) {
+  const weeklyWindow = getWeekWindowFromDateText(today)
+  return weeklyWindow.weekStart
+}
+
+function getDrawRewardDefinition(code) {
+  switch (code) {
+    case DRAW_REWARD_POINTS_10:
+      return {
+        code,
+        title: '+10 points',
+        description: 'Add 10 points right now.',
+      }
+    case DRAW_REWARD_POINTS_20:
+      return {
+        code,
+        title: '+20 points',
+        description: 'Add 20 points right now.',
+      }
+    case DRAW_REWARD_POINTS_30:
+      return {
+        code,
+        title: '+30 points',
+        description: 'Add 30 points right now.',
+      }
+    case DRAW_REWARD_DRAW_TICKET:
+      return {
+        code,
+        title: 'Extra draw ticket',
+        description: 'Use one extra ticket for another draw.',
+      }
+    case DRAW_REWARD_MAKEUP_CARD:
+      return {
+        code,
+        title: 'Make-up card',
+        description: 'Repair yesterday once when you miss a check-in.',
+      }
+    case DRAW_REWARD_CHECKIN_X2:
+      return {
+        code,
+        title: 'Tomorrow check-in x2',
+        description: 'Your next check-in reward is doubled once.',
+      }
+    case DRAW_REWARD_CHECKIN_X3:
+      return {
+        code,
+        title: 'Tomorrow check-in x3',
+        description: 'Your next check-in reward is tripled once.',
+      }
+    case DRAW_REWARD_NEXT_TASK_10:
+      return {
+        code,
+        title: 'Next task +10',
+        description: 'The next rewarded task gives 10 extra points.',
+      }
+    case DRAW_REWARD_NEXT_3_CHECKINS_5:
+      return {
+        code,
+        title: 'Next 3 check-ins +5',
+        description: 'Each of your next 3 check-ins gets +5.',
+      }
+    case DRAW_REWARD_WEEKLY_CUSTOM_1:
+      return {
+        code,
+        title: 'This week custom task +1',
+        description: 'Each rewarded custom task gets +1 for this week.',
+      }
+    case DRAW_REWARD_REROLL_TICKET:
+      return {
+        code,
+        title: 'Reroll ticket',
+        description: 'Use one reroll to redraw the current result.',
+      }
+    default:
+      return {
+        code: '',
+        title: '',
+        description: '',
+      }
+  }
+}
+
+function buildDrawRewardPayload(code) {
+  switch (code) {
+    case DRAW_REWARD_POINTS_10:
+      return { points: 10 }
+    case DRAW_REWARD_POINTS_20:
+      return { points: 20 }
+    case DRAW_REWARD_POINTS_30:
+      return { points: 30 }
+    case DRAW_REWARD_CHECKIN_X2:
+      return { multiplier: 2 }
+    case DRAW_REWARD_CHECKIN_X3:
+      return { multiplier: 3 }
+    case DRAW_REWARD_NEXT_TASK_10:
+      return { bonusPoints: 10 }
+    case DRAW_REWARD_NEXT_3_CHECKINS_5:
+      return { remaining: 3, bonusPerCheckin: 5 }
+    case DRAW_REWARD_WEEKLY_CUSTOM_1:
+      return { bonusPerTask: 1 }
+    default:
+      return {}
+  }
+}
+
+function rollStreakDrawReward() {
+  let totalWeight = 0
+  STREAK_DRAW_REWARD_POOL.forEach(function (item) {
+    totalWeight += item.weight
+  })
+
+  let roll = Math.random() * totalWeight
+  for (const item of STREAK_DRAW_REWARD_POOL) {
+    roll -= item.weight
+    if (roll < 0) {
+      return {
+        code: item.code,
+        payload: buildDrawRewardPayload(item.code),
+      }
+    }
+  }
+
+  const fallback = STREAK_DRAW_REWARD_POOL[0]
+  return {
+    code: fallback.code,
+    payload: buildDrawRewardPayload(fallback.code),
+  }
+}
+
+function parsePendingRewardPayload(value) {
+  if (!value) {
+    return {}
+  }
+  if (typeof value === 'object') {
+    return value
+  }
+  try {
+    const parsed = JSON.parse(String(value))
+    if (parsed && typeof parsed === 'object') {
+      return parsed
+    }
+  } catch (_error) {
+    // no-op
+  }
+  return {}
+}
+
+function mapPendingReward(code, payload) {
+  const definition = getDrawRewardDefinition(code)
+  if (!definition.code) {
+    return null
+  }
+  return {
+    code: definition.code,
+    title: definition.title,
+    description: definition.description,
+    payload: payload || {},
+  }
+}
+
+function mapRewardStateRow(row, today, makeupCards = 0) {
+  const safeRow = row || {}
+  const currentWeekKey = getCurrentWeekKey(today)
+  let weeklyCustomBonusPerTask = Number(safeRow.weekly_custom_bonus_per_task) || 0
+  let weeklyCustomBonusWeekKey = String(safeRow.weekly_custom_bonus_week_key || '').trim()
+  if (weeklyCustomBonusWeekKey !== currentWeekKey) {
+    weeklyCustomBonusPerTask = 0
+    weeklyCustomBonusWeekKey = ''
+  }
+
+  const pendingRewardCode = String(safeRow.pending_reward_code || '').trim()
+  const pendingRewardPayload = parsePendingRewardPayload(safeRow.pending_reward_payload)
+
+  return {
+    milestoneDraws: Number(safeRow.milestone_draws) || 0,
+    drawTickets: Number(safeRow.draw_tickets) || 0,
+    rerollTickets: Number(safeRow.reroll_tickets) || 0,
+    nextCheckinMultiplier: Math.max(1, Number(safeRow.next_checkin_multiplier) || 1),
+    nextTaskBonusPoints: Number(safeRow.next_task_bonus_points) || 0,
+    bonusCheckinsRemaining: Number(safeRow.bonus_checkins_remaining) || 0,
+    bonusPerCheckin: Number(safeRow.bonus_per_checkin) || 0,
+    weeklyCustomBonusPerTask,
+    weeklyCustomBonusWeekKey,
+    makeupCards,
+    pendingRewardSource: String(safeRow.pending_reward_source || '').trim(),
+    pendingReward: mapPendingReward(pendingRewardCode, pendingRewardPayload),
+  }
+}
+
+function applyCheckinRewardBonuses(basePoints, rewardState) {
+  const nextState = {
+    ...rewardState,
+  }
+
+  let multiplierApplied = 1
+  if (nextState.nextCheckinMultiplier > 1) {
+    multiplierApplied = nextState.nextCheckinMultiplier
+  }
+
+  let grantedPoints = basePoints * multiplierApplied
+  let extraCheckinBonus = 0
+  if (nextState.bonusCheckinsRemaining > 0 && nextState.bonusPerCheckin > 0) {
+    extraCheckinBonus = nextState.bonusPerCheckin
+    grantedPoints += extraCheckinBonus
+    nextState.bonusCheckinsRemaining -= 1
+    if (nextState.bonusCheckinsRemaining <= 0) {
+      nextState.bonusCheckinsRemaining = 0
+      nextState.bonusPerCheckin = 0
+    }
+  }
+
+  nextState.nextCheckinMultiplier = 1
+
+  return {
+    nextState,
+    grantedPoints,
+    multiplierApplied,
+    extraCheckinBonus,
+  }
+}
+
+function applyTaskRewardBonuses(rewardState, today, options = {}) {
+  const nextState = {
+    ...rewardState,
+  }
+  const currentWeekKey = getCurrentWeekKey(today)
+
+  let bonusPoints = 0
+  let nextTaskBonusApplied = 0
+  if (options.includeNextTaskBonus && nextState.nextTaskBonusPoints > 0) {
+    nextTaskBonusApplied = nextState.nextTaskBonusPoints
+    bonusPoints += nextTaskBonusApplied
+    nextState.nextTaskBonusPoints = 0
+  }
+
+  let weeklyCustomBonusApplied = 0
+  if (
+    options.includeWeeklyCustomBonus &&
+    nextState.weeklyCustomBonusWeekKey === currentWeekKey &&
+    nextState.weeklyCustomBonusPerTask > 0
+  ) {
+    weeklyCustomBonusApplied = nextState.weeklyCustomBonusPerTask
+    bonusPoints += weeklyCustomBonusApplied
+  }
+
+  return {
+    nextState,
+    bonusPoints,
+    nextTaskBonusApplied,
+    weeklyCustomBonusApplied,
+  }
+}
+
+function applyAcceptedDrawReward(rewardState, rewardCode, rewardPayload, today) {
+  const nextState = {
+    ...rewardState,
+  }
+  const currentWeekKey = getCurrentWeekKey(today)
+  let grantedPoints = 0
+  let makeupCardIncrement = 0
+
+  switch (rewardCode) {
+    case DRAW_REWARD_POINTS_10:
+    case DRAW_REWARD_POINTS_20:
+    case DRAW_REWARD_POINTS_30:
+      grantedPoints = Number(rewardPayload.points) || 0
+      break
+    case DRAW_REWARD_DRAW_TICKET:
+      nextState.drawTickets += 1
+      break
+    case DRAW_REWARD_MAKEUP_CARD:
+      makeupCardIncrement = 1
+      break
+    case DRAW_REWARD_CHECKIN_X2:
+    case DRAW_REWARD_CHECKIN_X3:
+      nextState.nextCheckinMultiplier = Math.max(
+        nextState.nextCheckinMultiplier,
+        Number(rewardPayload.multiplier) || 1,
+      )
+      break
+    case DRAW_REWARD_NEXT_TASK_10:
+      nextState.nextTaskBonusPoints = Math.max(
+        nextState.nextTaskBonusPoints,
+        Number(rewardPayload.bonusPoints) || 0,
+      )
+      break
+    case DRAW_REWARD_NEXT_3_CHECKINS_5:
+      nextState.bonusPerCheckin = Math.max(
+        nextState.bonusPerCheckin,
+        Number(rewardPayload.bonusPerCheckin) || 0,
+      )
+      nextState.bonusCheckinsRemaining += Number(rewardPayload.remaining) || 0
+      break
+    case DRAW_REWARD_WEEKLY_CUSTOM_1:
+      nextState.weeklyCustomBonusPerTask = Math.max(
+        nextState.weeklyCustomBonusPerTask,
+        Number(rewardPayload.bonusPerTask) || 0,
+      )
+      nextState.weeklyCustomBonusWeekKey = currentWeekKey
+      break
+    case DRAW_REWARD_REROLL_TICKET:
+      nextState.rerollTickets += 1
+      break
+    default:
+      break
+  }
+
+  nextState.pendingRewardSource = ''
+  nextState.pendingReward = null
+
+  return {
+    nextState,
+    grantedPoints,
+    makeupCardIncrement,
+  }
+}
+
 async function initDb() {
   // Create the core tables the app needs before any route starts using them.
   await pool.query(`
@@ -1617,6 +1992,23 @@ async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_task_reward_daily
       ON app_task_reward_events (clerk_user_id, reward_date, source_type);
+
+    CREATE TABLE IF NOT EXISTS app_user_reward_state (
+      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      milestone_draws INT NOT NULL DEFAULT 0,
+      draw_tickets INT NOT NULL DEFAULT 0,
+      reroll_tickets INT NOT NULL DEFAULT 0,
+      next_checkin_multiplier INT NOT NULL DEFAULT 1,
+      next_task_bonus_points INT NOT NULL DEFAULT 0,
+      bonus_checkins_remaining INT NOT NULL DEFAULT 0,
+      bonus_per_checkin INT NOT NULL DEFAULT 0,
+      weekly_custom_bonus_per_task INT NOT NULL DEFAULT 0,
+      weekly_custom_bonus_week_key TEXT NOT NULL DEFAULT '',
+      pending_reward_source TEXT NOT NULL DEFAULT '',
+      pending_reward_code TEXT NOT NULL DEFAULT '',
+      pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `)
 
   await pool.query(
@@ -2405,6 +2797,8 @@ app.put('/tasks/:id', async function (req, res) {
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
     await ensureUserRow(userId)
+    await ensureRewardStateSchema(client)
+    await ensureRewardStateRow(userId, client)
     const safeParams = req.params || {}
     const taskId = Number(safeParams.id)
     if (!Number.isInteger(taskId) || taskId <= 0) {
@@ -2489,6 +2883,8 @@ app.put('/tasks/:id', async function (req, res) {
       granted: false,
       reason: 'not_eligible',
       gainedPoints: 0,
+      bonusPointsApplied: 0,
+      totalPointsAwarded: 0,
     }
 
     const wasCompleted = Boolean(existingTask.is_completed)
@@ -2502,11 +2898,99 @@ app.put('/tasks/:id', async function (req, res) {
           points: CUSTOM_TASK_REWARD_POINTS,
           dailyLimit: CUSTOM_TASK_DAILY_REWARD_LIMIT,
         })
+        if (rewardResult.granted) {
+          const rewardStateResult = await client.query(
+            `
+            SELECT
+              milestone_draws,
+              draw_tickets,
+              reroll_tickets,
+              next_checkin_multiplier,
+              next_task_bonus_points,
+              bonus_checkins_remaining,
+              bonus_per_checkin,
+              weekly_custom_bonus_per_task,
+              weekly_custom_bonus_week_key,
+              pending_reward_source,
+              pending_reward_code,
+              pending_reward_payload
+            FROM app_user_reward_state
+            WHERE clerk_user_id = $1
+            FOR UPDATE
+            `,
+            [userId],
+          )
+
+          const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, 0)
+          const bonusApplyResult = applyTaskRewardBonuses(rewardState, today, {
+            includeNextTaskBonus: true,
+            includeWeeklyCustomBonus: true,
+          })
+
+          if (bonusApplyResult.bonusPoints > 0) {
+            const updatedUser = await client.query(
+              `
+              UPDATE app_users
+              SET points = points + $2, last_seen_at = NOW()
+              WHERE clerk_user_id = $1
+              RETURNING points
+              `,
+              [userId, bonusApplyResult.bonusPoints],
+            )
+            let totalPointsAwarded = rewardResult.gainedPoints + bonusApplyResult.bonusPoints
+            let totalPoints = rewardResult.totalPoints + bonusApplyResult.bonusPoints
+            if (updatedUser.rows && updatedUser.rows.length > 0 && updatedUser.rows[0]) {
+              totalPoints = Number(updatedUser.rows[0].points) || totalPoints
+            }
+
+            await client.query(
+              `
+              UPDATE app_user_reward_state
+              SET
+                next_task_bonus_points = $2,
+                bonus_checkins_remaining = $3,
+                bonus_per_checkin = $4,
+                weekly_custom_bonus_per_task = $5,
+                weekly_custom_bonus_week_key = $6,
+                updated_at = NOW()
+              WHERE clerk_user_id = $1
+              `,
+              [
+                userId,
+                bonusApplyResult.nextState.nextTaskBonusPoints,
+                bonusApplyResult.nextState.bonusCheckinsRemaining,
+                bonusApplyResult.nextState.bonusPerCheckin,
+                bonusApplyResult.nextState.weeklyCustomBonusPerTask,
+                bonusApplyResult.nextState.weeklyCustomBonusWeekKey,
+              ],
+            )
+
+            rewardResult = {
+              ...rewardResult,
+              gainedPoints: totalPointsAwarded,
+              bonusPointsApplied: bonusApplyResult.bonusPoints,
+              totalPointsAwarded,
+              totalPoints,
+              nextTaskBonusApplied: bonusApplyResult.nextTaskBonusApplied,
+              weeklyCustomBonusApplied: bonusApplyResult.weeklyCustomBonusApplied,
+            }
+          } else {
+            rewardResult = {
+              ...rewardResult,
+              bonusPointsApplied: 0,
+              totalPointsAwarded: rewardResult.gainedPoints,
+              nextTaskBonusApplied: 0,
+              weeklyCustomBonusApplied: 0,
+            }
+          }
+        }
       } else {
         rewardResult = {
           granted: false,
           reason: 'deadline_passed',
           gainedPoints: 0,
+          bonusPointsApplied: 0,
+          totalPointsAwarded: 0,
         }
       }
     }
@@ -2542,6 +3026,8 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
     await ensureUserRow(userId)
+    await ensureRewardStateSchema(client)
+    await ensureRewardStateRow(userId, client)
 
     const safeBody = req.body || {}
     let courseId = ''
@@ -2601,7 +3087,7 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
     const rewardDate = await getLondonToday(client)
     await client.query('BEGIN')
 
-    const rewardResult = await tryGrantTaskReward(client, {
+    let rewardResult = await tryGrantTaskReward(client, {
       userId,
       sourceType: 'canvas_task',
       sourceId: buildCanvasTaskRewardSourceId(courseId, assignmentId),
@@ -2609,6 +3095,92 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
       points: CANVAS_TASK_REWARD_POINTS,
       dailyLimit: CANVAS_TASK_DAILY_REWARD_LIMIT,
     })
+
+    if (rewardResult.granted) {
+      const rewardStateResult = await client.query(
+        `
+        SELECT
+          milestone_draws,
+          draw_tickets,
+          reroll_tickets,
+          next_checkin_multiplier,
+          next_task_bonus_points,
+          bonus_checkins_remaining,
+          bonus_per_checkin,
+          weekly_custom_bonus_per_task,
+          weekly_custom_bonus_week_key,
+          pending_reward_source,
+          pending_reward_code,
+          pending_reward_payload
+        FROM app_user_reward_state
+        WHERE clerk_user_id = $1
+        FOR UPDATE
+        `,
+        [userId],
+      )
+
+      const rewardState = mapRewardStateRow(rewardStateResult.rows[0], rewardDate, 0)
+      const bonusApplyResult = applyTaskRewardBonuses(rewardState, rewardDate, {
+        includeNextTaskBonus: true,
+        includeWeeklyCustomBonus: false,
+      })
+
+      if (bonusApplyResult.bonusPoints > 0) {
+        const updatedUser = await client.query(
+          `
+          UPDATE app_users
+          SET points = points + $2, last_seen_at = NOW()
+          WHERE clerk_user_id = $1
+          RETURNING points
+          `,
+          [userId, bonusApplyResult.bonusPoints],
+        )
+
+        let totalPointsAwarded = rewardResult.gainedPoints + bonusApplyResult.bonusPoints
+        let totalPoints = rewardResult.totalPoints + bonusApplyResult.bonusPoints
+        if (updatedUser.rows && updatedUser.rows.length > 0 && updatedUser.rows[0]) {
+          totalPoints = Number(updatedUser.rows[0].points) || totalPoints
+        }
+
+        await client.query(
+          `
+          UPDATE app_user_reward_state
+          SET
+            next_task_bonus_points = $2,
+            bonus_checkins_remaining = $3,
+            bonus_per_checkin = $4,
+            weekly_custom_bonus_per_task = $5,
+            weekly_custom_bonus_week_key = $6,
+            updated_at = NOW()
+          WHERE clerk_user_id = $1
+          `,
+          [
+            userId,
+            bonusApplyResult.nextState.nextTaskBonusPoints,
+            bonusApplyResult.nextState.bonusCheckinsRemaining,
+            bonusApplyResult.nextState.bonusPerCheckin,
+            bonusApplyResult.nextState.weeklyCustomBonusPerTask,
+            bonusApplyResult.nextState.weeklyCustomBonusWeekKey,
+          ],
+        )
+
+        rewardResult = {
+          ...rewardResult,
+          gainedPoints: totalPointsAwarded,
+          bonusPointsApplied: bonusApplyResult.bonusPoints,
+          totalPointsAwarded,
+          totalPoints,
+          nextTaskBonusApplied: bonusApplyResult.nextTaskBonusApplied,
+        }
+      } else {
+        rewardResult = {
+          ...rewardResult,
+          bonusPointsApplied: 0,
+          totalPointsAwarded: rewardResult.gainedPoints,
+          nextTaskBonusApplied: 0,
+        }
+      }
+    }
 
     await client.query('COMMIT')
 
@@ -2768,6 +3340,455 @@ app.get('/checkins/dates', async function (req, res) {
   } catch (e) {
     console.error('[BE] /checkins/dates error:', e)
     return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /streak-draw/state
+ * Return the current user's draw inventory, pending reward, and active reward buffs.
+ */
+app.get('/streak-draw/state', async function (req, res) {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureMakeupCardUserColumn(pool)
+    await ensureRewardStateSchema(pool)
+    await ensureUserRow(userId)
+    await ensureRewardStateRow(userId)
+
+    const today = await getLondonToday()
+    const userResult = await pool.query(
+      `
+      SELECT makeup_cards
+      FROM app_users
+      WHERE clerk_user_id = $1
+      `,
+      [userId],
+    )
+    const rewardStateResult = await pool.query(
+      `
+      SELECT
+        milestone_draws,
+        draw_tickets,
+        reroll_tickets,
+        next_checkin_multiplier,
+        next_task_bonus_points,
+        bonus_checkins_remaining,
+        bonus_per_checkin,
+        weekly_custom_bonus_per_task,
+        weekly_custom_bonus_week_key,
+        pending_reward_source,
+        pending_reward_code,
+        pending_reward_payload
+      FROM app_user_reward_state
+      WHERE clerk_user_id = $1
+      `,
+      [userId],
+    )
+
+    let makeupCards = 0
+    if (userResult.rows && userResult.rows.length > 0 && userResult.rows[0]) {
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+
+    const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
+
+    return res.json({
+      ok: true,
+      state: rewardState,
+    })
+  } catch (e) {
+    console.error('[BE] /streak-draw/state error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * POST /streak-draw/open
+ * Spend one milestone draw or one draw ticket to generate a pending reward.
+ */
+app.post('/streak-draw/open', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureMakeupCardUserColumn(client)
+    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId)
+    await ensureRewardStateRow(userId, client)
+
+    const safeBody = req.body || {}
+    const source = String(safeBody.source || '').trim()
+    if (source !== DRAW_SOURCE_MILESTONE && source !== DRAW_SOURCE_TICKET) {
+      return res.status(400).json({ error: 'Invalid draw source' })
+    }
+
+    const today = await getLondonToday(client)
+
+    await client.query('BEGIN')
+
+    const rewardStateResult = await client.query(
+      `
+      SELECT
+        milestone_draws,
+        draw_tickets,
+        reroll_tickets,
+        next_checkin_multiplier,
+        next_task_bonus_points,
+        bonus_checkins_remaining,
+        bonus_per_checkin,
+        weekly_custom_bonus_per_task,
+        weekly_custom_bonus_week_key,
+        pending_reward_source,
+        pending_reward_code,
+        pending_reward_payload
+      FROM app_user_reward_state
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    const userResult = await client.query(
+      `
+      SELECT makeup_cards
+      FROM app_users
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    let makeupCards = 0
+    if (userResult.rows && userResult.rows.length > 0 && userResult.rows[0]) {
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+
+    const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
+    if (rewardState.pendingReward) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Accept or reroll the current draw result first.' })
+    }
+
+    if (source === DRAW_SOURCE_MILESTONE && rewardState.milestoneDraws <= 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No milestone draw is available.' })
+    }
+    if (source === DRAW_SOURCE_TICKET && rewardState.drawTickets <= 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No extra draw ticket is available.' })
+    }
+
+    const rolledReward = rollStreakDrawReward()
+    const nextMilestoneDraws =
+      source === DRAW_SOURCE_MILESTONE ? rewardState.milestoneDraws - 1 : rewardState.milestoneDraws
+    const nextDrawTickets =
+      source === DRAW_SOURCE_TICKET ? rewardState.drawTickets - 1 : rewardState.drawTickets
+
+    await client.query(
+      `
+      UPDATE app_user_reward_state
+      SET
+        milestone_draws = $2,
+        draw_tickets = $3,
+        pending_reward_source = $4,
+        pending_reward_code = $5,
+        pending_reward_payload = $6::jsonb,
+        updated_at = NOW()
+      WHERE clerk_user_id = $1
+      `,
+      [
+        userId,
+        nextMilestoneDraws,
+        nextDrawTickets,
+        source,
+        rolledReward.code,
+        JSON.stringify(rolledReward.payload || {}),
+      ],
+    )
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      state: {
+        ...rewardState,
+        milestoneDraws: nextMilestoneDraws,
+        drawTickets: nextDrawTickets,
+        pendingRewardSource: source,
+        pendingReward: mapPendingReward(rolledReward.code, rolledReward.payload),
+      },
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_rollbackError) {
+      // no-op
+    }
+    console.error('[BE] /streak-draw/open error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
+ * POST /streak-draw/reroll
+ * Spend one reroll ticket to replace the current pending reward.
+ */
+app.post('/streak-draw/reroll', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureMakeupCardUserColumn(client)
+    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId)
+    await ensureRewardStateRow(userId, client)
+
+    const today = await getLondonToday(client)
+
+    await client.query('BEGIN')
+
+    const rewardStateResult = await client.query(
+      `
+      SELECT
+        milestone_draws,
+        draw_tickets,
+        reroll_tickets,
+        next_checkin_multiplier,
+        next_task_bonus_points,
+        bonus_checkins_remaining,
+        bonus_per_checkin,
+        weekly_custom_bonus_per_task,
+        weekly_custom_bonus_week_key,
+        pending_reward_source,
+        pending_reward_code,
+        pending_reward_payload
+      FROM app_user_reward_state
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    const userResult = await client.query(
+      `
+      SELECT makeup_cards
+      FROM app_users
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    let makeupCards = 0
+    if (userResult.rows && userResult.rows.length > 0 && userResult.rows[0]) {
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+
+    const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
+    if (!rewardState.pendingReward) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No pending reward to reroll.' })
+    }
+    if (rewardState.rerollTickets <= 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No reroll ticket is available.' })
+    }
+
+    const rerolledReward = rollStreakDrawReward()
+    const nextRerollTickets = rewardState.rerollTickets - 1
+
+    await client.query(
+      `
+      UPDATE app_user_reward_state
+      SET
+        reroll_tickets = $2,
+        pending_reward_code = $3,
+        pending_reward_payload = $4::jsonb,
+        updated_at = NOW()
+      WHERE clerk_user_id = $1
+      `,
+      [
+        userId,
+        nextRerollTickets,
+        rerolledReward.code,
+        JSON.stringify(rerolledReward.payload || {}),
+      ],
+    )
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      state: {
+        ...rewardState,
+        rerollTickets: nextRerollTickets,
+        pendingReward: mapPendingReward(rerolledReward.code, rerolledReward.payload),
+      },
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_rollbackError) {
+      // no-op
+    }
+    console.error('[BE] /streak-draw/reroll error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
+ * POST /streak-draw/accept
+ * Accept the current pending reward and apply it to points, inventory, or active buffs.
+ */
+app.post('/streak-draw/accept', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureMakeupCardUserColumn(client)
+    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId)
+    await ensureRewardStateRow(userId, client)
+
+    const today = await getLondonToday(client)
+
+    await client.query('BEGIN')
+
+    const rewardStateResult = await client.query(
+      `
+      SELECT
+        milestone_draws,
+        draw_tickets,
+        reroll_tickets,
+        next_checkin_multiplier,
+        next_task_bonus_points,
+        bonus_checkins_remaining,
+        bonus_per_checkin,
+        weekly_custom_bonus_per_task,
+        weekly_custom_bonus_week_key,
+        pending_reward_source,
+        pending_reward_code,
+        pending_reward_payload
+      FROM app_user_reward_state
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    const userResult = await client.query(
+      `
+      SELECT points, makeup_cards
+      FROM app_users
+      WHERE clerk_user_id = $1
+      FOR UPDATE
+      `,
+      [userId],
+    )
+
+    let currentPoints = 0
+    let makeupCards = 0
+    if (userResult.rows && userResult.rows.length > 0 && userResult.rows[0]) {
+      currentPoints = Number(userResult.rows[0].points) || 0
+      makeupCards = Number(userResult.rows[0].makeup_cards) || 0
+    }
+
+    const rewardState = mapRewardStateRow(rewardStateResult.rows[0], today, makeupCards)
+    if (!rewardState.pendingReward) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No pending reward to accept.' })
+    }
+
+    const acceptedReward = rewardState.pendingReward
+    const applyResult = applyAcceptedDrawReward(
+      rewardState,
+      acceptedReward.code,
+      acceptedReward.payload,
+      today,
+    )
+
+    const nextRewardState = applyResult.nextState
+    const nextPoints = currentPoints + applyResult.grantedPoints
+    const nextMakeupCards = makeupCards + applyResult.makeupCardIncrement
+
+    await client.query(
+      `
+      UPDATE app_users
+      SET
+        points = $2,
+        makeup_cards = $3,
+        last_seen_at = NOW()
+      WHERE clerk_user_id = $1
+      `,
+      [userId, nextPoints, nextMakeupCards],
+    )
+
+    await client.query(
+      `
+      UPDATE app_user_reward_state
+      SET
+        milestone_draws = $2,
+        draw_tickets = $3,
+        reroll_tickets = $4,
+        next_checkin_multiplier = $5,
+        next_task_bonus_points = $6,
+        bonus_checkins_remaining = $7,
+        bonus_per_checkin = $8,
+        weekly_custom_bonus_per_task = $9,
+        weekly_custom_bonus_week_key = $10,
+        pending_reward_source = '',
+        pending_reward_code = '',
+        pending_reward_payload = '{}'::jsonb,
+        updated_at = NOW()
+      WHERE clerk_user_id = $1
+      `,
+      [
+        userId,
+        nextRewardState.milestoneDraws,
+        nextRewardState.drawTickets,
+        nextRewardState.rerollTickets,
+        nextRewardState.nextCheckinMultiplier,
+        nextRewardState.nextTaskBonusPoints,
+        nextRewardState.bonusCheckinsRemaining,
+        nextRewardState.bonusPerCheckin,
+        nextRewardState.weeklyCustomBonusPerTask,
+        nextRewardState.weeklyCustomBonusWeekKey,
+      ],
+    )
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      acceptedReward: {
+        ...acceptedReward,
+        pointsGranted: applyResult.grantedPoints,
+      },
+      totalPoints: nextPoints,
+      state: {
+        ...nextRewardState,
+        makeupCards: nextMakeupCards,
+      },
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_rollbackError) {
+      // no-op
+    }
+    console.error('[BE] /streak-draw/accept error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
   }
 })
 
@@ -3196,7 +4217,9 @@ app.post('/checkins/today', async function (req, res) {
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
     await ensureMakeupCardUserColumn(client)
+    await ensureRewardStateSchema(client)
     await ensureUserRow(userId)
+    await ensureRewardStateRow(userId, client)
     const today = await getLondonToday()
 
     await client.query('BEGIN')
@@ -3221,6 +4244,8 @@ app.post('/checkins/today', async function (req, res) {
     let todayNote = ''
     let awardedMakeupCard = false
     let makeupCards = 0
+    let awardedMilestoneDraw = false
+    let milestoneDraws = 0
 
     // Only the first check-in for the current day should grant points.
     if (didInsert) {
@@ -3253,6 +4278,28 @@ app.post('/checkins/today', async function (req, res) {
         [userId],
       )
 
+      const userRewardStateResult = await client.query(
+        `
+        SELECT
+          milestone_draws,
+          draw_tickets,
+          reroll_tickets,
+          next_checkin_multiplier,
+          next_task_bonus_points,
+          bonus_checkins_remaining,
+          bonus_per_checkin,
+          weekly_custom_bonus_per_task,
+          weekly_custom_bonus_week_key,
+          pending_reward_source,
+          pending_reward_code,
+          pending_reward_payload
+        FROM app_user_reward_state
+        WHERE clerk_user_id = $1
+        FOR UPDATE
+        `,
+        [userId],
+      )
+
       let currentPointsBeforeUpdate = 0
       let currentMakeupCards = 0
       let newUserBonusPhaseDone = false
@@ -3277,6 +4324,8 @@ app.post('/checkins/today', async function (req, res) {
         }
       }
 
+      const currentRewardState = mapRewardStateRow(userRewardStateResult.rows[0], today, currentMakeupCards)
+
       let restartedStreak = false
       if (streakDays === 1 && totalDays > 1) {
         restartedStreak = true
@@ -3288,7 +4337,9 @@ app.post('/checkins/today', async function (req, res) {
         useNewUserBonusPhase = false
       }
 
-      gainedPoints = getCheckinRewardPoints(streakDays, useNewUserBonusPhase)
+      const baseCheckinPoints = getCheckinRewardPoints(streakDays, useNewUserBonusPhase)
+      const checkinBonusResult = applyCheckinRewardBonuses(baseCheckinPoints, currentRewardState)
+      gainedPoints = checkinBonusResult.grantedPoints
 
       let nextNewUserBonusPhaseDone = newUserBonusPhaseDone
       if (!nextNewUserBonusPhaseDone) {
@@ -3305,6 +4356,12 @@ app.post('/checkins/today', async function (req, res) {
         awardedMakeupCard = true
         nextClaimed14DayMakeupCard = true
         makeupCardIncrement = 1
+      }
+
+      let nextMilestoneDraws = checkinBonusResult.nextState.milestoneDraws
+      if (streakDays > 0 && streakDays % 7 === 0) {
+        nextMilestoneDraws += 1
+        awardedMilestoneDraw = true
       }
 
       const yesterdayNoteResult = await client.query(
@@ -3355,6 +4412,48 @@ app.post('/checkins/today', async function (req, res) {
           makeupCards = Number(updatedUserResult.rows[0].makeup_cards) || 0
         }
       }
+
+      await client.query(
+        `
+        UPDATE app_user_reward_state
+        SET
+          milestone_draws = $2,
+          draw_tickets = $3,
+          reroll_tickets = $4,
+          next_checkin_multiplier = $5,
+          next_task_bonus_points = $6,
+          bonus_checkins_remaining = $7,
+          bonus_per_checkin = $8,
+          weekly_custom_bonus_per_task = $9,
+          weekly_custom_bonus_week_key = $10,
+          pending_reward_source = $11,
+          pending_reward_code = $12,
+          pending_reward_payload = $13::jsonb,
+          updated_at = NOW()
+        WHERE clerk_user_id = $1
+        `,
+        [
+          userId,
+          nextMilestoneDraws,
+          checkinBonusResult.nextState.drawTickets,
+          checkinBonusResult.nextState.rerollTickets,
+          checkinBonusResult.nextState.nextCheckinMultiplier,
+          checkinBonusResult.nextState.nextTaskBonusPoints,
+          checkinBonusResult.nextState.bonusCheckinsRemaining,
+          checkinBonusResult.nextState.bonusPerCheckin,
+          checkinBonusResult.nextState.weeklyCustomBonusPerTask,
+          checkinBonusResult.nextState.weeklyCustomBonusWeekKey,
+          checkinBonusResult.nextState.pendingRewardSource,
+          checkinBonusResult.nextState.pendingReward ? checkinBonusResult.nextState.pendingReward.code : '',
+          JSON.stringify(
+            checkinBonusResult.nextState.pendingReward
+              ? (checkinBonusResult.nextState.pendingReward.payload || {})
+              : {},
+          ),
+        ],
+      )
+
+      milestoneDraws = nextMilestoneDraws
     } else {
       streakDays = await getStreakDays(client, userId, today)
 
@@ -3388,6 +4487,18 @@ app.post('/checkins/today', async function (req, res) {
         currentNoteResult.rows[0].next_day_note !== undefined
       ) {
         todayNote = String(currentNoteResult.rows[0].next_day_note)
+      }
+
+      const rewardStateResult = await client.query(
+        `
+        SELECT milestone_draws
+        FROM app_user_reward_state
+        WHERE clerk_user_id = $1
+        `,
+        [userId],
+      )
+      if (rewardStateResult.rows && rewardStateResult.rows.length > 0 && rewardStateResult.rows[0]) {
+        milestoneDraws = Number(rewardStateResult.rows[0].milestone_draws) || 0
       }
     }
 
@@ -3432,6 +4543,8 @@ app.post('/checkins/today', async function (req, res) {
       points: currentPoints,
       makeupCards,
       awardedMakeupCard,
+      awardedMilestoneDraw,
+      milestoneDraws,
       yesterdayNote,
       todayNote,
     })
