@@ -1616,6 +1616,45 @@ async function getLondonToday(db = pool) {
   return r.rows[0].today
 }
 
+async function getLondonNowInfo(db = pool) {
+  const r = await db.query(`
+    SELECT
+      (NOW() AT TIME ZONE 'Europe/London')::date AS today,
+      TO_CHAR((NOW() AT TIME ZONE 'Europe/London'), 'HH24:MI') AS current_time
+  `)
+  return {
+    today: r.rows[0].today,
+    currentTime: String(r.rows[0].current_time || '').trim(),
+  }
+}
+
+function canGrantCustomTaskReward(task, londonToday, londonCurrentTime) {
+  const safeTask = task || {}
+  const taskDate = String(safeTask.taskDate || '').trim()
+  if (taskDate === '') {
+    return false
+  }
+
+  if (taskDate > londonToday) {
+    return true
+  }
+  if (taskDate < londonToday) {
+    return false
+  }
+
+  let deadlineTime = ''
+  if (safeTask.timingMode === TASK_MODE_RANGE) {
+    deadlineTime = String(safeTask.endTime || '').trim()
+  } else {
+    deadlineTime = String(safeTask.dueTime || '').trim()
+  }
+
+  if (deadlineTime === '') {
+    return false
+  }
+  return deadlineTime >= londonCurrentTime
+}
+
 // Make sure app_users always has one row for the current Clerk user.
 async function ensureUserRow(userId) {
   // Check-ins, rewards, Canvas credentials, and custom tasks all depend on this row.
@@ -2213,7 +2252,8 @@ app.put('/tasks/:id', async function (req, res) {
       return res.status(400).json({ error: normalized.error })
     }
 
-    const today = await getLondonToday(client)
+    const londonNow = await getLondonNowInfo(client)
+    const today = londonNow.today
 
     await client.query('BEGIN')
 
@@ -2288,15 +2328,23 @@ app.put('/tasks/:id', async function (req, res) {
     }
 
     const wasCompleted = Boolean(existingTask.is_completed)
-    if (!wasCompleted && normalized.isCompleted && normalized.taskDate <= today) {
-      rewardResult = await tryGrantTaskReward(client, {
-        userId,
-        sourceType: 'custom_task',
-        sourceId: 'custom:' + String(taskId),
-        rewardDate: today,
-        points: CUSTOM_TASK_REWARD_POINTS,
-        dailyLimit: CUSTOM_TASK_DAILY_REWARD_LIMIT,
-      })
+    if (!wasCompleted && normalized.isCompleted) {
+      if (canGrantCustomTaskReward(normalized, today, londonNow.currentTime)) {
+        rewardResult = await tryGrantTaskReward(client, {
+          userId,
+          sourceType: 'custom_task',
+          sourceId: 'custom:' + String(taskId),
+          rewardDate: today,
+          points: CUSTOM_TASK_REWARD_POINTS,
+          dailyLimit: CUSTOM_TASK_DAILY_REWARD_LIMIT,
+        })
+      } else {
+        rewardResult = {
+          granted: false,
+          reason: 'deadline_passed',
+          gainedPoints: 0,
+        }
+      }
     }
 
     await client.query('COMMIT')

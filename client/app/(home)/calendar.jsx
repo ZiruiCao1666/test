@@ -357,6 +357,9 @@ const getTaskRewardNoticeText = (rewardResult) => {
   if (safeRewardResult.reason === 'already_rewarded') {
     return 'This task reward was already claimed';
   }
+  if (safeRewardResult.reason === 'deadline_passed') {
+    return 'No reward for an overdue task';
+  }
   return '';
 };
 
