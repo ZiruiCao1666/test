@@ -40,6 +40,11 @@ if (!databaseUrl) {
 
 const CHECKIN_POINTS = 5
 const NEW_USER_FIRST_WEEK_REWARDS = [1, 2, 3, 5, 8, 10, 10]
+const RESTART_STREAK_REWARDS = [1, 2, 3, 4, 5, 5, 5]
+const CUSTOM_TASK_REWARD_POINTS = 1
+const CUSTOM_TASK_DAILY_REWARD_LIMIT = 2
+const CANVAS_TASK_REWARD_POINTS = 10
+const CANVAS_TASK_DAILY_REWARD_LIMIT = 1
 const MAKEUP_CARD_REWARD_TITLE = 'Make-up Card'
 const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
@@ -76,6 +81,12 @@ async function ensureMakeupCardUserColumn(db) {
   await db.query(`
     ALTER TABLE app_users
       ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
+
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS new_user_bonus_phase_done BOOLEAN NOT NULL DEFAULT FALSE;
+
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS has_claimed_14_day_makeup_card BOOLEAN NOT NULL DEFAULT FALSE;
   `)
 }
 
@@ -107,6 +118,21 @@ function getDateTextWithOffset(value, offsetDays) {
   const date = new Date(baseDateText + 'T00:00:00Z')
   date.setUTCDate(date.getUTCDate() + offsetDays)
   return date.toISOString().slice(0, 10)
+}
+
+function buildCanvasTaskRewardSourceId(courseId, assignmentId) {
+  let safeCourseId = ''
+  if (courseId !== null && courseId !== undefined) {
+    safeCourseId = String(courseId).trim()
+  }
+  let safeAssignmentId = ''
+  if (assignmentId !== null && assignmentId !== undefined) {
+    safeAssignmentId = String(assignmentId).trim()
+  }
+  if (safeCourseId === '' || safeAssignmentId === '') {
+    return ''
+  }
+  return 'canvas:' + safeCourseId + ':' + safeAssignmentId
 }
 
 function mapRewardRow(row) {
@@ -165,6 +191,126 @@ function mapCustomTaskRow(row) {
     isCompleted: Boolean(row.is_completed),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+async function tryGrantTaskReward(
+  client,
+  { userId, sourceType, sourceId, rewardDate, points, dailyLimit },
+) {
+  const userResult = await client.query(
+    `
+    SELECT points
+    FROM app_users
+    WHERE clerk_user_id = $1
+    FOR UPDATE
+    `,
+    [userId],
+  )
+
+  if (userResult.rowCount === 0) {
+    return {
+      granted: false,
+      reason: 'user_not_found',
+      gainedPoints: 0,
+      totalPoints: 0,
+    }
+  }
+
+  let currentPoints = 0
+  if (userResult.rows[0] && userResult.rows[0].points != null) {
+    currentPoints = Number(userResult.rows[0].points) || 0
+  }
+
+  const existing = await client.query(
+    `
+    SELECT 1
+    FROM app_task_reward_events
+    WHERE clerk_user_id = $1
+      AND source_type = $2
+      AND source_id = $3
+    `,
+    [userId, sourceType, sourceId],
+  )
+
+  if (existing.rowCount > 0) {
+    return {
+      granted: false,
+      reason: 'already_rewarded',
+      gainedPoints: 0,
+      totalPoints: currentPoints,
+    }
+  }
+
+  const daily = await client.query(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM app_task_reward_events
+    WHERE clerk_user_id = $1
+      AND reward_date = $2
+      AND source_type = $3
+    `,
+    [userId, rewardDate, sourceType],
+  )
+
+  let dailyCount = 0
+  if (daily.rows[0] && daily.rows[0].count != null) {
+    dailyCount = Number(daily.rows[0].count) || 0
+  }
+  if (dailyCount >= dailyLimit) {
+    return {
+      granted: false,
+      reason: 'daily_cap_reached',
+      gainedPoints: 0,
+      totalPoints: currentPoints,
+    }
+  }
+
+  const insertResult = await client.query(
+    `
+    INSERT INTO app_task_reward_events (
+      clerk_user_id,
+      source_type,
+      source_id,
+      reward_date,
+      points
+    )
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (clerk_user_id, source_type, source_id) DO NOTHING
+    RETURNING id
+    `,
+    [userId, sourceType, sourceId, rewardDate, points],
+  )
+
+  if (insertResult.rowCount === 0) {
+    return {
+      granted: false,
+      reason: 'already_rewarded',
+      gainedPoints: 0,
+      totalPoints: currentPoints,
+    }
+  }
+
+  const updatedUser = await client.query(
+    `
+    UPDATE app_users
+    SET points = points + $2, last_seen_at = NOW()
+    WHERE clerk_user_id = $1
+    RETURNING points
+    `,
+    [userId, points],
+  )
+
+  let totalPoints = currentPoints + points
+  if (updatedUser.rows[0] && updatedUser.rows[0].points != null) {
+    totalPoints = Number(updatedUser.rows[0].points) || totalPoints
+  }
+
+  return {
+    granted: true,
+    reason: 'ok',
+    gainedPoints: points,
+    totalPoints,
   }
 }
 
@@ -913,7 +1059,12 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
     isCompleted: completed,
     score: null,
     pointsPossible: null,
+    submittedAt: '',
     teacherComments: [],
+    rewardSourceId: '',
+    rewardEligible: false,
+    rewardAlreadyClaimed: false,
+    rewardDailyCapReached: false,
     sortTs,
   }
 }
@@ -1042,7 +1193,92 @@ async function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
       ...safeItem,
       score,
       pointsPossible,
+      submittedAt: detail.submitted_at ? String(detail.submitted_at) : '',
       teacherComments: normalizeTeacherComments(detail),
+    }
+  })
+}
+
+async function annotateCanvasRewardStateForPlanItems(userId, items) {
+  let safeItems = []
+  if (Array.isArray(items)) {
+    safeItems = items.slice()
+  }
+
+  const sourceIds = []
+  safeItems.forEach(function (item) {
+    const safeItem = item || {}
+    const rewardSourceId = buildCanvasTaskRewardSourceId(
+      safeItem.courseId,
+      safeItem.assignmentId,
+    )
+    if (rewardSourceId !== '') {
+      sourceIds.push(rewardSourceId)
+    }
+  })
+
+  if (sourceIds.length === 0) {
+    return safeItems
+  }
+
+  const uniqueSourceIds = Array.from(new Set(sourceIds))
+  const rewardedResult = await pool.query(
+    `
+    SELECT source_id
+    FROM app_task_reward_events
+    WHERE clerk_user_id = $1
+      AND source_type = 'canvas_task'
+      AND source_id = ANY($2::text[])
+    `,
+    [userId, uniqueSourceIds],
+  )
+  const rewardedSourceIds = new Set(
+    rewardedResult.rows.map(function (row) {
+      return String(row.source_id)
+    }),
+  )
+
+  const today = await getLondonToday()
+  const dailyResult = await pool.query(
+    `
+    SELECT COUNT(*)::int AS count
+    FROM app_task_reward_events
+    WHERE clerk_user_id = $1
+      AND reward_date = $2
+      AND source_type = 'canvas_task'
+    `,
+    [userId, today],
+  )
+
+  let dailyCount = 0
+  if (dailyResult.rows[0] && dailyResult.rows[0].count != null) {
+    dailyCount = Number(dailyResult.rows[0].count) || 0
+  }
+  const dailyCapReached = dailyCount >= CANVAS_TASK_DAILY_REWARD_LIMIT
+
+  return safeItems.map(function (item) {
+    const safeItem = item || {}
+    const rewardSourceId = buildCanvasTaskRewardSourceId(
+      safeItem.courseId,
+      safeItem.assignmentId,
+    )
+    if (rewardSourceId === '') {
+      return safeItem
+    }
+
+    const rewardEligible = Boolean(safeItem.isCompleted && safeItem.submittedAt)
+    const rewardAlreadyClaimed = rewardedSourceIds.has(rewardSourceId)
+    let rewardDailyCapReached = false
+    if (rewardEligible && !rewardAlreadyClaimed && dailyCapReached) {
+      rewardDailyCapReached = true
+    }
+
+    return {
+      ...safeItem,
+      rewardSourceId,
+      rewardEligible,
+      rewardAlreadyClaimed,
+      rewardDailyCapReached,
     }
   })
 }
@@ -1221,15 +1457,23 @@ async function getMakeupCardStatus(db, userId, today) {
   }
 }
 
-function getCheckinRewardPoints(streakDays) {
+function getRewardPointsFromSequence(streakDays, rewards) {
   let safeStreakDays = Number(streakDays)
   if (!Number.isFinite(safeStreakDays)) {
     safeStreakDays = 0
   }
-  if (safeStreakDays >= 1 && safeStreakDays <= NEW_USER_FIRST_WEEK_REWARDS.length) {
-    return NEW_USER_FIRST_WEEK_REWARDS[safeStreakDays - 1]
+
+  if (safeStreakDays >= 1 && safeStreakDays <= rewards.length) {
+    return rewards[safeStreakDays - 1]
   }
   return CHECKIN_POINTS
+}
+
+function getCheckinRewardPoints(streakDays, useNewUserBonusPhase) {
+  if (useNewUserBonusPhase) {
+    return getRewardPointsFromSequence(streakDays, NEW_USER_FIRST_WEEK_REWARDS)
+  }
+  return getRewardPointsFromSequence(streakDays, RESTART_STREAK_REWARDS)
 }
 
 async function initDb() {
@@ -1249,6 +1493,12 @@ async function initDb() {
 
     ALTER TABLE app_users
       ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
+
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS new_user_bonus_phase_done BOOLEAN NOT NULL DEFAULT FALSE;
+
+    ALTER TABLE app_users
+      ADD COLUMN IF NOT EXISTS has_claimed_14_day_makeup_card BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS app_checkins (
       id BIGSERIAL PRIMARY KEY,
@@ -1315,6 +1565,20 @@ async function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_app_custom_tasks_user_date
       ON app_custom_tasks (clerk_user_id, task_date ASC, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS app_task_reward_events (
+      id BIGSERIAL PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
+      source_type TEXT NOT NULL CHECK (source_type IN ('custom_task', 'canvas_task')),
+      source_id TEXT NOT NULL,
+      reward_date DATE NOT NULL,
+      points INT NOT NULL CHECK (points > 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (clerk_user_id, source_type, source_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_reward_daily
+      ON app_task_reward_events (clerk_user_id, reward_date, source_type);
   `)
 
   await pool.query(
@@ -1347,8 +1611,8 @@ app.get('/health', async function (_req, res) {
 
 // 用英国当天日期，避免时区跨天问题
 // Use the London calendar date so daily features do not drift across time zones.
-async function getLondonToday() {
-  const r = await pool.query(`SELECT (NOW() AT TIME ZONE 'Europe/London')::date AS today`)
+async function getLondonToday(db = pool) {
+  const r = await db.query(`SELECT (NOW() AT TIME ZONE 'Europe/London')::date AS today`)
   return r.rows[0].today
 }
 
@@ -1803,7 +2067,8 @@ app.get('/home/plan', async function (req, res) {
     }
 
     const upcomingItems = sortPlanItemsAscending(customUpcomingItems.concat(canvasUpcomingItems))
-    const recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
+    let recentItems = sortPlanItemsDescending(customRecentItems.concat(canvasRecentItems))
+    recentItems = await annotateCanvasRewardStateForPlanItems(userId, recentItems)
     const recentSummary = buildReviewSummary(recentItems)
 
     return res.json({
@@ -1931,6 +2196,7 @@ app.post('/tasks', async function (req, res) {
  * Update one custom task.
  */
 app.put('/tasks/:id', async function (req, res) {
+  const client = await pool.connect()
   try {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
@@ -1947,7 +2213,37 @@ app.put('/tasks/:id', async function (req, res) {
       return res.status(400).json({ error: normalized.error })
     }
 
-    const result = await pool.query(
+    const today = await getLondonToday(client)
+
+    await client.query('BEGIN')
+
+    const existingTaskResult = await client.query(
+      `
+      SELECT
+        id,
+        title,
+        task_date,
+        timing_mode,
+        due_time,
+        start_time,
+        end_time,
+        is_completed,
+        created_at,
+        updated_at
+      FROM app_custom_tasks
+      WHERE id = $1 AND clerk_user_id = $2
+      FOR UPDATE
+      `,
+      [taskId, userId],
+    )
+
+    if (existingTaskResult.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Task not found' })
+    }
+
+    const existingTask = existingTaskResult.rows[0]
+    const result = await client.query(
       `
       UPDATE app_custom_tasks
       SET
@@ -1985,17 +2281,139 @@ app.put('/tasks/:id', async function (req, res) {
       ],
     )
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Task not found' })
+    let rewardResult = {
+      granted: false,
+      reason: 'not_eligible',
+      gainedPoints: 0,
     }
+
+    const wasCompleted = Boolean(existingTask.is_completed)
+    if (!wasCompleted && normalized.isCompleted && normalized.taskDate <= today) {
+      rewardResult = await tryGrantTaskReward(client, {
+        userId,
+        sourceType: 'custom_task',
+        sourceId: 'custom:' + String(taskId),
+        rewardDate: today,
+        points: CUSTOM_TASK_REWARD_POINTS,
+        dailyLimit: CUSTOM_TASK_DAILY_REWARD_LIMIT,
+      })
+    }
+
+    await client.query('COMMIT')
 
     return res.json({
       ok: true,
       item: mapCustomTaskRow(result.rows[0]),
+      rewardResult,
     })
   } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_) {
+      // no-op
+    }
     console.error('[BE] /tasks PUT error:', e)
     return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
+  }
+})
+
+/**
+ * POST /task-rewards/canvas/claim
+ * Manually claim one daily Canvas completion reward after server-side submission verification.
+ */
+app.post('/task-rewards/canvas/claim', async function (req, res) {
+  const client = await pool.connect()
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    await ensureUserRow(userId)
+
+    const safeBody = req.body || {}
+    let courseId = ''
+    if (safeBody.courseId !== null && safeBody.courseId !== undefined) {
+      courseId = String(safeBody.courseId).trim()
+    }
+    let assignmentId = ''
+    if (safeBody.assignmentId !== null && safeBody.assignmentId !== undefined) {
+      assignmentId = String(safeBody.assignmentId).trim()
+    }
+    if (courseId === '' || assignmentId === '') {
+      return res.status(400).json({ error: 'Missing courseId or assignmentId' })
+    }
+
+    const stored = await getStoredCanvasCredentials(userId)
+    if (!stored.school || !stored.token) {
+      return res.status(409).json({ error: 'Connect Canvas before claiming this reward.' })
+    }
+
+    const baseUrl = buildCanvasBaseUrl(stored.school)
+    const submissionDetails = await fetchCanvasSubmissionDetailsForCourse(
+      baseUrl,
+      stored.token,
+      courseId,
+      [assignmentId],
+    )
+
+    let matchingSubmission = null
+    if (Array.isArray(submissionDetails)) {
+      matchingSubmission = submissionDetails.find(function (detail) {
+        const safeDetail = detail || {}
+        let detailAssignmentId = ''
+        if (safeDetail.assignment_id) {
+          detailAssignmentId = String(safeDetail.assignment_id).trim()
+        } else if (safeDetail.assignment && safeDetail.assignment.id) {
+          detailAssignmentId = String(safeDetail.assignment.id).trim()
+        }
+        return detailAssignmentId === assignmentId
+      }) || null
+    }
+
+    let submittedAt = ''
+    if (matchingSubmission && matchingSubmission.submitted_at) {
+      submittedAt = String(matchingSubmission.submitted_at).trim()
+    }
+    if (submittedAt === '') {
+      return res.json({
+        ok: true,
+        rewardResult: {
+          granted: false,
+          reason: 'not_submitted',
+          gainedPoints: 0,
+        },
+      })
+    }
+
+    const rewardDate = await getLondonToday(client)
+    await client.query('BEGIN')
+
+    const rewardResult = await tryGrantTaskReward(client, {
+      userId,
+      sourceType: 'canvas_task',
+      sourceId: buildCanvasTaskRewardSourceId(courseId, assignmentId),
+      rewardDate,
+      points: CANVAS_TASK_REWARD_POINTS,
+      dailyLimit: CANVAS_TASK_DAILY_REWARD_LIMIT,
+    })
+
+    await client.query('COMMIT')
+
+    return res.json({
+      ok: true,
+      rewardResult,
+    })
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch (_) {
+      // no-op
+    }
+    console.error('[BE] /task-rewards/canvas/claim error:', e)
+    return res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    client.release()
   }
 })
 
@@ -2565,6 +2983,7 @@ app.post('/checkins/today', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
+    await ensureMakeupCardUserColumn(client)
     await ensureUserRow(userId)
     const today = await getLondonToday()
 
@@ -2588,6 +3007,8 @@ app.post('/checkins/today', async function (req, res) {
     let totalDays = 0
     let yesterdayNote = ''
     let todayNote = ''
+    let awardedMakeupCard = false
+    let makeupCards = 0
 
     // Only the first check-in for the current day should grant points.
     if (didInsert) {
@@ -2605,7 +3026,74 @@ app.post('/checkins/today', async function (req, res) {
       }
 
       streakDays = await getStreakDays(client, userId, today)
-      gainedPoints = getCheckinRewardPoints(streakDays)
+
+      const rewardStateResult = await client.query(
+        `
+        SELECT
+          points,
+          makeup_cards,
+          new_user_bonus_phase_done,
+          has_claimed_14_day_makeup_card
+        FROM app_users
+        WHERE clerk_user_id = $1
+        FOR UPDATE
+        `,
+        [userId],
+      )
+
+      let currentPointsBeforeUpdate = 0
+      let currentMakeupCards = 0
+      let newUserBonusPhaseDone = false
+      let hasClaimed14DayMakeupCard = false
+      if (
+        rewardStateResult.rows &&
+        rewardStateResult.rows.length > 0 &&
+        rewardStateResult.rows[0]
+      ) {
+        const rewardStateRow = rewardStateResult.rows[0]
+        if (rewardStateRow.points != null) {
+          currentPointsBeforeUpdate = Number(rewardStateRow.points) || 0
+        }
+        if (rewardStateRow.makeup_cards != null) {
+          currentMakeupCards = Number(rewardStateRow.makeup_cards) || 0
+        }
+        if (rewardStateRow.new_user_bonus_phase_done) {
+          newUserBonusPhaseDone = true
+        }
+        if (rewardStateRow.has_claimed_14_day_makeup_card) {
+          hasClaimed14DayMakeupCard = true
+        }
+      }
+
+      let restartedStreak = false
+      if (streakDays === 1 && totalDays > 1) {
+        restartedStreak = true
+      }
+      const hasHistoricalBreak = totalDays > streakDays
+
+      let useNewUserBonusPhase = !newUserBonusPhaseDone
+      if (restartedStreak || hasHistoricalBreak) {
+        useNewUserBonusPhase = false
+      }
+
+      gainedPoints = getCheckinRewardPoints(streakDays, useNewUserBonusPhase)
+
+      let nextNewUserBonusPhaseDone = newUserBonusPhaseDone
+      if (!nextNewUserBonusPhaseDone) {
+        if (restartedStreak || hasHistoricalBreak) {
+          nextNewUserBonusPhaseDone = true
+        } else if (streakDays >= NEW_USER_FIRST_WEEK_REWARDS.length) {
+          nextNewUserBonusPhaseDone = true
+        }
+      }
+
+      let nextClaimed14DayMakeupCard = hasClaimed14DayMakeupCard
+      let makeupCardIncrement = 0
+      if (!nextClaimed14DayMakeupCard && streakDays >= 14) {
+        awardedMakeupCard = true
+        nextClaimed14DayMakeupCard = true
+        makeupCardIncrement = 1
+      }
 
       const yesterdayNoteResult = await client.query(
         `
@@ -2626,10 +3114,35 @@ app.post('/checkins/today', async function (req, res) {
         yesterdayNote = String(yesterdayNoteResult.rows[0].next_day_note)
       }
 
-      await client.query(
-        `UPDATE app_users SET points = points + $2, last_seen_at = NOW() WHERE clerk_user_id = $1`,
-        [userId, gainedPoints],
+      const updatedUserResult = await client.query(
+        `
+        UPDATE app_users
+        SET
+          points = $2,
+          makeup_cards = $3,
+          new_user_bonus_phase_done = $4,
+          has_claimed_14_day_makeup_card = $5,
+          last_seen_at = NOW()
+        WHERE clerk_user_id = $1
+        RETURNING points, makeup_cards
+        `,
+        [
+          userId,
+          currentPointsBeforeUpdate + gainedPoints,
+          currentMakeupCards + makeupCardIncrement,
+          nextNewUserBonusPhaseDone,
+          nextClaimed14DayMakeupCard,
+        ],
       )
+      if (
+        updatedUserResult.rows &&
+        updatedUserResult.rows.length > 0 &&
+        updatedUserResult.rows[0]
+      ) {
+        if (updatedUserResult.rows[0].makeup_cards != null) {
+          makeupCards = Number(updatedUserResult.rows[0].makeup_cards) || 0
+        }
+      }
     } else {
       streakDays = await getStreakDays(client, userId, today)
 
@@ -2667,7 +3180,7 @@ app.post('/checkins/today', async function (req, res) {
     }
 
     const points = await client.query(
-      `SELECT points FROM app_users WHERE clerk_user_id=$1`,
+      `SELECT points, makeup_cards FROM app_users WHERE clerk_user_id=$1`,
       [userId],
     )
 
@@ -2686,6 +3199,16 @@ app.post('/checkins/today', async function (req, res) {
     ) {
       currentPoints = points.rows[0].points
     }
+    if (makeupCards <= 0) {
+      if (
+        points.rows &&
+        points.rows.length > 0 &&
+        points.rows[0] &&
+        points.rows[0].makeup_cards != null
+      ) {
+        makeupCards = Number(points.rows[0].makeup_cards) || 0
+      }
+    }
 
     return res.json({
       ok: true,
@@ -2695,6 +3218,8 @@ app.post('/checkins/today', async function (req, res) {
       totalDays,
       streakDays,
       points: currentPoints,
+      makeupCards,
+      awardedMakeupCard,
       yesterdayNote,
       todayNote,
     })

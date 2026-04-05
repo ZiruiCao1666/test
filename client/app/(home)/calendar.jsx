@@ -340,6 +340,26 @@ const getTextWhen = (condition, trueText, falseText) => {
   return falseText;
 };
 
+const getTaskRewardNoticeText = (rewardResult) => {
+  const safeRewardResult = rewardResult || {};
+  if (safeRewardResult.granted) {
+    const gainedPoints = Number(safeRewardResult.gainedPoints) || 0;
+    if (gainedPoints === 1) {
+      return '+1 point earned';
+    }
+    if (gainedPoints > 1) {
+      return '+' + String(gainedPoints) + ' points earned';
+    }
+  }
+  if (safeRewardResult.reason === 'daily_cap_reached') {
+    return 'Daily custom-task reward limit reached';
+  }
+  if (safeRewardResult.reason === 'already_rewarded') {
+    return 'This task reward was already claimed';
+  }
+  return '';
+};
+
 const getCanvasConnectButtonText = (isConnected) => {
   if (isConnected) {
     return 'Resync Canvas';
@@ -1309,6 +1329,7 @@ export default function CalendarScreen() {
   const [customTasks, setCustomTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState('');
+  const [tasksNotice, setTasksNotice] = useState('');
   const [checkinDateKeys, setCheckinDateKeys] = useState(() => new Set());
   const [checkinsError, setCheckinsError] = useState('');
   const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
@@ -2252,7 +2273,7 @@ export default function CalendarScreen() {
     if (!response.ok) {
       throw new Error(getApiErrorMessage(data, 'Failed to save task (HTTP ' + String(response.status) + ')'));
     }
-    return data.item || null;
+    return data;
   };
 
   const handleSubmitTask = async () => {
@@ -2269,16 +2290,18 @@ export default function CalendarScreen() {
       if (existingTask) {
         existingTaskCompleted = existingTask.isCompleted;
       }
-      const savedTask = await saveTaskToBackend(editingTaskId, {
+      const saveResponse = await saveTaskToBackend(editingTaskId, {
         ...payload,
         isCompleted: existingTaskCompleted,
       });
+      const savedTask = saveResponse.item || null;
       let normalizedSavedTask = null;
       if (savedTask) {
         normalizedSavedTask = normalizeCustomTask(savedTask, selectedDate);
       }
       await fetchCustomTasks({ silent: true });
       setTasksError('');
+      setTasksNotice('');
       let resetDate = selectedDate;
       if (normalizedSavedTask) {
         if (normalizedSavedTask.taskDate) {
@@ -2320,6 +2343,7 @@ export default function CalendarScreen() {
       endTime: normalizedTask.endTime,
     });
     setTasksError('');
+    setTasksNotice('');
   };
 
   const handleToggleTaskCompletion = async (task) => {
@@ -2343,9 +2367,14 @@ export default function CalendarScreen() {
         endTime: String(safeTask.endTime || '').trim(),
         isCompleted: !safeTask.isCompleted,
       };
-      await saveTaskToBackend(safeTask.id, payload);
+      const saveResponse = await saveTaskToBackend(safeTask.id, payload);
       await fetchCustomTasks({ silent: true });
       setTasksError('');
+      if (payload.isCompleted) {
+        setTasksNotice(getTaskRewardNoticeText(saveResponse.rewardResult));
+      } else {
+        setTasksNotice('');
+      }
     } catch (toggleError) {
       if (toggleError instanceof Error) {
         setTasksError(toggleError.message);
@@ -2382,6 +2411,7 @@ export default function CalendarScreen() {
         resetTaskComposer(selectedDate);
       }
       setTasksError('');
+      setTasksNotice('');
     } catch (deleteError) {
       if (deleteError instanceof Error) {
         setTasksError(deleteError.message);
@@ -3666,6 +3696,11 @@ export default function CalendarScreen() {
     tasksErrorNode = <Text style={[styles.taskErrorText, errorTextStyle]}>{tasksError}</Text>;
   }
 
+  let tasksNoticeNode = null;
+  if (tasksNotice) {
+    tasksNoticeNode = <Text style={[styles.taskNoticeText, { color: theme.primary }]}>{tasksNotice}</Text>;
+  }
+
   let customTaskListNode = null;
   if (tasksLoading) {
     customTaskListNode = (
@@ -3838,6 +3873,7 @@ export default function CalendarScreen() {
           </View>
 
           {tasksErrorNode}
+          {tasksNoticeNode}
         </View>
 
         {customTaskListNode}
@@ -5022,6 +5058,11 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 12,
     color: '#b91c1c',
+  },
+  taskNoticeText: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: '700',
   },
   taskLoadingWrap: {
     paddingVertical: 20,

@@ -18,7 +18,7 @@ import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
-const SUMMARY_CACHE_PREFIX = 'home_summary_v1';
+const SUMMARY_CACHE_PREFIX = 'home_summary_v2';
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v1';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 const HOME_PLAN_DAYS = 7;
@@ -513,6 +513,44 @@ const getReviewStatusText = (item) => {
   return 'Not completed';
 };
 
+const getCanvasRewardSourceIdFromItem = (item) => {
+  const safeItem = item || {};
+  if (safeItem.rewardSourceId) {
+    return String(safeItem.rewardSourceId);
+  }
+  if (!safeItem.courseId || !safeItem.assignmentId) {
+    return '';
+  }
+  return 'canvas:' + String(safeItem.courseId) + ':' + String(safeItem.assignmentId);
+};
+
+const getCanvasRewardButtonText = (item, isClaiming) => {
+  const safeItem = item || {};
+  if (isClaiming) {
+    return '...';
+  }
+  if (safeItem.rewardAlreadyClaimed) {
+    return 'Rewarded';
+  }
+  if (safeItem.rewardDailyCapReached) {
+    return 'Daily limit reached';
+  }
+  return 'Claim +10';
+};
+
+const getCanvasRewardReasonMessage = (reason) => {
+  if (reason === 'not_submitted') {
+    return 'This Canvas assignment is not submitted yet.';
+  }
+  if (reason === 'daily_cap_reached') {
+    return 'Today\'s Canvas reward limit is already reached.';
+  }
+  if (reason === 'already_rewarded') {
+    return 'This Canvas task was already rewarded.';
+  }
+  return 'Failed to claim Canvas reward';
+};
+
 const getReviewSummaryText = (summary, items) => {
   const safeSummary = summary || {};
   let totalCount = 0;
@@ -801,6 +839,7 @@ export default function HomeScreen() {
   const [homePlanError, setHomePlanError] = React.useState(null);
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
   const [homeCanvasConnected, setHomeCanvasConnected] = React.useState(false);
+  const [canvasRewardClaimingId, setCanvasRewardClaimingId] = React.useState('');
   const [expandedReviewSections, setExpandedReviewSections] = React.useState(() =>
     createInitialReviewExpandedState()
   );
@@ -848,7 +887,7 @@ export default function HomeScreen() {
   const applySummaryData = React.useCallback((data = {}) => {
     const safeData = data || {};
     const nextTotal = Number(safeData.totalDays) || 0;
-    let nextStreak = nextTotal;
+    let nextStreak = 0;
     if (safeData.streakDays !== undefined) {
       nextStreak = Number(safeData.streakDays) || 0;
     }
@@ -1400,6 +1439,129 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const claimCanvasTaskReward = React.useCallback(async (item) => {
+    const safeItem = item || {};
+    const rewardSourceId = getCanvasRewardSourceIdFromItem(safeItem);
+    if (!rewardSourceId) {
+      return;
+    }
+
+    try {
+      setCanvasRewardClaimingId(rewardSourceId);
+
+      if (!API_BASE_URL) {
+        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your backend URL and restart Expo.');
+      }
+
+      const token = await getSessionToken();
+      if (!token) {
+        throw new Error('No session token');
+      }
+
+      const response = await fetchWithTimeout(
+        API_BASE_URL + '/task-rewards/canvas/claim',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            courseId: String(safeItem.courseId || ''),
+            assignmentId: String(safeItem.assignmentId || ''),
+          }),
+        },
+        25000,
+      );
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to claim Canvas reward'));
+      }
+
+      const rewardResult = data.rewardResult || {};
+      setRecentPlanItems((prev) => {
+        if (!Array.isArray(prev)) {
+          return [];
+        }
+
+        return prev.map((currentItem) => {
+          const safeCurrentItem = currentItem || {};
+          const currentSourceId = getCanvasRewardSourceIdFromItem(safeCurrentItem);
+          if (!currentSourceId) {
+            return safeCurrentItem;
+          }
+
+          if (rewardResult.granted) {
+            if (currentSourceId === rewardSourceId) {
+              return {
+                ...safeCurrentItem,
+                rewardAlreadyClaimed: true,
+                rewardDailyCapReached: false,
+              };
+            }
+            if (safeCurrentItem.rewardEligible && !safeCurrentItem.rewardAlreadyClaimed) {
+              return {
+                ...safeCurrentItem,
+                rewardDailyCapReached: true,
+              };
+            }
+            return safeCurrentItem;
+          }
+
+          if (rewardResult.reason === 'already_rewarded' && currentSourceId === rewardSourceId) {
+            return {
+              ...safeCurrentItem,
+              rewardAlreadyClaimed: true,
+              rewardDailyCapReached: false,
+            };
+          }
+
+          if (rewardResult.reason === 'daily_cap_reached') {
+            if (safeCurrentItem.rewardEligible && !safeCurrentItem.rewardAlreadyClaimed) {
+              return {
+                ...safeCurrentItem,
+                rewardDailyCapReached: true,
+              };
+            }
+            return safeCurrentItem;
+          }
+
+          if (rewardResult.reason === 'not_submitted' && currentSourceId === rewardSourceId) {
+            return {
+              ...safeCurrentItem,
+              rewardEligible: false,
+            };
+          }
+
+          return safeCurrentItem;
+        });
+      });
+
+      if (rewardResult.granted) {
+        if (Number.isFinite(Number(rewardResult.totalPoints))) {
+          setPoints(Number(rewardResult.totalPoints) || 0);
+        } else {
+          setPoints((prev) => prev + (Number(rewardResult.gainedPoints) || 0));
+        }
+        return;
+      }
+
+      if (
+        rewardResult.reason === 'already_rewarded' ||
+        rewardResult.reason === 'daily_cap_reached'
+      ) {
+        return;
+      }
+
+      Alert.alert('Claim failed', getCanvasRewardReasonMessage(rewardResult.reason));
+    } catch (error) {
+      Alert.alert('Claim failed', getErrorMessage(error, 'Failed to claim Canvas reward'));
+    } finally {
+      setCanvasRewardClaimingId('');
+    }
+  }, [fetchWithTimeout, getSessionToken]);
+
   let lastingDaysValueNode = <ActivityIndicator color={theme.primary} />;
   if (summaryReady) {
     let loadingIndicatorNode = null;
@@ -1846,6 +2008,14 @@ export default function HomeScreen() {
 
                   {isExpanded ? section.items.map((item) => {
                     const safeItem = item || {};
+                    const rewardSourceId = getCanvasRewardSourceIdFromItem(safeItem);
+                    const isCanvasRewardItem = Boolean(
+                      safeItem.source === 'canvas' &&
+                      safeItem.isCompleted &&
+                      rewardSourceId &&
+                      safeItem.rewardEligible,
+                    );
+                    const isCanvasRewardClaiming = canvasRewardClaimingId === rewardSourceId;
                     let Row = View;
                     if (safeItem.htmlUrl) {
                       Row = Pressable;
@@ -1904,9 +2074,57 @@ export default function HomeScreen() {
                           <Text style={[styles.todoMetaStrong, { color: theme.textSecondary }]}>
                             {formatPlanDateTime(safeItem)}
                           </Text>
-                          {safeItem.htmlUrl ? (
-                            <View style={[styles.todoActionChip, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
-                              <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open task</Text>
+                          {safeItem.htmlUrl || isCanvasRewardItem ? (
+                            <View style={styles.todoActionRow}>
+                              {safeItem.htmlUrl ? (
+                                <View style={[styles.todoActionChip, { backgroundColor: theme.surface, borderColor: theme.borderSoft }]}>
+                                  <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open task</Text>
+                                </View>
+                              ) : null}
+                              {isCanvasRewardItem ? (
+                                <Pressable
+                                  onPress={(event) => {
+                                    if (event && typeof event.stopPropagation === 'function') {
+                                      event.stopPropagation();
+                                    }
+                                    claimCanvasTaskReward(safeItem);
+                                  }}
+                                  disabled={
+                                    isCanvasRewardClaiming ||
+                                    safeItem.rewardAlreadyClaimed ||
+                                    safeItem.rewardDailyCapReached
+                                  }
+                                  style={({ pressed }) => [
+                                    styles.todoActionChip,
+                                    styles.todoRewardChip,
+                                    {
+                                      backgroundColor: theme.surface,
+                                      borderColor: theme.borderSoft,
+                                    },
+                                    getStyleWhen(
+                                      safeItem.rewardAlreadyClaimed || safeItem.rewardDailyCapReached,
+                                      styles.todoRewardChipDisabled,
+                                    ),
+                                    getStyleWhen(pressed, { opacity: 0.82 }),
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.todoLinkHint,
+                                      getStyleWhen(
+                                        safeItem.rewardAlreadyClaimed || safeItem.rewardDailyCapReached,
+                                        styles.todoRewardTextMuted,
+                                      ),
+                                      getStyleWhen(
+                                        !(safeItem.rewardAlreadyClaimed || safeItem.rewardDailyCapReached),
+                                        { color: linkHintColor },
+                                      ),
+                                    ]}
+                                  >
+                                    {getCanvasRewardButtonText(safeItem, isCanvasRewardClaiming)}
+                                  </Text>
+                                </Pressable>
+                              ) : null}
                             </View>
                           ) : null}
                         </View>
@@ -2149,15 +2367,29 @@ const styles = StyleSheet.create({
   todoTaskTitle: { marginTop: 6, fontSize: 15, fontWeight: '800', color: '#111827' },
   todoMeta: { marginTop: 4, fontSize: 12, color: '#9ca3af' },
   todoMetaStrong: { marginTop: 4, fontSize: 12, fontWeight: '700', color: '#374151' },
+  todoActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
   todoActionChip: {
     alignSelf: 'flex-start',
-    marginTop: 10,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
     borderWidth: 1,
   },
+  todoRewardChip: {
+    minWidth: 94,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  todoRewardChipDisabled: {
+    opacity: 0.72,
+  },
   todoLinkHint: { fontSize: 11, fontWeight: '800', color: '#2563eb' },
+  todoRewardTextMuted: { color: '#6b7280' },
   todoEmpty: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   todoWarning: { fontSize: 12, color: '#b45309', marginBottom: 4 },
   todoError: { fontSize: 12, color: '#b91c1c', marginBottom: 4 },
