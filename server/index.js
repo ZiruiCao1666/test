@@ -1150,6 +1150,7 @@ function mapCanvasEventToPlanItem(item, index, options = {}) {
       safeItem.html_url || plannable.html_url || assignment.html_url || '',
     ),
     isCompleted: completed,
+    grade: '',
     score: null,
     pointsPossible: null,
     submittedAt: '',
@@ -1284,6 +1285,7 @@ async function enrichPlanItemsWithSubmissionDetails(baseUrl, token, items) {
 
     return {
       ...safeItem,
+      grade: detail.grade ? String(detail.grade) : '',
       score,
       pointsPossible,
       submittedAt: detail.submitted_at ? String(detail.submitted_at) : '',

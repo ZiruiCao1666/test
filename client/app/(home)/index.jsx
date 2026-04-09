@@ -8,6 +8,7 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
@@ -549,6 +550,67 @@ const getCanvasRewardButtonText = (item, isClaiming) => {
   return 'Claim +10';
 };
 
+const canShowCanvasFeedback = (item) => {
+  const safeItem = item || {};
+  if (safeItem.source !== 'canvas' || !safeItem.isCompleted) {
+    return false;
+  }
+  if (safeItem.submittedAt) {
+    return true;
+  }
+  if (safeItem.grade) {
+    return true;
+  }
+  if (safeItem.score !== null && safeItem.score !== undefined) {
+    return true;
+  }
+  if (Array.isArray(safeItem.teacherComments) && safeItem.teacherComments.length > 0) {
+    return true;
+  }
+  return false;
+};
+
+const formatCanvasScoreText = (item) => {
+  const safeItem = item || {};
+  const score = safeItem.score;
+  const pointsPossible = safeItem.pointsPossible;
+  const grade = String(safeItem.grade || '').trim();
+
+  if (score !== null && score !== undefined) {
+    if (pointsPossible !== null && pointsPossible !== undefined) {
+      return String(score) + ' / ' + String(pointsPossible);
+    }
+    return String(score);
+  }
+  if (grade) {
+    return grade;
+  }
+  return 'Not graded yet';
+};
+
+const formatCanvasSubmittedAt = (value) => {
+  let safeValue = '';
+  if (value !== null && value !== undefined) {
+    safeValue = String(value).trim();
+  }
+  if (!safeValue) {
+    return 'Not submitted';
+  }
+
+  const parsed = new Date(safeValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return safeValue;
+  }
+
+  return parsed.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
 const getCanvasRewardReasonMessage = (reason) => {
   if (reason === 'not_submitted') {
     return 'This Canvas assignment is not submitted yet.';
@@ -855,6 +917,7 @@ export default function HomeScreen() {
   const [canvasPlanWarning, setCanvasPlanWarning] = React.useState('');
   const [homeCanvasConnected, setHomeCanvasConnected] = React.useState(false);
   const [canvasRewardClaimingId, setCanvasRewardClaimingId] = React.useState('');
+  const [selectedCanvasFeedbackItem, setSelectedCanvasFeedbackItem] = React.useState(null);
   const [expandedReviewSections, setExpandedReviewSections] = React.useState(() =>
     createInitialReviewExpandedState()
   );
@@ -862,6 +925,8 @@ export default function HomeScreen() {
   const summaryRetryRef = React.useRef(0);
   const getTokenRef = React.useRef(getToken);
   const homePlanLoadedAtRef = React.useRef(0);
+  const scrollViewRef = React.useRef(null);
+  const upcomingTasksYRef = React.useRef(0);
 
   React.useEffect(() => {
     getTokenRef.current = getToken;
@@ -1480,6 +1545,24 @@ export default function HomeScreen() {
     });
   }, []);
 
+  const openCanvasFeedback = React.useCallback((item) => {
+    setSelectedCanvasFeedbackItem(item || null);
+  }, []);
+
+  const closeCanvasFeedback = React.useCallback(() => {
+    setSelectedCanvasFeedbackItem(null);
+  }, []);
+
+  const jumpToUpcomingTasks = React.useCallback(() => {
+    if (dueTodayCount <= 0) {
+      return;
+    }
+    const scrollTarget = Math.max(0, upcomingTasksYRef.current - 12);
+    if (scrollViewRef.current && typeof scrollViewRef.current.scrollTo === 'function') {
+      scrollViewRef.current.scrollTo({ y: scrollTarget, animated: true });
+    }
+  }, [dueTodayCount]);
+
   const claimCanvasTaskReward = React.useCallback(async (item) => {
     const safeItem = item || {};
     const rewardSourceId = getCanvasRewardSourceIdFromItem(safeItem);
@@ -1704,6 +1787,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior="always"
@@ -1731,9 +1815,18 @@ export default function HomeScreen() {
               )}
             </View>
           </View>
-          <View style={[styles.heroBadge, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
+          <Pressable
+            onPress={jumpToUpcomingTasks}
+            disabled={dueTodayCount <= 0}
+            style={({ pressed }) => [
+              styles.heroBadge,
+              { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+              getStyleWhen(dueTodayCount <= 0, { opacity: 1 }),
+              getStyleWhen(dueTodayCount > 0 && pressed, { opacity: 0.82 }),
+            ]}
+          >
             <Text style={[styles.heroBadgeText, { color: theme.primary }]}>{heroBadgeText}</Text>
-          </View>
+          </Pressable>
           <Text style={[styles.greeting, { color: theme.textPrimary }]}>
             hi <Text style={styles.greetingBold}>{username}</Text>, how are you today?
           </Text>
@@ -1855,6 +1948,12 @@ export default function HomeScreen() {
         />
 
         <View
+          onLayout={(event) => {
+            const nextY = event && event.nativeEvent && event.nativeEvent.layout
+              ? event.nativeEvent.layout.y
+              : 0;
+            upcomingTasksYRef.current = nextY;
+          }}
           style={[
             styles.todoCard,
             {
@@ -2063,6 +2162,7 @@ export default function HomeScreen() {
                       rewardSourceId &&
                       safeItem.rewardEligible,
                     );
+                    const canViewCanvasFeedback = canShowCanvasFeedback(safeItem);
                     const isCanvasRewardClaiming = canvasRewardClaimingId === rewardSourceId;
                     let Row = View;
                     if (safeItem.htmlUrl) {
@@ -2173,6 +2273,28 @@ export default function HomeScreen() {
                                   </Text>
                                 </Pressable>
                               ) : null}
+                              {canViewCanvasFeedback ? (
+                                <Pressable
+                                  onPress={(event) => {
+                                    if (event && typeof event.stopPropagation === 'function') {
+                                      event.stopPropagation();
+                                    }
+                                    openCanvasFeedback(safeItem);
+                                  }}
+                                  style={({ pressed }) => [
+                                    styles.todoActionChip,
+                                    {
+                                      backgroundColor: theme.surface,
+                                      borderColor: theme.borderSoft,
+                                    },
+                                    getStyleWhen(pressed, { opacity: 0.82 }),
+                                  ]}
+                                >
+                                  <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>
+                                    View feedback
+                                  </Text>
+                                </Pressable>
+                              ) : null}
                             </View>
                           ) : null}
                         </View>
@@ -2187,6 +2309,133 @@ export default function HomeScreen() {
 
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      <Modal
+        visible={Boolean(selectedCanvasFeedbackItem)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeCanvasFeedback}
+      >
+        <Pressable style={styles.feedbackOverlay} onPress={closeCanvasFeedback}>
+          <Pressable
+            onPress={() => {}}
+            style={[
+              styles.feedbackCard,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <Text style={[styles.feedbackEyebrow, { color: theme.textMuted }]}>
+              Canvas feedback
+            </Text>
+            <Text style={[styles.feedbackTitle, { color: theme.textPrimary }]}>
+              {selectedCanvasFeedbackItem ? selectedCanvasFeedbackItem.title || 'Untitled task' : ''}
+            </Text>
+            <Text style={[styles.feedbackMeta, { color: theme.textSecondary }]}>
+              {selectedCanvasFeedbackItem ? getPlanDetail(selectedCanvasFeedbackItem) : ''}
+            </Text>
+
+            <View style={styles.feedbackStatsRow}>
+              <View
+                style={[
+                  styles.feedbackStatCard,
+                  { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                ]}
+              >
+                <Text style={[styles.feedbackStatLabel, { color: theme.textMuted }]}>Score</Text>
+                <Text style={[styles.feedbackStatValue, { color: theme.textPrimary }]}>
+                  {formatCanvasScoreText(selectedCanvasFeedbackItem)}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.feedbackStatCard,
+                  { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                ]}
+              >
+                <Text style={[styles.feedbackStatLabel, { color: theme.textMuted }]}>Submitted</Text>
+                <Text style={[styles.feedbackStatValueSmall, { color: theme.textPrimary }]}>
+                  {formatCanvasSubmittedAt(
+                    selectedCanvasFeedbackItem ? selectedCanvasFeedbackItem.submittedAt : ''
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[styles.feedbackSectionTitle, { color: theme.textPrimary }]}>
+              Teacher comments
+            </Text>
+
+            {selectedCanvasFeedbackItem &&
+            Array.isArray(selectedCanvasFeedbackItem.teacherComments) &&
+            selectedCanvasFeedbackItem.teacherComments.length > 0 ? (
+              <ScrollView style={styles.feedbackCommentsWrap} showsVerticalScrollIndicator={false}>
+                {selectedCanvasFeedbackItem.teacherComments.map((comment) => {
+                  const safeComment = comment || {};
+                  return (
+                    <View
+                      key={safeComment.id || safeComment.comment}
+                      style={[
+                        styles.feedbackCommentCard,
+                        { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
+                      ]}
+                    >
+                      <Text style={[styles.feedbackCommentAuthor, { color: theme.textPrimary }]}>
+                        {safeComment.authorName || 'Teacher'}
+                      </Text>
+                      <Text style={[styles.feedbackCommentText, { color: theme.textSecondary }]}>
+                        {safeComment.comment || ''}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <Text style={[styles.feedbackEmpty, { color: theme.textSecondary }]}>
+                No teacher comments yet.
+              </Text>
+            )}
+
+            <View style={styles.feedbackActionsRow}>
+              {selectedCanvasFeedbackItem && selectedCanvasFeedbackItem.htmlUrl ? (
+                <Pressable
+                  onPress={() => {
+                    const currentItem = selectedCanvasFeedbackItem;
+                    closeCanvasFeedback();
+                    openPlanItem(currentItem);
+                  }}
+                  style={({ pressed }) => [
+                    styles.todoActionChip,
+                    {
+                      backgroundColor: theme.surfaceMuted,
+                      borderColor: theme.borderSoft,
+                    },
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                  ]}
+                >
+                  <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Open task</Text>
+                </Pressable>
+              ) : null}
+
+              <Pressable
+                onPress={closeCanvasFeedback}
+                style={({ pressed }) => [
+                  styles.todoActionChip,
+                  {
+                    backgroundColor: theme.surfaceMuted,
+                    borderColor: theme.borderSoft,
+                  },
+                  getStyleWhen(pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={[styles.todoLinkHint, { color: linkHintColor }]}>Close</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -2492,5 +2741,94 @@ const styles = StyleSheet.create({
   progressCaption: {
     fontSize: 12,
     lineHeight: 18,
+  },
+  feedbackOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 32,
+  },
+  feedbackCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 18,
+    maxHeight: '80%',
+  },
+  feedbackEyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    marginBottom: 8,
+  },
+  feedbackTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+  feedbackMeta: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  feedbackStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  feedbackStatCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 12,
+  },
+  feedbackStatLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  feedbackStatValue: {
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  feedbackStatValueSmall: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  feedbackSectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  feedbackCommentsWrap: {
+    maxHeight: 220,
+  },
+  feedbackCommentCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 10,
+  },
+  feedbackCommentAuthor: {
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  feedbackCommentText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  feedbackEmpty: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  feedbackActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+    marginTop: 8,
   },
 });
