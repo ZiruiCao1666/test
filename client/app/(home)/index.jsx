@@ -9,13 +9,16 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
-import { API_BASE_URL, apiGet, apiPost } from '../../lib/api';
+import { API_BASE_URL, apiGet, apiPost, apiPut } from '../../lib/api';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 import SevenDayDrawCard from '../../components/SevenDayDrawCard';
@@ -27,6 +30,12 @@ const HOME_REVIEW_DAYS = 365;
 const HOME_PLAN_CACHE_TTL_MS = 60 * 1000;
 const HOME_PLAN_DEFER_MS = 400;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const CHECKIN_NOTE_MAX_LENGTH = 200;
+const CHECKIN_NOTE_TEMPLATES = [
+  'Start with the hardest task',
+  'Submit on time today',
+  'Stay consistent today',
+];
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REVIEW_RANGE_OPTIONS = [
@@ -663,6 +672,40 @@ const filterReviewItemsByDays = (items, days) => {
   });
 };
 
+const sortReviewItemsForDisplay = (items) => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const safeItems = items.slice();
+  safeItems.sort((left, right) => {
+    const safeLeft = left || {};
+    const safeRight = right || {};
+
+    const leftIsCompletedCanvas = safeLeft.source === 'canvas' && safeLeft.isCompleted;
+    const rightIsCompletedCanvas = safeRight.source === 'canvas' && safeRight.isCompleted;
+    if (leftIsCompletedCanvas !== rightIsCompletedCanvas) {
+      return leftIsCompletedCanvas ? -1 : 1;
+    }
+
+    const leftTimestamp = getItemTimestamp(safeLeft);
+    const rightTimestamp = getItemTimestamp(safeRight);
+    if (leftTimestamp !== rightTimestamp) {
+      if (leftTimestamp === null) {
+        return 1;
+      }
+      if (rightTimestamp === null) {
+        return -1;
+      }
+      return rightTimestamp - leftTimestamp;
+    }
+
+    return String(safeLeft.title || '').localeCompare(String(safeRight.title || ''));
+  });
+
+  return safeItems;
+};
+
 const buildReviewSummary = (items) => {
   let completedCount = 0;
   let totalCount = 0;
@@ -894,6 +937,15 @@ export default function HomeScreen() {
   const [summaryError, setSummaryError] = React.useState(null);
   const [checkingIn, setCheckingIn] = React.useState(false);
   const [summaryReady, setSummaryReady] = React.useState(false);
+  const [todayNote, setTodayNote] = React.useState('');
+  const [noteDraft, setNoteDraft] = React.useState('');
+  const [savingTodayNote, setSavingTodayNote] = React.useState(false);
+  const [todayNoteError, setTodayNoteError] = React.useState('');
+  const [todayNoteNotice, setTodayNoteNotice] = React.useState('');
+  const [noteModalVisible, setNoteModalVisible] = React.useState(false);
+  const [noteModalTitle, setNoteModalTitle] = React.useState('Note for tomorrow');
+  const [noteModalSubtitle, setNoteModalSubtitle] = React.useState('Write a note for tomorrow.');
+  const [yesterdayNote, setYesterdayNote] = React.useState('');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
   const [weeklyProgressSummary, setWeeklyProgressSummary] = React.useState({
@@ -949,10 +1001,14 @@ export default function HomeScreen() {
       nextStreak = Number(safeData.streakDays) || 0;
     }
 
+    const nextTodayNote = String(safeData.todayNote || '');
+
     setTotalSignedDays(nextTotal);
     setStreakDays(nextStreak);
     setCheckedInToday(Boolean(safeData.checkedInToday));
     setPoints(Number(safeData.points) || 0);
+    setTodayNote(nextTodayNote);
+    setNoteDraft(nextTodayNote);
     setSummaryReady(true);
   }, []);
 
@@ -968,6 +1024,7 @@ export default function HomeScreen() {
         streakDays: undefined,
         checkedInToday: Boolean(safeData.checkedInToday),
         points: Number(safeData.points) || 0,
+        todayNote: String(safeData.todayNote || ''),
         updatedAt: Date.now(),
       };
       if (safeData.streakDays !== undefined) {
@@ -1418,6 +1475,16 @@ export default function HomeScreen() {
       return;
     }
 
+    if (checkedInToday) {
+      setTodayNoteError('');
+      setTodayNoteNotice('');
+      setNoteDraft(todayNote);
+      setNoteModalTitle('Note for tomorrow');
+      setNoteModalSubtitle('You can update today\'s note any time.');
+      setNoteModalVisible(true);
+      return;
+    }
+
     try {
       setCheckingIn(true);
 
@@ -1438,22 +1505,89 @@ export default function HomeScreen() {
       });
 
       setSummaryError(null);
+      setTodayNoteError('');
       applySummaryData(data);
       persistSummaryToCache(data);
+
+      setYesterdayNote(String(data.yesterdayNote || ''));
+      setNoteDraft(String(data.todayNote || ''));
+      setTodayNoteNotice('');
+      setNoteModalTitle('Checked in today');
+      setNoteModalSubtitle(getCheckInAlertText(
+        Number(data.gainedPoints) || 0,
+        Boolean(data.awardedMakeupCard),
+        Boolean(data.awardedMilestoneDraw),
+      ));
+      setNoteModalVisible(true);
 
       const gained = Number(data.gainedPoints) || 0;
       const awardedMakeupCard = Boolean(data.awardedMakeupCard);
       const awardedMilestoneDraw = Boolean(data.awardedMilestoneDraw);
-      Alert.alert(
-        'Check-in',
-        getCheckInAlertText(gained, awardedMakeupCard, awardedMilestoneDraw),
-      );
     } catch (e) {
       Alert.alert('Error', getErrorMessage(e, 'Something went wrong'));
     } finally {
       setCheckingIn(false);
     }
   };
+
+  const saveTodayNote = async () => {
+    if (savingTodayNote) {
+      return;
+    }
+
+    try {
+      setSavingTodayNote(true);
+      setTodayNoteError('');
+      setTodayNoteNotice('');
+
+      if (!API_BASE_URL) {
+        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
+      }
+
+      if (!authLoaded || !isSignedIn) {
+        throw new Error('Not signed in');
+      }
+
+      if (!checkedInToday) {
+        throw new Error('Check in today before saving a note.');
+      }
+
+      const token = await getSessionToken();
+      if (!token) {
+        throw new Error('No session token');
+      }
+
+      const data = await apiPut('/checkins/today-note', token, { note: noteDraft }, {
+        fallbackMessage: 'Failed to save tomorrow note',
+      });
+
+      const nextTodayNote = String(data.todayNote || '');
+      setTodayNote(nextTodayNote);
+      setNoteDraft(nextTodayNote);
+      setTodayNoteNotice(nextTodayNote ? 'Tomorrow note saved.' : 'Tomorrow note cleared.');
+
+      persistSummaryToCache({
+        totalDays: totalSignedDays,
+        streakDays,
+        checkedInToday,
+        points,
+        todayNote: nextTodayNote,
+      });
+
+      setNoteModalVisible(false);
+    } catch (error) {
+      setTodayNoteError(getErrorMessage(error, 'Failed to save tomorrow note'));
+    } finally {
+      setSavingTodayNote(false);
+    }
+  };
+
+  const closeTodayNoteModal = React.useCallback(() => {
+    setNoteModalVisible(false);
+    setTodayNoteError('');
+    setTodayNoteNotice('');
+    setNoteDraft(todayNote);
+  }, [todayNote]);
 
   const lastingDays = Math.max(0, Number(streakDays) || 0);
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
@@ -1472,7 +1606,9 @@ export default function HomeScreen() {
   const weeklyProgressHintText = getWeeklyProgressHintText(weeklyCompletedCount, weeklyTotalCount);
   const reviewSections = React.useMemo(() => {
     return REVIEW_RANGE_OPTIONS.map((range) => {
-      const items = filterReviewItemsByDays(recentPlanItems, range.days);
+      const items = sortReviewItemsForDisplay(
+        filterReviewItemsByDays(recentPlanItems, range.days)
+      );
       const summary = buildReviewSummary(items);
       return {
         key: range.key,
@@ -1737,6 +1873,22 @@ export default function HomeScreen() {
     checkInStatusText = 'Today - checked in';
   }
 
+  const hasTodayNoteChanges = noteDraft.trim() !== todayNote.trim();
+
+  let todayNoteErrorNode = null;
+  if (todayNoteError) {
+    todayNoteErrorNode = (
+      <Text style={[styles.checkInNoteStatus, { color: errorColor }]}>{todayNoteError}</Text>
+    );
+  }
+
+  let todayNoteNoticeNode = null;
+  if (todayNoteNotice) {
+    todayNoteNoticeNode = (
+      <Text style={[styles.checkInNoteStatus, { color: theme.primary }]}>{todayNoteNotice}</Text>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView
@@ -1834,7 +1986,7 @@ export default function HomeScreen() {
           <View style={styles.centerBlock}>
             <Pressable
               onPress={onCheckIn}
-              disabled={checkingIn || checkedInToday}
+              disabled={checkingIn}
               style={({ pressed }) => [
                 styles.circle,
                 {
@@ -1843,7 +1995,7 @@ export default function HomeScreen() {
                   borderWidth: 1,
                   shadowColor: isDarkTheme ? '#000000' : '#D9C7AC',
                 },
-                getStyleWhen((checkingIn || checkedInToday), { opacity: 0.6 }),
+                getStyleWhen(checkingIn, { opacity: 0.6 }),
                 getStyleWhen(pressed, { opacity: 0.85, transform: [{ scale: 0.99 }] }),
               ]}
             >
@@ -2264,6 +2416,156 @@ export default function HomeScreen() {
       </ScrollView>
 
       <Modal
+        visible={noteModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeTodayNoteModal}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={12}
+          style={styles.noteModalKeyboardWrap}
+        >
+          <Pressable style={styles.noteModalOverlay} onPress={closeTodayNoteModal}>
+            <Pressable
+              onPress={() => {}}
+              style={[
+                styles.noteModalCard,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.border,
+                },
+              ]}
+            >
+              <Text style={[styles.noteModalTitle, { color: theme.textPrimary }]}>
+                {noteModalTitle}
+              </Text>
+              <Text style={[styles.noteModalSubtitle, { color: theme.textSecondary }]}>
+                {noteModalSubtitle}
+              </Text>
+
+              {yesterdayNote ? (
+                <View
+                  style={[
+                    styles.noteModalPreviousCard,
+                    {
+                      backgroundColor: theme.surfaceMuted,
+                      borderColor: theme.borderSoft,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.noteModalPreviousLabel, { color: theme.textMuted }]}>
+                    Yesterday you said
+                  </Text>
+                  <Text style={[styles.noteModalPreviousText, { color: theme.textPrimary }]}>
+                    {yesterdayNote}
+                  </Text>
+                </View>
+              ) : null}
+
+              <Text style={[styles.checkInNoteTitle, { color: theme.textPrimary }]}>
+                Write a note for tomorrow
+              </Text>
+              <TextInput
+                value={noteDraft}
+                onChangeText={(value) => {
+                  setNoteDraft(value);
+                  if (todayNoteError) {
+                    setTodayNoteError('');
+                  }
+                  if (todayNoteNotice) {
+                    setTodayNoteNotice('');
+                  }
+                }}
+                placeholder="Write tomorrow's reminder here"
+                placeholderTextColor={theme.textMuted}
+                multiline
+                maxLength={CHECKIN_NOTE_MAX_LENGTH}
+                textAlignVertical="top"
+                style={[
+                  styles.checkInNoteInput,
+                  { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft, color: theme.textPrimary },
+                ]}
+              />
+
+              <View style={styles.noteTemplateRow}>
+                {CHECKIN_NOTE_TEMPLATES.map((template) => (
+                  <Pressable
+                    key={template}
+                    onPress={() => {
+                      setNoteDraft(template);
+                      if (todayNoteError) {
+                        setTodayNoteError('');
+                      }
+                      if (todayNoteNotice) {
+                        setTodayNoteNotice('');
+                      }
+                    }}
+                    style={({ pressed }) => [
+                      styles.noteTemplateChip,
+                      {
+                        backgroundColor: theme.surfaceMuted,
+                        borderColor: theme.borderSoft,
+                      },
+                      getStyleWhen(pressed, { opacity: 0.82 }),
+                    ]}
+                  >
+                    <Text style={[styles.noteTemplateChipText, { color: theme.primary }]}>
+                      {template}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <View style={styles.checkInNoteFooterRow}>
+                <Text style={[styles.checkInNoteCount, { color: theme.textMuted }]}>
+                  {String(noteDraft.length)}/{String(CHECKIN_NOTE_MAX_LENGTH)}
+                </Text>
+              </View>
+              {todayNoteErrorNode}
+              {todayNoteNoticeNode}
+
+              <View style={styles.noteModalActionsRow}>
+                <Pressable
+                  onPress={closeTodayNoteModal}
+                  style={({ pressed }) => [
+                    styles.noteModalSecondaryButton,
+                    {
+                      backgroundColor: theme.surfaceMuted,
+                      borderColor: theme.borderSoft,
+                    },
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                  ]}
+                >
+                  <Text style={[styles.noteModalSecondaryButtonText, { color: theme.textPrimary }]}>
+                    Close
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={saveTodayNote}
+                  disabled={savingTodayNote || !hasTodayNoteChanges}
+                  style={({ pressed }) => [
+                    styles.noteModalPrimaryButton,
+                    { backgroundColor: theme.primary },
+                    getStyleWhen(savingTodayNote || !hasTodayNoteChanges, { opacity: 0.55 }),
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                  ]}
+                >
+                  {savingTodayNote ? (
+                    <ActivityIndicator color={theme.primaryText} size="small" />
+                  ) : (
+                    <Text style={[styles.noteModalPrimaryButtonText, { color: theme.primaryText }]}>
+                      Save for tomorrow
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
         visible={Boolean(selectedCanvasFeedbackItem)}
         transparent
         animationType="fade"
@@ -2520,6 +2822,138 @@ const styles = StyleSheet.create({
   infoRow: { marginTop: 18, width: '100%', alignItems: 'flex-start' },
   infoTitle: { fontSize: 16, fontWeight: '800', color: '#111827', textAlign: 'center' },
   infoSub: { marginTop: 6, fontSize: 13, fontWeight: '600', color: '#111827' },
+  noteModalKeyboardWrap: {
+    flex: 1,
+  },
+  noteModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    paddingTop: 88,
+    paddingHorizontal: 18,
+    paddingBottom: 24,
+    backgroundColor: 'rgba(15, 23, 42, 0.24)',
+  },
+  noteModalCard: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: 28,
+    paddingHorizontal: 18,
+    paddingTop: 20,
+    paddingBottom: 18,
+  },
+  noteModalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  noteModalSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  noteModalPreviousCard: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  noteModalPreviousLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  noteModalPreviousText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  checkInNoteTitle: {
+    marginTop: 18,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  checkInNoteHint: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  checkInNoteInput: {
+    marginTop: 12,
+    minHeight: 96,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  noteTemplateRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  noteTemplateChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  noteTemplateChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  checkInNoteFooterRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  checkInNoteCount: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  noteModalActionsRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  noteModalSecondaryButton: {
+    minWidth: 96,
+    minHeight: 42,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noteModalSecondaryButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  noteModalPrimaryButton: {
+    minWidth: 154,
+    minHeight: 42,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noteModalPrimaryButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  checkInNoteStatus: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+  },
   progressLine: {
     marginTop: 12,
     height: 8,
