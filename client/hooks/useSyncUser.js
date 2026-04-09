@@ -11,11 +11,6 @@ function getErrorMessage(error, fallbackMessage) {
 
 export default function useSyncUser() {
   const { getToken } = useAuth();
-  const getTokenRef = React.useRef(getToken);
-
-  React.useEffect(() => {
-    getTokenRef.current = getToken;
-  }, [getToken]);
 
   return React.useCallback(async () => {
     try {
@@ -23,12 +18,7 @@ export default function useSyncUser() {
         throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
       }
 
-      const tokenGetter = getTokenRef.current;
-      let token = '';
-      if (typeof tokenGetter === 'function') {
-        token = await tokenGetter();
-      }
-
+      const token = typeof getToken === 'function' ? await getToken() : '';
       if (!token) {
         return;
       }
@@ -37,5 +27,5 @@ export default function useSyncUser() {
     } catch (error) {
       console.log('[FE] sync error:', getErrorMessage(error, 'sync failed'));
     }
-  }, []);
+  }, [getToken]);
 }

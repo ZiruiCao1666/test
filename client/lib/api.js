@@ -1,11 +1,5 @@
-const normalizeBaseUrl = (value) => {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  return value.trim().replace(/\/+$/, '');
-};
-
-export const API_BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL);
+const rawBaseUrl = process.env.EXPO_PUBLIC_API_URL || '';
+export const API_BASE_URL = rawBaseUrl.trim().replace(/\/+$/, '');
 
 export class ApiRequestError extends Error {
   constructor(message, options = {}) {
@@ -53,20 +47,14 @@ export function getApiErrorMessage(data, fallbackMessage) {
   return fallbackMessage;
 }
 
-const hasHeader = (headers, headerName) => {
-  const normalizedHeaderName = headerName.toLowerCase();
-  return Object.keys(headers).some((key) => key.toLowerCase() === normalizedHeaderName);
-};
-
-const buildApiUrl = (path, baseUrl = API_BASE_URL) => {
-  const safeBaseUrl = normalizeBaseUrl(baseUrl);
-  if (!safeBaseUrl) {
+function buildApiUrl(path) {
+  if (!API_BASE_URL) {
     throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
   }
 
-  const safePath = typeof path === 'string' ? path.trim() : '';
-  if (!safePath) {
-    return safeBaseUrl;
+  const safePath = String(path || '').trim();
+  if (safePath === '') {
+    return API_BASE_URL;
   }
 
   if (/^https?:\/\//i.test(safePath)) {
@@ -74,13 +62,13 @@ const buildApiUrl = (path, baseUrl = API_BASE_URL) => {
   }
 
   if (safePath.startsWith('/')) {
-    return safeBaseUrl + safePath;
+    return API_BASE_URL + safePath;
   }
 
-  return safeBaseUrl + '/' + safePath;
-};
+  return API_BASE_URL + '/' + safePath;
+}
 
-const resolveFallbackMessage = (fallbackMessage, status) => {
+function getFallbackMessage(fallbackMessage, status) {
   if (typeof fallbackMessage === 'function') {
     return fallbackMessage(status);
   }
@@ -90,39 +78,29 @@ const resolveFallbackMessage = (fallbackMessage, status) => {
   }
 
   return 'Request failed (HTTP ' + String(status) + ')';
-};
+}
 
 async function apiRequest(path, token, options = {}) {
-  const {
-    method = 'GET',
-    body,
-    headers = {},
-    timeoutMs = 20000,
-    baseUrl = API_BASE_URL,
-    fallbackMessage,
-  } = options;
+  const method = options.method || 'GET';
+  const body = options.body;
+  const fallbackMessage = options.fallbackMessage;
 
   const controller = new AbortController();
-  const requestHeaders = { ...headers };
-
-  if (token) {
-    requestHeaders.Authorization = 'Bearer ' + token;
+  const headers = {};
+  if (typeof token === 'string' && token.trim() !== '') {
+    headers.Authorization = 'Bearer ' + token;
   }
-
-  let requestBody;
   if (body !== undefined) {
-    if (!hasHeader(requestHeaders, 'Content-Type')) {
-      requestHeaders['Content-Type'] = 'application/json';
-    }
-    requestBody = JSON.stringify(body);
+    headers['Content-Type'] = 'application/json';
   }
+  const requestBody = body === undefined ? undefined : JSON.stringify(body);
 
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const response = await fetch(buildApiUrl(path, baseUrl), {
+    const response = await fetch(buildApiUrl(path), {
       method,
-      headers: requestHeaders,
+      headers,
       body: requestBody,
       signal: controller.signal,
     });
@@ -130,7 +108,7 @@ async function apiRequest(path, token, options = {}) {
 
     if (!response.ok) {
       throw new ApiRequestError(
-        getApiErrorMessage(data, resolveFallbackMessage(fallbackMessage, response.status)),
+        getApiErrorMessage(data, getFallbackMessage(fallbackMessage, response.status)),
         {
           status: response.status,
           data,
