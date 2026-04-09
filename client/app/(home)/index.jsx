@@ -15,11 +15,10 @@ import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
+import { API_BASE_URL, apiGet, apiPost } from '../../lib/api';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 import SevenDayDrawCard from '../../components/SevenDayDrawCard';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUMMARY_CACHE_PREFIX = 'home_summary_v2';
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
@@ -75,17 +74,6 @@ const getErrorMessage = (error, fallback) => {
     if (typeof error.message === 'string') {
       if (error.message) {
         return error.message;
-      }
-    }
-  }
-  return fallback;
-};
-
-const getApiErrorMessage = (data, fallback) => {
-  if (data) {
-    if (typeof data.error === 'string') {
-      if (data.error) {
-        return data.error;
       }
     }
   }
@@ -932,17 +920,6 @@ export default function HomeScreen() {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 25000) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(id);
-    }
-  }, []);
-
   const summaryCacheKey = React.useMemo(() => {
     if (!userId) {
       return null;
@@ -1232,13 +1209,10 @@ export default function HomeScreen() {
         return;
       }
 
-      const statusUrl = API_BASE_URL + '/checkins/status';
-      const res = await fetchWithTimeout(statusUrl, {
-        headers: { Authorization: 'Bearer ' + token },
-      }, timeoutMs);
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load summary'));
+      const data = await apiGet('/checkins/status', token, {
+        timeoutMs,
+        fallbackMessage: 'Failed to load summary',
+      });
 
       applySummaryData(data);
       persistSummaryToCache(data);
@@ -1267,7 +1241,6 @@ export default function HomeScreen() {
       }
     }
   }, [
-    fetchWithTimeout,
     authLoaded,
     isSignedIn,
     userLoaded,
@@ -1300,21 +1273,14 @@ export default function HomeScreen() {
         return;
       }
 
-      const homePlanUrl =
-        API_BASE_URL +
-        '/home/plan?days=' +
-        String(HOME_PLAN_DAYS) +
-        '&recentDays=' +
-        String(HOME_REVIEW_DAYS);
-      const res = await fetchWithTimeout(
-        homePlanUrl,
+      const data = await apiGet(
+        '/home/plan?days=' + String(HOME_PLAN_DAYS) + '&recentDays=' + String(HOME_REVIEW_DAYS),
+        token,
         {
-          headers: { Authorization: 'Bearer ' + token },
-        },
-        timeoutMs
+          timeoutMs,
+          fallbackMessage: 'Failed to load seven-day plan',
+        }
       );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Failed to load seven-day plan'));
 
       let items = [];
       if (data) {
@@ -1365,7 +1331,6 @@ export default function HomeScreen() {
       }
     }
   }, [
-    fetchWithTimeout,
     authLoaded,
     isSignedIn,
     userLoaded,
@@ -1467,14 +1432,10 @@ export default function HomeScreen() {
       const token = await getSessionToken();
       if (!token) throw new Error('No session token');
 
-      const checkInUrl = API_BASE_URL + '/checkins/today';
-      const res = await fetch(checkInUrl, {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token },
+      const data = await apiPost('/checkins/today', token, undefined, {
+        timeoutMs: 25000,
+        fallbackMessage: 'Check-in failed',
       });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(getApiErrorMessage(data, 'Check-in failed'));
 
       setSummaryError(null);
       applySummaryData(data);
@@ -1582,26 +1543,18 @@ export default function HomeScreen() {
         throw new Error('No session token');
       }
 
-      const response = await fetchWithTimeout(
-        API_BASE_URL + '/task-rewards/canvas/claim',
+      const data = await apiPost(
+        '/task-rewards/canvas/claim',
+        token,
         {
-          method: 'POST',
-          headers: {
-            Authorization: 'Bearer ' + token,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            courseId: String(safeItem.courseId || ''),
-            assignmentId: String(safeItem.assignmentId || ''),
-          }),
+          courseId: String(safeItem.courseId || ''),
+          assignmentId: String(safeItem.assignmentId || ''),
         },
-        25000,
+        {
+          timeoutMs: 25000,
+          fallbackMessage: 'Failed to claim Canvas reward',
+        }
       );
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to claim Canvas reward'));
-      }
 
       const rewardResult = data.rewardResult || {};
       setRecentPlanItems((prev) => {
@@ -1684,7 +1637,7 @@ export default function HomeScreen() {
     } finally {
       setCanvasRewardClaimingId('');
     }
-  }, [fetchWithTimeout, getSessionToken]);
+  }, [getSessionToken]);
 
   let lastingDaysValueNode = <ActivityIndicator color={theme.primary} />;
   if (summaryReady) {

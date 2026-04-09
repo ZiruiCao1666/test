@@ -13,11 +13,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUser, useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { API_BASE_URL, ApiRequestError, apiGet, apiPost } from '../../lib/api';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 import MakeupCardPanel from '../../components/MakeupCardPanel';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 const FALLBACK_CATALOG = [
   { id: 1, title: 'Coffee Coupon', pointsCost: 120, category: 'drinks', imageUrl: '', isActive: true },
@@ -115,16 +114,6 @@ function renderRewardImage(item) {
   );
 }
 
-async function readJsonSafely(response) {
-  const raw = await response.text();
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch (parseError) {
-    return {};
-  }
-}
-
 function normalizeCatalog(items) {
   if (!Array.isArray(items)) return [];
   return items
@@ -218,16 +207,6 @@ export default function RewardsScreen() {
   const [error, setError] = React.useState(null);
   const [redeemingId, setRedeemingId] = React.useState(null);
 
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 20000) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(id);
-    }
-  }, []);
-
   const loadRewards = React.useCallback(async () => {
     if (!authLoaded || !isSignedIn) {
       setLoading(false);
@@ -254,25 +233,24 @@ export default function RewardsScreen() {
         return;
       }
 
-      const [statusRes, catalogRes] = await Promise.all([
-        fetchWithTimeout(API_BASE_URL + '/checkins/status', {
-          headers: { Authorization: 'Bearer ' + token },
+      const [statusResult, catalogResult] = await Promise.allSettled([
+        apiGet('/checkins/status', token, {
+          timeoutMs: 20000,
+          fallbackMessage: 'Failed to load points',
         }),
-        fetchWithTimeout(API_BASE_URL + '/rewards/catalog', {
-          headers: { Authorization: 'Bearer ' + token },
+        apiGet('/rewards/catalog', token, {
+          timeoutMs: 20000,
+          fallbackMessage: 'Failed to load rewards catalog',
         }),
       ]);
 
-      const statusData = await readJsonSafely(statusRes);
-      if (statusRes.ok) {
-        setPoints(Number(statusData.points) || 0);
-      } else {
-        throw new Error(statusData.error || 'Failed to load points');
+      if (statusResult.status === 'rejected') {
+        throw statusResult.reason;
       }
+      setPoints(Number(statusResult.value.points) || 0);
 
-      if (catalogRes.ok) {
-        const catalogData = await readJsonSafely(catalogRes);
-        const normalized = normalizeCatalog(catalogData.items);
+      if (catalogResult.status === 'fulfilled') {
+        const normalized = normalizeCatalog(catalogResult.value.items);
         if (normalized.length > 0) {
           setCatalog(normalized);
         } else {
@@ -291,7 +269,7 @@ export default function RewardsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [authLoaded, isSignedIn, fetchWithTimeout]);
+  }, [authLoaded, isSignedIn]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -327,24 +305,10 @@ export default function RewardsScreen() {
         throw new Error('No session token');
       }
 
-      const res = await fetchWithTimeout(API_BASE_URL + '/rewards/redeem', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + token,
-        },
-        body: JSON.stringify({ rewardId: item.id }),
+      const data = await apiPost('/rewards/redeem', token, { rewardId: item.id }, {
+        timeoutMs: 20000,
+        fallbackMessage: 'Redeem failed',
       });
-
-      const data = await readJsonSafely(res);
-
-      if (!res.ok) {
-        if (res.status === 409) {
-          Alert.alert('Insufficient points', data.error || 'Not enough points for this reward.');
-          return;
-        }
-        throw new Error(data.error || 'Redeem failed');
-      }
 
       if (data.remainingPoints !== undefined) {
         setPoints(Number(data.remainingPoints) || 0);
@@ -355,7 +319,10 @@ export default function RewardsScreen() {
       Alert.alert('Redeemed', String(item.title) + ' redeemed successfully.');
       loadRewards();
     } catch (e) {
-      if (isAbortError(e)) {
+      if (e instanceof ApiRequestError && e.status === 409) {
+        const message = getErrorMessage(e, 'Not enough points for this reward.');
+        Alert.alert('Insufficient points', message);
+      } else if (isAbortError(e)) {
         Alert.alert('Error', 'Request timeout, please retry.');
       } else {
         Alert.alert('Error', getErrorMessage(e, 'Redeem failed'));

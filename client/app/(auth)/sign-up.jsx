@@ -10,10 +10,9 @@ import {
   Platform,
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
-import { useAuth, useSignUp, useSSO } from '@clerk/clerk-expo';
+import { useSignUp, useSSO } from '@clerk/clerk-expo';
 import * as Linking from 'expo-linking';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+import useSyncUser from '../../hooks/useSyncUser';
 
 const getErrorMessage = (error, fallbackMessage) => {
   if (error instanceof Error && error.message) {
@@ -49,9 +48,9 @@ const getOpacityValue = (condition) => {
 
 export default function SignUpScreen() {
   const router = useRouter();
-  const { getToken } = useAuth();
   const { isLoaded, signUp, setActive } = useSignUp();
   const { startSSOFlow } = useSSO();
+  const syncUserToBackend = useSyncUser();
 
   const [emailAddress, setEmailAddress] = React.useState('');
   const [password, setPassword] = React.useState('');
@@ -60,30 +59,6 @@ export default function SignUpScreen() {
   const [loadingSubmit, setLoadingSubmit] = React.useState(false);
   const [loadingVerify, setLoadingVerify] = React.useState(false);
   const [loadingSSO, setLoadingSSO] = React.useState(null);
-
-  const syncUserToBackend = async () => {
-    try {
-      if (!API_BASE_URL) {
-        throw new Error('Missing EXPO_PUBLIC_API_URL. Set it to your Render URL and restart Expo.');
-      }
-
-      const token = await getToken();
-      if (!token) {
-        return;
-      }
-
-      await fetch(API_BASE_URL + '/users/sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + token,
-        },
-        body: JSON.stringify({}),
-      });
-    } catch (error) {
-      console.log('[FE] sync error:', getErrorMessage(error, 'sync failed'));
-    }
-  };
 
   const goHome = async () => {
     await syncUserToBackend();

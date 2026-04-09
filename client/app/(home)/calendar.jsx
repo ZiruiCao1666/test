@@ -15,11 +15,19 @@ import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import { useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import {
+  API_BASE_URL,
+  apiDelete,
+  apiGet,
+  apiPost,
+  apiPut,
+  getApiErrorMessage,
+  readJsonSafely,
+} from '../../lib/api';
 import { useAppTheme } from '../../lib/app-theme';
 
 const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 
@@ -219,39 +227,6 @@ const getErrorMessage = (error, fallbackMessage) => {
     if (error.message) {
       return error.message;
     }
-  }
-  return fallbackMessage;
-};
-
-const readJsonSafely = async (response) => {
-  const raw = await response.text();
-  if (!raw) {
-    return {};
-  }
-  try {
-    return JSON.parse(raw);
-  } catch (parseError) {
-    return {};
-  }
-};
-
-const getApiErrorMessage = (data, fallbackMessage) => {
-  const safeData = data || {};
-  const errors = [];
-  if (Array.isArray(safeData.errors)) {
-    safeData.errors.forEach((item) => errors.push(item));
-  }
-  if (errors.length > 0) {
-    const firstError = errors[0] || {};
-    if (firstError.message) {
-      return firstError.message;
-    }
-  }
-  if (safeData.error) {
-    return safeData.error;
-  }
-  if (safeData.message) {
-    return safeData.message;
   }
   return fallbackMessage;
 };
@@ -1560,23 +1535,17 @@ export default function CalendarScreen() {
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
-    const response = await fetch(API_BASE_URL + '/canvas/credentials', {
-      method: 'PUT',
-      headers: {
-        Authorization: 'Bearer ' + sessionToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    await apiPut(
+      '/canvas/credentials',
+      sessionToken,
+      {
         school: nextSchool,
         token: nextToken,
-      }),
-    });
-    const data = await readJsonSafely(response);
-    if (!response.ok) {
-      throw new Error(
-        getApiErrorMessage(data, 'Failed to save credentials (HTTP ' + String(response.status) + ')')
-      );
-    }
+      },
+      {
+        fallbackMessage: (status) => 'Failed to save credentials (HTTP ' + String(status) + ')',
+      }
+    );
   };
 
   const removeSavedCanvasCredentialsFromBackend = async () => {
@@ -1589,18 +1558,9 @@ export default function CalendarScreen() {
       throw new Error('No Clerk session token available');
     }
 
-    const response = await fetch(API_BASE_URL + '/canvas/credentials', {
-      method: 'DELETE',
-      headers: {
-        Authorization: 'Bearer ' + sessionToken,
-      },
+    await apiDelete('/canvas/credentials', sessionToken, {
+      fallbackMessage: (status) => 'Failed to clear credentials (HTTP ' + String(status) + ')',
     });
-    const data = await readJsonSafely(response);
-    if (!response.ok) {
-      throw new Error(
-        getApiErrorMessage(data, 'Failed to clear credentials (HTTP ' + String(response.status) + ')')
-      );
-    }
   };
 
   const clearHomePlanCacheForCurrentUser = async () => {
@@ -1642,17 +1602,9 @@ export default function CalendarScreen() {
         if (!sessionToken) {
           throw new Error('No Clerk session token available yet');
         }
-        const response = await fetch(API_BASE_URL + '/canvas/credentials', {
-          headers: {
-            Authorization: 'Bearer ' + sessionToken,
-          },
+        const data = await apiGet('/canvas/credentials', sessionToken, {
+          fallbackMessage: (status) => 'Failed to load saved credentials (HTTP ' + String(status) + ')',
         });
-        const data = await readJsonSafely(response);
-        if (!response.ok) {
-          throw new Error(
-            getApiErrorMessage(data, 'Failed to load saved credentials (HTTP ' + String(response.status) + ')')
-          );
-        }
         if (!mounted) {
           return;
         }
@@ -1698,15 +1650,9 @@ export default function CalendarScreen() {
       if (!sessionToken) {
         throw new Error('No Clerk session token available');
       }
-      const response = await fetch(API_BASE_URL + '/tasks', {
-        headers: {
-          Authorization: 'Bearer ' + sessionToken,
-        },
+      const data = await apiGet('/tasks', sessionToken, {
+        fallbackMessage: (status) => 'Failed to load tasks (HTTP ' + String(status) + ')',
       });
-      const data = await readJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to load tasks (HTTP ' + String(response.status) + ')'));
-      }
       let items = [];
       if (Array.isArray(data.items)) {
         items = data.items;
@@ -1731,21 +1677,9 @@ export default function CalendarScreen() {
         throw new Error('No Clerk session token available');
       }
 
-      const response = await fetch(API_BASE_URL + '/checkins/dates', {
-        headers: {
-          Authorization: 'Bearer ' + sessionToken,
-        },
+      const data = await apiGet('/checkins/dates', sessionToken, {
+        fallbackMessage: (status) => 'Failed to load check-in dates (HTTP ' + String(status) + ')',
       });
-
-      const data = await readJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(
-          getApiErrorMessage(
-            data,
-            'Failed to load check-in dates (HTTP ' + String(response.status) + ')'
-          )
-        );
-      }
 
       const nextSet = new Set();
       let items = [];
@@ -2353,30 +2287,17 @@ export default function CalendarScreen() {
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
-    let requestUrl = API_BASE_URL + '/tasks';
+    const requestPath = taskId ? '/tasks/' + String(taskId) : '/tasks';
+
     if (taskId) {
-      requestUrl = API_BASE_URL + '/tasks/' + String(taskId);
+      return await apiPut(requestPath, sessionToken, payload, {
+        fallbackMessage: (status) => 'Failed to save task (HTTP ' + String(status) + ')',
+      });
     }
-    let requestMethod = 'POST';
-    if (taskId) {
-      requestMethod = 'PUT';
-    }
-    const response = await fetch(
-      requestUrl,
-      {
-        method: requestMethod,
-        headers: {
-          Authorization: 'Bearer ' + sessionToken,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await readJsonSafely(response);
-    if (!response.ok) {
-      throw new Error(getApiErrorMessage(data, 'Failed to save task (HTTP ' + String(response.status) + ')'));
-    }
-    return data;
+
+    return await apiPost(requestPath, sessionToken, payload, {
+      fallbackMessage: (status) => 'Failed to save task (HTTP ' + String(status) + ')',
+    });
   };
 
   const handleSubmitTask = async () => {
@@ -2507,16 +2428,9 @@ export default function CalendarScreen() {
       if (!sessionToken) {
         throw new Error('No Clerk session token available');
       }
-      const response = await fetch(API_BASE_URL + '/tasks/' + String(taskId), {
-        method: 'DELETE',
-        headers: {
-          Authorization: 'Bearer ' + sessionToken,
-        },
+      await apiDelete('/tasks/' + String(taskId), sessionToken, {
+        fallbackMessage: (status) => 'Failed to delete task (HTTP ' + String(status) + ')',
       });
-      const data = await readJsonSafely(response);
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to delete task (HTTP ' + String(response.status) + ')'));
-      }
       await clearHomePlanCacheForCurrentUser();
       setCustomTasks((prev) => prev.filter((item) => String(item.id) !== String(taskId)));
       if (String(editingTaskId) === String(taskId)) {

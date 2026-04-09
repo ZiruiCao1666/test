@@ -10,9 +10,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
+import { API_BASE_URL, apiGet } from '../../lib/api';
 import { useAppTheme } from '../../lib/app-theme';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error && error.message) {
@@ -46,16 +45,6 @@ function getRefreshText(loading) {
   return 'refresh';
 }
 
-async function readJsonSafely(response) {
-  const raw = await response.text();
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch (parseError) {
-    return {};
-  }
-}
-
 function formatDate(dateValue) {
   if (!dateValue) return '--';
   const d = new Date(dateValue);
@@ -75,16 +64,6 @@ export default function OrdersScreen() {
   const [orders, setOrders] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
-
-  const fetchWithTimeout = React.useCallback(async (url, options = {}, timeoutMs = 20000) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(id);
-    }
-  }, []);
 
   const loadOrders = React.useCallback(async () => {
     if (!authLoaded || !isSignedIn) {
@@ -110,14 +89,10 @@ export default function OrdersScreen() {
         throw new Error('No session token');
       }
 
-      const res = await fetchWithTimeout(API_BASE_URL + '/rewards/orders', {
-        headers: { Authorization: 'Bearer ' + token },
+      const data = await apiGet('/rewards/orders', token, {
+        timeoutMs: 20000,
+        fallbackMessage: 'Failed to load orders',
       });
-
-      const data = await readJsonSafely(res);
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to load orders');
-      }
 
       if (Array.isArray(data.items)) {
         setOrders(data.items);
@@ -134,7 +109,7 @@ export default function OrdersScreen() {
     } finally {
       setLoading(false);
     }
-  }, [authLoaded, isSignedIn, fetchWithTimeout]);
+  }, [authLoaded, isSignedIn]);
 
   useFocusEffect(
     React.useCallback(() => {
