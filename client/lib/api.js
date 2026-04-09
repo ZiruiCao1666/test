@@ -84,6 +84,7 @@ async function apiRequest(path, token, options = {}) {
   const method = options.method || 'GET';
   const body = options.body;
   const fallbackMessage = options.fallbackMessage;
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 20000;
 
   const controller = new AbortController();
   const headers = {};
@@ -95,7 +96,7 @@ async function apiRequest(path, token, options = {}) {
   }
   const requestBody = body === undefined ? undefined : JSON.stringify(body);
 
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(buildApiUrl(path), {

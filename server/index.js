@@ -744,6 +744,344 @@ async function getStoredCanvasCredentials(userId) {
   }
 }
 
+function sortCanvasAssignmentsByDueAt(a, b) {
+  const left = a || {}
+  const right = b || {}
+  const leftMissing = !left.due_at
+  const rightMissing = !right.due_at
+  if (leftMissing && rightMissing) {
+    return 0
+  }
+  if (leftMissing) {
+    return 1
+  }
+  if (rightMissing) {
+    return -1
+  }
+  return new Date(left.due_at).getTime() - new Date(right.due_at).getTime()
+}
+
+function getCanvasSubmissionOrderKey(submission) {
+  const safeSubmission = submission || {}
+  const attempt = Number(safeSubmission.attempt || 0)
+  const updated = new Date(
+    safeSubmission.graded_at || safeSubmission.submitted_at || safeSubmission.updated_at || 0,
+  ).getTime()
+  return {
+    attempt,
+    updated,
+  }
+}
+
+function pickLatestCanvasSubmissions(submissions) {
+  let safeSubmissions = []
+  if (Array.isArray(submissions)) {
+    safeSubmissions = submissions.slice()
+  }
+
+  return safeSubmissions.reduce(function (acc, submission, index) {
+    const safeSubmission = submission || {}
+    const assignment = safeSubmission.assignment || {}
+    let assignmentId = safeSubmission.assignment_id
+    if (assignmentId === null || assignmentId === undefined || assignmentId === '') {
+      assignmentId = assignment.id
+    }
+    if (assignmentId === null || assignmentId === undefined || assignmentId === '') {
+      assignmentId = 'idx_' + String(index)
+    }
+    const assignmentKey = String(assignmentId)
+    const current = acc[assignmentKey]
+    if (!current) {
+      acc[assignmentKey] = submission
+      return acc
+    }
+
+    const nextOrder = getCanvasSubmissionOrderKey(submission)
+    const currentOrder = getCanvasSubmissionOrderKey(current)
+    if (nextOrder.attempt > currentOrder.attempt) {
+      acc[assignmentKey] = submission
+      return acc
+    }
+    if (nextOrder.attempt === currentOrder.attempt && nextOrder.updated > currentOrder.updated) {
+      acc[assignmentKey] = submission
+    }
+    return acc
+  }, {})
+}
+
+function isCanvasSubmissionSubmitted(submission) {
+  const safeSubmission = submission || {}
+  return Boolean(safeSubmission.submitted_at)
+}
+
+function isCanvasSubmissionOnTime(submission) {
+  const safeSubmission = submission || {}
+  if (!safeSubmission.submitted_at) {
+    return false
+  }
+  if (safeSubmission.late) {
+    return false
+  }
+  return true
+}
+
+function normalizeCanvasUpcomingEvent(baseUrl, item, index) {
+  const safeItem = item || {}
+  const assignment = safeItem.assignment || {}
+  const date = safeItem.due_at || safeItem.start_at || safeItem.end_at || null
+  let rawId = safeItem.id
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = safeItem.event_id
+  }
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = safeItem.assignment_id
+  }
+  if (rawId === null || rawId === undefined || rawId === '') {
+    rawId = index
+  }
+  return {
+    id: String(rawId),
+    title: safeItem.title || safeItem.name || 'Untitled event',
+    course: safeItem.context_name || assignment.course_name || '',
+    type: safeItem.type || assignment.type || 'event',
+    date,
+    htmlUrl: buildAbsoluteCanvasUrl(baseUrl, safeItem.html_url || assignment.html_url || ''),
+  }
+}
+
+function sortCanvasUpcomingEvents(events) {
+  let safeEvents = []
+  if (Array.isArray(events)) {
+    safeEvents = events.slice()
+  }
+
+  return safeEvents.sort(function (left, right) {
+    const leftMissing = !left.date
+    const rightMissing = !right.date
+    if (leftMissing && rightMissing) {
+      return 0
+    }
+    if (leftMissing) {
+      return 1
+    }
+    if (rightMissing) {
+      return -1
+    }
+    const leftTime = new Date(left.date).getTime()
+    const rightTime = new Date(right.date).getTime()
+    if (leftTime < rightTime) {
+      return -1
+    }
+    if (leftTime > rightTime) {
+      return 1
+    }
+    return 0
+  })
+}
+
+function buildCanvasCourseDataMap(entries) {
+  const assignmentsByCourse = {}
+  const enrollmentsByCourse = {}
+  const submissionsByCourse = {}
+
+  let safeEntries = []
+  if (Array.isArray(entries)) {
+    safeEntries = entries
+  }
+
+  safeEntries.forEach(function (entry) {
+    const safeEntry = entry || {}
+    const courseId = String(safeEntry.courseId || '').trim()
+    if (courseId === '') {
+      return
+    }
+
+    let assignments = []
+    if (Array.isArray(safeEntry.assignments)) {
+      assignments = safeEntry.assignments.slice().sort(sortCanvasAssignmentsByDueAt)
+    }
+    assignmentsByCourse[courseId] = {
+      items: assignments,
+    }
+
+    let enrollments = []
+    if (Array.isArray(safeEntry.enrollments)) {
+      enrollments = safeEntry.enrollments
+    }
+    enrollmentsByCourse[courseId] = enrollments[0] || null
+
+    const latestByAssignment = pickLatestCanvasSubmissions(safeEntry.submissions)
+    const latestSubmissions = Object.values(latestByAssignment)
+    const assignmentCount = assignments.length
+    const submittedCount = latestSubmissions.filter(isCanvasSubmissionSubmitted).length
+    const onTimeCount = latestSubmissions.filter(isCanvasSubmissionOnTime).length
+
+    let completionRate = null
+    if (assignmentCount > 0) {
+      completionRate = submittedCount / assignmentCount
+    }
+    let onTimeRate = null
+    if (submittedCount > 0) {
+      onTimeRate = onTimeCount / submittedCount
+    }
+
+    submissionsByCourse[courseId] = {
+      items: latestSubmissions,
+      byAssignment: latestByAssignment,
+      summary: {
+        assignmentCount,
+        submittedCount,
+        completionRate,
+        onTimeRate,
+      },
+    }
+  })
+
+  return {
+    assignmentsByCourse,
+    enrollmentsByCourse,
+    submissionsByCourse,
+  }
+}
+
+async function loadCanvasSnapshot(baseUrl, token) {
+  const [profileResult, rawCourses, rawEvents] = await Promise.all([
+    fetchCanvasPage(baseUrl, token, '/api/v1/users/self/profile'),
+    fetchCanvasPaged(
+      baseUrl,
+      token,
+      '/api/v1/courses?enrollment_type=student&enrollment_state=active&include[]=term&per_page=50',
+    ),
+    fetchCanvasPaged(baseUrl, token, '/api/v1/users/self/upcoming_events?per_page=50'),
+  ])
+
+  let safeCourses = []
+  if (Array.isArray(rawCourses)) {
+    safeCourses = rawCourses
+  }
+
+  let safeEvents = []
+  if (Array.isArray(rawEvents)) {
+    safeEvents = rawEvents
+  }
+
+  const perCourseEntries = await Promise.all(
+    safeCourses.map(async function (course) {
+      const safeCourse = course || {}
+      const courseId = String(safeCourse.id || '').trim()
+      if (courseId === '') {
+        return null
+      }
+
+      try {
+        const [rawEnrollments, rawAssignments, rawSubmissions] = await Promise.all([
+          fetchCanvasPaged(
+            baseUrl,
+            token,
+            '/api/v1/courses/' +
+              encodeURIComponent(courseId) +
+              '/enrollments?user_id=self&type[]=StudentEnrollment&state[]=active&include[]=current_points&per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            token,
+            '/api/v1/courses/' + encodeURIComponent(courseId) + '/assignments?per_page=50',
+          ),
+          fetchCanvasPaged(
+            baseUrl,
+            token,
+            '/api/v1/courses/' +
+              encodeURIComponent(courseId) +
+              '/students/submissions?student_ids[]=self&include[]=assignment&per_page=50',
+          ),
+        ])
+
+        return {
+          courseId,
+          enrollments: Array.isArray(rawEnrollments) ? rawEnrollments : [],
+          assignments: Array.isArray(rawAssignments) ? rawAssignments : [],
+          submissions: Array.isArray(rawSubmissions) ? rawSubmissions : [],
+        }
+      } catch (_courseError) {
+        return {
+          courseId,
+          enrollments: [],
+          assignments: [],
+          submissions: [],
+        }
+      }
+    }),
+  )
+
+  const courseData = buildCanvasCourseDataMap(
+    perCourseEntries.filter(function (entry) {
+      return Boolean(entry)
+    }),
+  )
+
+  return {
+    profile: profileResult.data || null,
+    courses: safeCourses,
+    events: sortCanvasUpcomingEvents(
+      safeEvents.map(function (item, index) {
+        return normalizeCanvasUpcomingEvent(baseUrl, item, index)
+      }),
+    ),
+    assignmentsByCourse: courseData.assignmentsByCourse,
+    enrollmentsByCourse: courseData.enrollmentsByCourse,
+    submissionsByCourse: courseData.submissionsByCourse,
+  }
+}
+
+async function clearStoredCanvasCredentials(userId) {
+  await pool.query(`DELETE FROM app_canvas_credentials WHERE clerk_user_id = $1`, [userId])
+}
+
+function isInvalidCanvasTokenError(error) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const normalizedMessage = String(error.message || '').toLowerCase()
+  return normalizedMessage.includes('401') && normalizedMessage.includes('invalid access token')
+}
+
+async function clearStoredCanvasCredentialsIfTokenInvalid(userId, error) {
+  if (!isInvalidCanvasTokenError(error)) {
+    return false
+  }
+  try {
+    await clearStoredCanvasCredentials(userId)
+  } catch (_clearError) {
+    // Best effort only.
+  }
+  return true
+}
+
+async function fetchStoredCanvasSubmissionDetail(userId, courseId, assignmentId) {
+  const stored = await getStoredCanvasCredentials(userId)
+  if (!stored.school || !stored.token) {
+    throw new Error('Connect Canvas first.')
+  }
+
+  const params = new URLSearchParams()
+  params.append('include[]', 'submission_comments')
+  params.append('include[]', 'submission_history')
+
+  const baseUrl = buildCanvasBaseUrl(stored.school)
+  const result = await fetchCanvasPage(
+    baseUrl,
+    stored.token,
+    '/api/v1/courses/' +
+      encodeURIComponent(courseId) +
+      '/assignments/' +
+      encodeURIComponent(assignmentId) +
+      '/submissions/self?' +
+      params.toString(),
+  )
+
+  return result.data || null
+}
+
 function buildCustomTaskDateTime(task) {
   let safeTask = {}
   if (task) {
@@ -2288,7 +2626,7 @@ app.post('/users/sync', async function (req, res) {
 
 /**
  * GET /canvas/credentials
- * Return the current user's saved Canvas school+token.
+ * Return the current user's saved Canvas school and whether a token exists on the server.
  */
 app.get('/canvas/credentials', async function (req, res) {
   try {
@@ -2309,7 +2647,8 @@ app.get('/canvas/credentials', async function (req, res) {
     return res.json({
       ok: true,
       school: stored.school,
-      token: stored.token,
+      connected: Boolean(stored.school && stored.token),
+      hasSavedToken: Boolean(stored.token),
     })
   } catch (e) {
     console.error('[BE] /canvas/credentials error:', e)
@@ -2319,7 +2658,7 @@ app.get('/canvas/credentials', async function (req, res) {
 
 /**
  * PUT /canvas/credentials
- * Save/update the current user's Canvas school+token.
+ * Save/update the current user's Canvas school+token, then return a fresh Canvas snapshot.
  */
 app.put('/canvas/credentials', async function (req, res) {
   try {
@@ -2351,6 +2690,12 @@ app.put('/canvas/credentials', async function (req, res) {
     if (token.length > 8192) {
       return res.status(400).json({ error: 'Token is too long' })
     }
+    if (school === '' || token === '') {
+      return res.status(400).json({ error: 'School and token are required' })
+    }
+
+    const baseUrl = buildCanvasBaseUrl(school)
+    const snapshot = await loadCanvasSnapshot(baseUrl, token)
 
     const encrypted = encryptCanvasToken(token)
     await pool.query(
@@ -2375,10 +2720,91 @@ app.put('/canvas/credentials', async function (req, res) {
       [userId, school, encrypted.cipherText, encrypted.iv, encrypted.authTag],
     )
 
-    return res.json({ ok: true })
+    return res.json({
+      ok: true,
+      school,
+      connected: true,
+      hasSavedToken: true,
+      snapshot,
+    })
   } catch (e) {
+    if (isInvalidCanvasTokenError(e)) {
+      return res.status(401).json({ error: e.message })
+    }
     console.error('[BE] /canvas/credentials PUT error:', e)
-    return res.status(500).json({ error: 'Internal server error' })
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+/**
+ * GET /canvas/snapshot
+ * Load the current user's current Canvas data through the backend.
+ */
+app.get('/canvas/snapshot', async function (req, res) {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    const stored = await getStoredCanvasCredentials(userId)
+    if (!stored.school || !stored.token) {
+      return res.status(409).json({ error: 'Connect Canvas first.' })
+    }
+
+    const snapshot = await loadCanvasSnapshot(buildCanvasBaseUrl(stored.school), stored.token)
+    return res.json({
+      ok: true,
+      school: stored.school,
+      connected: true,
+      hasSavedToken: true,
+      snapshot,
+    })
+  } catch (e) {
+    if (e instanceof Error && e.message === 'Connect Canvas first.') {
+      return res.status(409).json({ error: e.message })
+    }
+    const { userId } = getAuth(req)
+    if (userId && (await clearStoredCanvasCredentialsIfTokenInvalid(userId, e))) {
+      return res.status(401).json({
+        error: e instanceof Error ? e.message : 'Canvas token is no longer valid',
+        clearedSavedToken: true,
+      })
+    }
+    console.error('[BE] /canvas/snapshot GET error:', e)
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+/**
+ * GET /canvas/submissions/:courseId/:assignmentId
+ * Return one Canvas submission detail using the stored server-side token.
+ */
+app.get('/canvas/submissions/:courseId/:assignmentId', async function (req, res) {
+  try {
+    const { userId } = getAuth(req)
+    if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
+
+    const safeParams = req.params || {}
+    const courseId = String(safeParams.courseId || '').trim()
+    const assignmentId = String(safeParams.assignmentId || '').trim()
+    if (courseId === '' || assignmentId === '') {
+      return res.status(400).json({ error: 'Missing courseId or assignmentId' })
+    }
+
+    const item = await fetchStoredCanvasSubmissionDetail(userId, courseId, assignmentId)
+    return res.json({
+      ok: true,
+      item,
+    })
+  } catch (e) {
+    const { userId } = getAuth(req)
+    if (userId && (await clearStoredCanvasCredentialsIfTokenInvalid(userId, e))) {
+      return res.status(401).json({
+        error: e instanceof Error ? e.message : 'Canvas token is no longer valid',
+        clearedSavedToken: true,
+      })
+    }
+    console.error('[BE] /canvas/submissions GET error:', e)
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
 })
 
@@ -2391,10 +2817,7 @@ app.delete('/canvas/credentials', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await pool.query(
-      `DELETE FROM app_canvas_credentials WHERE clerk_user_id = $1`,
-      [userId],
-    )
+    await clearStoredCanvasCredentials(userId)
 
     return res.json({ ok: true })
   } catch (e) {
@@ -2788,11 +3211,7 @@ app.get('/home/plan', async function (req, res) {
       } else {
         canvasError = 'Failed to load Canvas items'
       }
-      const normalizedCanvasError = String(canvasError || '').toLowerCase()
-      if (
-        normalizedCanvasError.includes('401') &&
-        normalizedCanvasError.includes('invalid access token')
-      ) {
+      if (await clearStoredCanvasCredentialsIfTokenInvalid(userId, canvasLoadError)) {
         canvasConnected = false
       }
       console.error('[BE] /home/plan canvas error:', canvasLoadError)
@@ -3338,8 +3757,15 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
     } catch (_) {
       // no-op
     }
+    const { userId } = getAuth(req)
+    if (userId && (await clearStoredCanvasCredentialsIfTokenInvalid(userId, e))) {
+      return res.status(401).json({
+        error: e instanceof Error ? e.message : 'Canvas token is no longer valid',
+        clearedSavedToken: true,
+      })
+    }
     console.error('[BE] /task-rewards/canvas/claim error:', e)
-    return res.status(500).json({ error: 'Internal server error' })
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   } finally {
     client.release()
   }

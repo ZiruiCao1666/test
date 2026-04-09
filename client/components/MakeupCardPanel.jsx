@@ -9,9 +9,8 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
+import { apiGet, apiPost } from '../lib/api';
 import { useAppTheme } from '../lib/app-theme';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error) {
@@ -27,19 +26,6 @@ function getStyleWhen(condition, style) {
     return style;
   }
   return null;
-}
-
-async function readJsonSafely(response) {
-  const raw = await response.text();
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch (_error) {
-    return {};
-  }
 }
 
 function getStatusSummary(status) {
@@ -104,17 +90,16 @@ export default function MakeupCardPanel(props) {
   const [usingCard, setUsingCard] = React.useState(false);
   const [error, setError] = React.useState('');
 
-  const fetchWithTimeout = React.useCallback(async function (url, options = {}, timeoutMs = 20000) {
-    const controller = new AbortController();
-    const id = setTimeout(function () {
-      controller.abort();
-    }, timeoutMs);
-
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(id);
+  const getSessionToken = React.useCallback(async function () {
+    const tokenGetter = getTokenRef.current;
+    let token = '';
+    if (typeof tokenGetter === 'function') {
+      token = await tokenGetter();
     }
+    if (!token) {
+      throw new Error('No session token');
+    }
+    return token;
   }, []);
 
   const loadStatus = React.useCallback(async function (silent = false) {
@@ -130,28 +115,10 @@ export default function MakeupCardPanel(props) {
         setLoading(true);
       }
       setError('');
-
-      if (!API_BASE_URL) {
-        throw new Error('Missing EXPO_PUBLIC_API_URL');
-      }
-
-      const tokenGetter = getTokenRef.current;
-      let token = '';
-      if (typeof tokenGetter === 'function') {
-        token = await tokenGetter();
-      }
-      if (!token) {
-        throw new Error('No session token');
-      }
-
-      const response = await fetchWithTimeout(API_BASE_URL + '/makeup-card/status', {
-        headers: { Authorization: 'Bearer ' + token },
+      const token = await getSessionToken();
+      const data = await apiGet('/makeup-card/status', token, {
+        fallbackMessage: 'Failed to load make-up card status',
       });
-      const data = await readJsonSafely(response);
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to load make-up card status');
-      }
 
       setStatus({
         makeupCards: Number(data.makeupCards) || 0,
@@ -165,7 +132,7 @@ export default function MakeupCardPanel(props) {
         setLoading(false);
       }
     }
-  }, [authLoaded, isSignedIn, fetchWithTimeout]);
+  }, [authLoaded, isSignedIn, getSessionToken]);
 
   useFocusEffect(
     React.useCallback(function () {
@@ -188,29 +155,10 @@ export default function MakeupCardPanel(props) {
     try {
       setUsingCard(true);
       setError('');
-
-      if (!API_BASE_URL) {
-        throw new Error('Missing EXPO_PUBLIC_API_URL');
-      }
-
-      const tokenGetter = getTokenRef.current;
-      let token = '';
-      if (typeof tokenGetter === 'function') {
-        token = await tokenGetter();
-      }
-      if (!token) {
-        throw new Error('No session token');
-      }
-
-      const response = await fetchWithTimeout(API_BASE_URL + '/makeup-card/use', {
-        method: 'POST',
-        headers: { Authorization: 'Bearer ' + token },
+      const token = await getSessionToken();
+      const data = await apiPost('/makeup-card/use', token, {}, {
+        fallbackMessage: 'Failed to use make-up card',
       });
-      const data = await readJsonSafely(response);
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to use make-up card');
-      }
 
       setStatus({
         makeupCards: Number(data.makeupCards) || 0,
@@ -226,7 +174,7 @@ export default function MakeupCardPanel(props) {
     } finally {
       setUsingCard(false);
     }
-  }, [usingCard, fetchWithTimeout]);
+  }, [usingCard, getSessionToken]);
 
   let bodyNode = null;
   if (loading && !status) {

@@ -9,9 +9,8 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
+import { apiGet, apiPost } from '../lib/api';
 import { useAppTheme } from '../lib/app-theme';
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error) {
@@ -27,19 +26,6 @@ function getStyleWhen(condition, style) {
     return style;
   }
   return null;
-}
-
-async function readJsonSafely(response) {
-  const raw = await response.text();
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch (_error) {
-    return {};
-  }
 }
 
 function getSummaryText(streakDays, state) {
@@ -143,17 +129,16 @@ export default function SevenDayDrawCard(props) {
     getTokenRef.current = getToken;
   }, [getToken]);
 
-  const fetchWithTimeout = React.useCallback(async function (url, options = {}, timeoutMs = 20000) {
-    const controller = new AbortController();
-    const id = setTimeout(function () {
-      controller.abort();
-    }, timeoutMs);
-
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-      clearTimeout(id);
+  const getSessionToken = React.useCallback(async function () {
+    const tokenGetter = getTokenRef.current;
+    let token = '';
+    if (typeof tokenGetter === 'function') {
+      token = await tokenGetter();
     }
+    if (!token) {
+      throw new Error('No session token');
+    }
+    return token;
   }, []);
 
   const loadState = React.useCallback(async function (silent = false) {
@@ -169,28 +154,10 @@ export default function SevenDayDrawCard(props) {
         setLoading(true);
       }
       setError('');
-
-      if (!API_BASE_URL) {
-        throw new Error('Missing EXPO_PUBLIC_API_URL');
-      }
-
-      const tokenGetter = getTokenRef.current;
-      let token = '';
-      if (typeof tokenGetter === 'function') {
-        token = await tokenGetter();
-      }
-      if (!token) {
-        throw new Error('No session token');
-      }
-
-      const response = await fetchWithTimeout(API_BASE_URL + '/streak-draw/state', {
-        headers: { Authorization: 'Bearer ' + token },
+      const token = await getSessionToken();
+      const data = await apiGet('/streak-draw/state', token, {
+        fallbackMessage: 'Failed to load streak draw state',
       });
-      const data = await readJsonSafely(response);
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to load streak draw state');
-      }
 
       setState(data.state || null);
     } catch (loadError) {
@@ -200,7 +167,7 @@ export default function SevenDayDrawCard(props) {
         setLoading(false);
       }
     }
-  }, [authLoaded, isSignedIn, fetchWithTimeout]);
+  }, [authLoaded, isSignedIn, getSessionToken]);
 
   useFocusEffect(
     React.useCallback(function () {
@@ -216,35 +183,11 @@ export default function SevenDayDrawCard(props) {
   }, [streakDays, authLoaded, isSignedIn, loadState]);
 
   const callAction = React.useCallback(async function (path, body, fallbackMessage) {
-    if (!API_BASE_URL) {
-      throw new Error('Missing EXPO_PUBLIC_API_URL');
-    }
-
-    const tokenGetter = getTokenRef.current;
-    let token = '';
-    if (typeof tokenGetter === 'function') {
-      token = await tokenGetter();
-    }
-    if (!token) {
-      throw new Error('No session token');
-    }
-
-    const response = await fetchWithTimeout(API_BASE_URL + path, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body || {}),
+    const token = await getSessionToken();
+    return await apiPost(path, token, body || {}, {
+      fallbackMessage,
     });
-    const data = await readJsonSafely(response);
-
-    if (!response.ok) {
-      throw new Error(data.error || fallbackMessage);
-    }
-
-    return data;
-  }, [fetchWithTimeout]);
+  }, [getSessionToken]);
 
   const openDraw = React.useCallback(async function (source) {
     if (workingAction) {

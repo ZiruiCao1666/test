@@ -21,12 +21,9 @@ import {
   apiGet,
   apiPost,
   apiPut,
-  getApiErrorMessage,
-  readJsonSafely,
 } from '../../lib/api';
 import { useAppTheme } from '../../lib/app-theme';
 
-const PAGE_SIZE = 50;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
@@ -101,38 +98,6 @@ const formatScoreValue = (score, pointsPossible) => {
   return 'N/A / ' + String(safePoints);
 };
 
-const parseLinkHeader = (header) => {
-  if (!header) {
-    return {};
-  }
-  return header.split(',').reduce((acc, part) => {
-    const match = part.match(/<([^>]+)>\s*;\s*rel="([^"]+)"/);
-    if (match) {
-      acc[match[2]] = match[1];
-    }
-    return acc;
-  }, {});
-};
-
-const sortByDueAt = (a, b) => {
-  const left = a || {};
-  const right = b || {};
-  const leftMissing = !left.due_at;
-  const rightMissing = !right.due_at;
-  if (leftMissing) {
-    if (rightMissing) {
-      return 0;
-    }
-  }
-  if (leftMissing) {
-    return 1;
-  }
-  if (rightMissing) {
-    return -1;
-  }
-  return new Date(a.due_at) - new Date(b.due_at);
-};
-
 const isDueWithinWindow = (assignment, nowTs) => {
   const safeAssignment = assignment || {};
   if (!safeAssignment.due_at) {
@@ -176,52 +141,6 @@ const partitionAssignments = (assignments, nowTs) => {
   return { visibleItems, collapsedItems };
 };
 
-const getSubmissionOrderKey = (submission) => {
-  const safeSubmission = submission || {};
-  const attempt = Number(safeSubmission.attempt || 0);
-  const updated = new Date(
-    safeSubmission.graded_at || safeSubmission.submitted_at || safeSubmission.updated_at || 0
-  ).getTime();
-  return { attempt, updated };
-};
-
-const pickLatestSubmissions = (submissions) => {
-  const safeSubmissions = [];
-  if (Array.isArray(submissions)) {
-    submissions.forEach((item) => safeSubmissions.push(item));
-  }
-  return safeSubmissions.reduce((acc, submission, index) => {
-    const safeSubmission = submission || {};
-    const assignment = safeSubmission.assignment || {};
-    let assignmentId = safeSubmission.assignment_id;
-    if (assignmentId === null || assignmentId === undefined || assignmentId === '') {
-      assignmentId = assignment.id;
-    }
-    if (assignmentId === null || assignmentId === undefined || assignmentId === '') {
-      assignmentId = 'idx_' + String(index);
-    }
-    const assignmentKey = String(assignmentId);
-    const current = acc[assignmentKey];
-    if (!current) {
-      acc[assignmentKey] = submission;
-      return acc;
-    }
-
-    const nextOrder = getSubmissionOrderKey(submission);
-    const currentOrder = getSubmissionOrderKey(current);
-    if (nextOrder.attempt > currentOrder.attempt) {
-      acc[assignmentKey] = submission;
-      return acc;
-    }
-    if (nextOrder.attempt === currentOrder.attempt) {
-      if (nextOrder.updated > currentOrder.updated) {
-        acc[assignmentKey] = submission;
-      }
-    }
-    return acc;
-  }, {});
-};
-
 const getErrorMessage = (error, fallbackMessage) => {
   if (error instanceof Error) {
     if (error.message) {
@@ -231,45 +150,10 @@ const getErrorMessage = (error, fallbackMessage) => {
   return fallbackMessage;
 };
 
-const isSubmissionSubmitted = (submission) => {
-  const safeSubmission = submission || {};
-  return Boolean(safeSubmission.submitted_at);
-};
-
-const isSubmissionOnTime = (submission) => {
-  const safeSubmission = submission || {};
-  const hasSubmittedAt = Boolean(safeSubmission.submitted_at);
-  if (!hasSubmittedAt) {
-    return false;
-  }
-  if (safeSubmission.late) {
-    return false;
-  }
-  return true;
-};
-
-const normalizeUpcomingEvent = (item, index) => {
-  const safeItem = item || {};
-  const assignment = safeItem.assignment || {};
-  const date = safeItem.due_at || safeItem.start_at || safeItem.end_at || null;
-  let rawId = safeItem.id;
-  if (rawId === null || rawId === undefined || rawId === '') {
-    rawId = safeItem.event_id;
-  }
-  if (rawId === null || rawId === undefined || rawId === '') {
-    rawId = safeItem.assignment_id;
-  }
-  if (rawId === null || rawId === undefined || rawId === '') {
-    rawId = index;
-  }
-  return {
-    id: String(rawId),
-    title: safeItem.title || safeItem.name || 'Untitled event',
-    course: safeItem.context_name || assignment.course_name || '',
-    type: safeItem.type || assignment.type || 'event',
-    date,
-    htmlUrl: safeItem.html_url || assignment.html_url || '',
-  };
+const didBackendClearSavedCanvasToken = (error) => {
+  const safeError = error || {};
+  const safeData = safeError.data || {};
+  return Boolean(safeData.clearedSavedToken);
 };
 
 const getAccentColor = (item, key, fallback) => {
@@ -370,19 +254,34 @@ const getTaskRewardPopupMessage = (rewardResult) => {
   );
 };
 
-const getCanvasConnectButtonText = (isConnected) => {
-  if (isConnected) {
+const getCanvasConnectButtonText = (isConnected, hasSavedCanvasToken) => {
+  if (isConnected || hasSavedCanvasToken) {
     return 'Resync Canvas';
   }
   return 'Connect Canvas';
 };
 
-const getCanvasStorageHelperText = (canPersistToBackend) => {
-  return '';
+const getCanvasStorageHelperText = (canPersistToBackend, hasSavedCanvasToken) => {
+  if (!canPersistToBackend) {
+    return 'Canvas sync needs a signed-in account and EXPO_PUBLIC_API_URL.';
+  }
+  if (hasSavedCanvasToken) {
+    return 'Your Canvas school and token are stored on the server. This device only keeps local cache and drafts.';
+  }
+  return 'Canvas credentials are checked and stored on the server after you connect.';
 };
 
-const getCanvasTokenStatusText = (hasTokenInput, canPersistToBackend) => {
-  return '';
+const getCanvasTokenStatusText = (hasTokenInput, canPersistToBackend, hasSavedCanvasToken) => {
+  if (!canPersistToBackend) {
+    return 'Sign in first before connecting Canvas.';
+  }
+  if (hasTokenInput) {
+    return 'This pasted token will be used for the next connect or replace.';
+  }
+  if (hasSavedCanvasToken) {
+    return 'A token is already saved on the server. Leave this blank to resync, or paste a new one to replace it.';
+  }
+  return 'Paste a Canvas access token to connect.';
 };
 
 const getPreviewEyebrowText = (isConnected) => {
@@ -1385,13 +1284,10 @@ export default function CalendarScreen() {
   const isDarkTheme = theme.mode === 'dark';
   const [schoolInput, setSchoolInput] = useState('');
   const [tokenInput, setTokenInput] = useState('');
-  const [activeCanvasBaseUrl, setActiveCanvasBaseUrl] = useState('');
-  const [activeCanvasToken, setActiveCanvasToken] = useState('');
-  const [credentialsHydrated, setCredentialsHydrated] = useState(false);
-  const [credentialLoadReady, setCredentialLoadReady] = useState(false);
+  const [savedCanvasSchool, setSavedCanvasSchool] = useState('');
+  const [hasSavedCanvasToken, setHasSavedCanvasToken] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const lastPersistedRef = useRef({ school: '', token: '' });
   const credentialDraftTouchedRef = useRef(false);
   const getTokenRef = useRef(getToken);
 
@@ -1529,13 +1425,12 @@ export default function CalendarScreen() {
     setTokenInput(value);
   };
 
-  const persistCredentialsToBackend = async (nextSchool, nextToken) => {
-    // Keep one Canvas school/token pair per logged-in app account on our backend.
+  const saveCanvasCredentialsToBackend = async (nextSchool, nextToken) => {
     const sessionToken = await getSessionToken();
     if (!sessionToken) {
       throw new Error('No Clerk session token available');
     }
-    await apiPut(
+    return await apiPut(
       '/canvas/credentials',
       sessionToken,
       {
@@ -1584,13 +1479,63 @@ export default function CalendarScreen() {
     }
   };
 
+  const applyCanvasSnapshot = (snapshot, seedDate = new Date()) => {
+    const safeSnapshot = snapshot || {};
+    const nextCourses = Array.isArray(safeSnapshot.courses) ? safeSnapshot.courses : [];
+    const nextEvents = Array.isArray(safeSnapshot.events) ? safeSnapshot.events : [];
+    const nextAssignmentsByCourse =
+      safeSnapshot.assignmentsByCourse && typeof safeSnapshot.assignmentsByCourse === 'object'
+        ? safeSnapshot.assignmentsByCourse
+        : {};
+    const nextEnrollmentsByCourse =
+      safeSnapshot.enrollmentsByCourse && typeof safeSnapshot.enrollmentsByCourse === 'object'
+        ? safeSnapshot.enrollmentsByCourse
+        : {};
+    const nextSubmissionsByCourse =
+      safeSnapshot.submissionsByCourse && typeof safeSnapshot.submissionsByCourse === 'object'
+        ? safeSnapshot.submissionsByCourse
+        : {};
+
+    credentialDraftTouchedRef.current = false;
+    setProfile(safeSnapshot.profile || null);
+    setCourses(nextCourses);
+    setEvents(nextEvents);
+    setAssignmentsByCourse(nextAssignmentsByCourse);
+    setExpandedAssignmentsByCourse({});
+    setEnrollmentsByCourse(nextEnrollmentsByCourse);
+    setSubmissionsByCourse(nextSubmissionsByCourse);
+    setSubmissionDetailsByAssignment({});
+    setLastSyncAt(new Date());
+    setSelectedPanel('calendar');
+    setSelectedView('week');
+    setSelectedDate(seedDate);
+    setEditingTaskId('');
+    setTaskDeletingId('');
+    setTaskTogglingId('');
+    setTaskForm(createEmptyTaskForm(seedDate));
+    setTaskDateDraft(seedDate);
+    setTaskDateMonthAnchor(seedDate);
+    setTaskDatePickerVisible(false);
+    setTimePickerVisible(false);
+    setMonthYearPickerVisible(false);
+    setTimeDraft(parseTimeDraft('18:00'));
+    setMonthYearDraft({
+      year: seedDate.getFullYear(),
+      month: seedDate.getMonth(),
+    });
+    setSelectedCalendarItem(null);
+    setCalendarDetailVisible(false);
+  };
+
   useEffect(() => {
     let mounted = true;
-    setCredentialsHydrated(false);
-    setCredentialLoadReady(false);
 
     if (!canPersistToBackend) {
-      setCredentialsHydrated(true);
+      clearSyncedCanvasState(new Date());
+      setSchoolInput('');
+      setTokenInput('');
+      setSavedCanvasSchool('');
+      setHasSavedCanvasToken(false);
       return () => {
         mounted = false;
       };
@@ -1608,30 +1553,70 @@ export default function CalendarScreen() {
         if (!mounted) {
           return;
         }
-        const nextSchool = String(data.school || '');
-        const nextToken = String(data.token || '');
+        const nextSchool = String(data.school || '').trim();
+        const nextHasSavedToken = Boolean(data.hasSavedToken || data.connected);
         if (!credentialDraftTouchedRef.current) {
           setSchoolInput(nextSchool);
-          setTokenInput(nextToken);
+          setTokenInput('');
         }
-        lastPersistedRef.current = {
-          school: nextSchool.trim(),
-          token: nextToken.trim(),
-        };
+        setSavedCanvasSchool(nextSchool);
+        setHasSavedCanvasToken(nextHasSavedToken);
         setError('');
+
+        if (!nextHasSavedToken) {
+          return;
+        }
+
+        setLoading(true);
+        try {
+          const snapshotData = await apiGet('/canvas/snapshot', sessionToken, {
+            fallbackMessage: (status) => 'Failed to sync Canvas (HTTP ' + String(status) + ')',
+          });
+          if (!mounted) {
+            return;
+          }
+          const syncedSchool = String(snapshotData.school || nextSchool).trim();
+          if (!credentialDraftTouchedRef.current) {
+            setSchoolInput(syncedSchool);
+          }
+          setSavedCanvasSchool(syncedSchool);
+          setHasSavedCanvasToken(Boolean(snapshotData.hasSavedToken));
+          applyCanvasSnapshot(snapshotData.snapshot || null, new Date());
+          setTokenInput('');
+          setError('');
+        } catch (snapshotError) {
+          if (!mounted) {
+            return;
+          }
+          if (didBackendClearSavedCanvasToken(snapshotError)) {
+            await clearHomePlanCacheForCurrentUser();
+            clearSyncedCanvasState(new Date());
+            setSchoolInput(nextSchool);
+            setTokenInput('');
+            setSavedCanvasSchool('');
+            setHasSavedCanvasToken(false);
+            setError(
+              'Canvas rejected the saved token (401 Invalid access token). Paste a new Canvas token and try again.'
+            );
+          } else {
+            setError(
+              'Failed to sync saved Canvas connection: ' +
+                getErrorMessage(snapshotError, 'Unknown backend error')
+            );
+          }
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
+        }
       } catch (loadError) {
         if (mounted) {
           setError(
-            'Failed to load saved token from backend: ' + getErrorMessage(
+            'Failed to load saved Canvas state from backend: ' + getErrorMessage(
               loadError,
               'Unknown backend error'
             )
           );
-        }
-      } finally {
-        if (mounted) {
-          setCredentialsHydrated(true);
-          setCredentialLoadReady(true);
         }
       }
     })();
@@ -1741,63 +1726,6 @@ export default function CalendarScreen() {
     }, [canPersistToBackend])
   );
 
-  const buildCanvasUrl = (pathOrUrl, resolvedBaseUrl = activeCanvasBaseUrl) => {
-    if (/^https?:\/\//i.test(pathOrUrl)) {
-      return pathOrUrl;
-    }
-    return resolvedBaseUrl + pathOrUrl;
-  };
-
-  const fetchCanvasPage = async (pathOrUrl, options = {}) => {
-    const resolvedBaseUrl = options.baseUrl || activeCanvasBaseUrl;
-    const resolvedToken = options.token || activeCanvasToken;
-    if (!resolvedBaseUrl || !resolvedToken) {
-      throw new Error('Connect Canvas first.');
-    }
-    const response = await fetch(buildCanvasUrl(pathOrUrl, resolvedBaseUrl), {
-      headers: {
-        Authorization: 'Bearer ' + resolvedToken,
-        Accept: 'application/json',
-      },
-    });
-
-    const data = await readJsonSafely(response);
-
-    if (!response.ok) {
-      const message = getApiErrorMessage(data, response.statusText);
-      throw new Error(String(response.status) + ' ' + message);
-    }
-
-    const links = parseLinkHeader(response.headers.get('Link'));
-    return { data, nextUrl: links.next || '' };
-  };
-
-  const fetchCanvasPaged = async (path, options = {}) => {
-    let nextUrl = path;
-    const aggregated = [];
-    const visited = new Set();
-
-    while (nextUrl) {
-      if (visited.has(nextUrl)) break;
-      visited.add(nextUrl);
-
-      const { data, nextUrl: newNextUrl } = await fetchCanvasPage(nextUrl, options);
-      if (!Array.isArray(data)) {
-        return data;
-      }
-
-      aggregated.push(...data);
-      nextUrl = newNextUrl;
-    }
-
-    return aggregated;
-  };
-
-  const fetchCanvasObject = async (path, options = {}) => {
-    const { data } = await fetchCanvasPage(path, options);
-    return data;
-  };
-
   const openUrl = async (url) => {
     if (!url) {
       return;
@@ -1811,9 +1739,6 @@ export default function CalendarScreen() {
 
   const clearSyncedCanvasState = (seedDate = new Date()) => {
     credentialDraftTouchedRef.current = false;
-    lastPersistedRef.current = { school: '', token: '' };
-    setActiveCanvasBaseUrl('');
-    setActiveCanvasToken('');
     setProfile(null);
     setCourses([]);
     setEvents([]);
@@ -1850,6 +1775,20 @@ export default function CalendarScreen() {
     clearSyncedCanvasState(today);
     setSchoolInput('');
     setTokenInput('');
+    setSavedCanvasSchool('');
+    setHasSavedCanvasToken(false);
+  };
+
+  const handleSavedCanvasTokenCleared = async (nextSchool) => {
+    await clearHomePlanCacheForCurrentUser();
+    clearSyncedCanvasState(new Date());
+    setSchoolInput(String(nextSchool || '').trim());
+    setTokenInput('');
+    setSavedCanvasSchool('');
+    setHasSavedCanvasToken(false);
+    setError(
+      'Canvas rejected the saved token (401 Invalid access token). Paste a new Canvas token and try again.'
+    );
   };
 
   const handleClear = async () => {
@@ -1872,12 +1811,53 @@ export default function CalendarScreen() {
   };
 
   const fetchSingleSubmissionDetail = async (courseId, assignmentId) => {
-    const params = new URLSearchParams();
-    params.append('include[]', 'submission_comments');
-    params.append('include[]', 'submission_history');
-    return fetchCanvasObject(
-      '/api/v1/courses/' + courseId + '/assignments/' + assignmentId + '/submissions/self?' + params.toString()
+    if (!canPersistToBackend || !API_BASE_URL) {
+      throw new Error('Connect Canvas through the backend first.');
+    }
+
+    const sessionToken = await getSessionToken();
+    if (!sessionToken) {
+      throw new Error('No Clerk session token available');
+    }
+
+    const data = await apiGet(
+      '/canvas/submissions/' +
+        encodeURIComponent(String(courseId || '')) +
+        '/' +
+        encodeURIComponent(String(assignmentId || '')),
+      sessionToken,
+      {
+        fallbackMessage: (status) => 'Failed to load submission detail (HTTP ' + String(status) + ')',
+      }
     );
+
+    return data.item || null;
+  };
+
+  const syncCanvasFromBackend = async (seedDate = new Date()) => {
+    if (!canPersistToBackend || !API_BASE_URL) {
+      throw new Error('Canvas sync requires a signed-in account and EXPO_PUBLIC_API_URL.');
+    }
+
+    const sessionToken = await getSessionToken();
+    if (!sessionToken) {
+      throw new Error('No Clerk session token available');
+    }
+
+    const data = await apiGet('/canvas/snapshot', sessionToken, {
+      fallbackMessage: (status) => 'Failed to sync Canvas (HTTP ' + String(status) + ')',
+    });
+    const nextSchool = String(data.school || schoolInput || '').trim();
+
+    if (!credentialDraftTouchedRef.current) {
+      setSchoolInput(nextSchool);
+    }
+    setSavedCanvasSchool(nextSchool);
+    setHasSavedCanvasToken(Boolean(data.hasSavedToken || data.connected));
+    setTokenInput('');
+    applyCanvasSnapshot(data.snapshot || null, seedDate);
+    setError('');
+    return data;
   };
 
   const handleToggleSubmissionDetail = async (courseId, assignmentId) => {
@@ -1930,6 +1910,11 @@ export default function CalendarScreen() {
         },
       }));
     } catch (detailError) {
+      if (didBackendClearSavedCanvasToken(detailError)) {
+        await handleSavedCanvasTokenCleared(schoolInput.trim() || savedCanvasSchool);
+        return;
+      }
+
       let detailErrorMessage = 'Failed to load submission detail.';
       if (detailError instanceof Error) {
         detailErrorMessage = detailError.message;
@@ -1949,9 +1934,20 @@ export default function CalendarScreen() {
   const handleConnect = async () => {
     const nextSchool = schoolInput.trim();
     const nextToken = tokenInput.trim();
-    const nextBaseUrl = buildBaseUrl(nextSchool);
-    if (!nextBaseUrl || !nextToken) {
-      setError('Please fill in school name and access token first.');
+    if (!canPersistToBackend || !API_BASE_URL) {
+      setError('Canvas sync requires a signed-in account and EXPO_PUBLIC_API_URL.');
+      return;
+    }
+    if (!buildBaseUrl(nextSchool)) {
+      setError('Please fill in school name first.');
+      return;
+    }
+    if (!nextToken && !hasSavedCanvasToken) {
+      setError('Paste a Canvas token the first time you connect.');
+      return;
+    }
+    if (!nextToken && savedCanvasSchool && nextSchool !== savedCanvasSchool) {
+      setError('Paste a Canvas token to switch to a different Canvas school.');
       return;
     }
 
@@ -1959,206 +1955,29 @@ export default function CalendarScreen() {
     setError('');
 
     try {
-      const connectionOptions = {
-        baseUrl: nextBaseUrl,
-        token: nextToken,
-      };
-      const [profileData, coursesData, eventsData] = await Promise.all([
-        fetchCanvasObject('/api/v1/users/self/profile', connectionOptions),
-        fetchCanvasPaged(
-          '/api/v1/courses?enrollment_type=student&enrollment_state=active&include[]=term&per_page=' + String(PAGE_SIZE),
-          connectionOptions
-        ),
-        fetchCanvasPaged('/api/v1/users/self/upcoming_events?per_page=' + String(PAGE_SIZE), connectionOptions),
-      ]);
-
-      let safeCourses = [];
-      let safeEvents = [];
-      if (Array.isArray(coursesData)) {
-        safeCourses = coursesData;
-      }
-      if (Array.isArray(eventsData)) {
-        safeEvents = eventsData;
-      }
-
-      const perCoursePayload = await Promise.all(
-        safeCourses.map(async (course) => {
-          const courseId = String(course.id);
-          try {
-            const [enrollmentList, assignmentList, submissionList] = await Promise.all([
-              fetchCanvasPaged(
-                '/api/v1/courses/' + courseId + '/enrollments?user_id=self&type[]=StudentEnrollment&state[]=active&include[]=current_points&per_page=' + String(PAGE_SIZE),
-                connectionOptions
-              ),
-              fetchCanvasPaged(
-                '/api/v1/courses/' + courseId + '/assignments?per_page=' + String(PAGE_SIZE),
-                connectionOptions
-              ),
-              fetchCanvasPaged(
-                '/api/v1/courses/' + courseId + '/students/submissions?student_ids[]=self&include[]=assignment&per_page=' + String(PAGE_SIZE),
-                connectionOptions
-              ),
-            ]);
-
-            let safeEnrollments = [];
-            if (Array.isArray(enrollmentList)) {
-              safeEnrollments = enrollmentList;
-            }
-            let safeAssignments = [];
-            if (Array.isArray(assignmentList)) {
-              safeAssignments = assignmentList;
-            }
-            let safeSubmissions = [];
-            if (Array.isArray(submissionList)) {
-              safeSubmissions = submissionList;
-            }
-
-            return {
-              courseId,
-              enrollments: safeEnrollments,
-              assignments: safeAssignments,
-              submissions: safeSubmissions,
-            };
-          } catch (courseError) {
-            return {
-              courseId,
-              enrollments: [],
-              assignments: [],
-              submissions: [],
-            };
-          }
-        })
-      );
-
-      const assignmentsMap = {};
-      const enrollmentsMap = {};
-      const submissionsMap = {};
-
-      perCoursePayload.forEach((entry) => {
-        const courseId = entry.courseId;
-        const sortedAssignments = entry.assignments.slice().sort(sortByDueAt);
-        assignmentsMap[courseId] = {
-          items: sortedAssignments,
-        };
-
-        const enrollment = entry.enrollments[0] || null;
-        enrollmentsMap[courseId] = enrollment;
-
-        const latestByAssignment = pickLatestSubmissions(entry.submissions);
-        const latestSubmissions = Object.values(latestByAssignment);
-
-        const assignmentCount = sortedAssignments.length;
-        const submittedCount = latestSubmissions.filter((item) => isSubmissionSubmitted(item)).length;
-        const onTimeCount = latestSubmissions.filter((item) => isSubmissionOnTime(item)).length;
-        let completionRate = null;
-        if (assignmentCount > 0) {
-          completionRate = submittedCount / assignmentCount;
-        }
-        let onTimeRate = null;
-        if (submittedCount > 0) {
-          onTimeRate = onTimeCount / submittedCount;
-        }
-
-        submissionsMap[courseId] = {
-          items: latestSubmissions,
-          byAssignment: latestByAssignment,
-          summary: {
-            assignmentCount,
-            submittedCount,
-            completionRate,
-            onTimeRate,
-          },
-        };
-      });
-
-      const normalizedEvents = safeEvents
-        .map((item, index) => normalizeUpcomingEvent(item, index))
-        .sort((a, b) => {
-          const leftMissing = !a.date;
-          const rightMissing = !b.date;
-          if (leftMissing) {
-            if (rightMissing) {
-              return 0;
-            }
-            return 1;
-          }
-          if (rightMissing) {
-            return -1;
-          }
-          const leftTime = new Date(a.date).getTime();
-          const rightTime = new Date(b.date).getTime();
-          if (leftTime < rightTime) {
-            return -1;
-          }
-          if (leftTime > rightTime) {
-            return 1;
-          }
-          return 0;
-        });
-
-      const today = new Date();
-      credentialDraftTouchedRef.current = false;
-      setActiveCanvasBaseUrl(nextBaseUrl);
-      setActiveCanvasToken(nextToken);
-      setProfile(profileData || null);
-      setCourses(safeCourses);
-      setEvents(normalizedEvents);
-      setAssignmentsByCourse(assignmentsMap);
-      setExpandedAssignmentsByCourse({});
-      setEnrollmentsByCourse(enrollmentsMap);
-      setSubmissionsByCourse(submissionsMap);
-      setSubmissionDetailsByAssignment({});
-      setLastSyncAt(new Date());
-      setSelectedPanel('calendar');
-      setSelectedView('week');
-      setSelectedDate(today);
-      setEditingTaskId('');
-      setTaskForm(createEmptyTaskForm(today));
-      setTaskDateDraft(today);
-      setTaskDateMonthAnchor(today);
-      setMonthYearDraft({
-        year: today.getFullYear(),
-        month: today.getMonth(),
-      });
-      if (canPersistToBackend) {
-        try {
-          await persistCredentialsToBackend(nextSchool, nextToken);
-          lastPersistedRef.current = {
-            school: nextSchool,
-            token: nextToken,
-          };
-        } catch (persistError) {
-          setError(
-            'Connected to Canvas, but failed to save token: ' + getErrorMessage(
-              persistError,
-              'Unknown backend error'
-            )
-          );
-        }
+      if (nextToken) {
+        const response = await saveCanvasCredentialsToBackend(nextSchool, nextToken);
+        await clearHomePlanCacheForCurrentUser();
+        setSchoolInput(nextSchool);
+        setTokenInput('');
+        setSavedCanvasSchool(nextSchool);
+        setHasSavedCanvasToken(Boolean(response.hasSavedToken || response.connected));
+        applyCanvasSnapshot(response.snapshot || null, new Date());
+        setError('');
+      } else {
+        await syncCanvasFromBackend(new Date());
       }
     } catch (err) {
-      const message = getErrorMessage(err, 'Connection failed. Check network and token.');
-      const normalizedMessage = String(message || '').toLowerCase();
-
-      if (normalizedMessage.includes('401')) {
-        if (normalizedMessage.includes('invalid access token')) {
-          try {
-            await removeSavedCanvasCredentialsFromBackend();
-          } catch (_removeError) {
-            // Best effort only. Keep the original Canvas error visible.
-          }
-          await clearHomePlanCacheForCurrentUser();
-          clearSyncedCanvasState(new Date());
-          setSchoolInput(nextSchool);
-          setTokenInput('');
-          setError(
-            'Canvas rejected this token (401 Invalid access token). The saved token was cleared. Paste a new Canvas token and try again.'
-          );
+      if (didBackendClearSavedCanvasToken(err)) {
+        await handleSavedCanvasTokenCleared(nextSchool || savedCanvasSchool);
+      } else {
+        const message = getErrorMessage(err, 'Connection failed. Check network and token.');
+        const normalizedMessage = String(message || '').toLowerCase();
+        if (normalizedMessage.includes('401') && normalizedMessage.includes('invalid access token')) {
+          setError('Canvas rejected this token (401 Invalid access token). Paste a valid Canvas token and try again.');
         } else {
           setError('Connection failed: ' + message);
         }
-      } else {
-        setError('Connection failed: ' + message);
       }
     } finally {
       setLoading(false);
@@ -2931,7 +2750,7 @@ export default function CalendarScreen() {
 
   let connectButtonContentNode = (
     <Text style={[styles.primaryBtnText, primaryButtonTextStyle]}>
-      {getCanvasConnectButtonText(isConnected)}
+      {getCanvasConnectButtonText(isConnected, hasSavedCanvasToken)}
     </Text>
   );
   if (loading) {
@@ -2944,13 +2763,20 @@ export default function CalendarScreen() {
   }
 
   let tokenStatusNode = null;
-  let canvasTokenStatusText = getCanvasTokenStatusText(hasTokenInput, canPersistToBackend);
+  let canvasTokenStatusText = getCanvasTokenStatusText(
+    hasTokenInput,
+    canPersistToBackend,
+    hasSavedCanvasToken
+  );
   if (canvasTokenStatusText) {
     tokenStatusNode = <Text style={[styles.helperMuted, { color: theme.textMuted }]}>{canvasTokenStatusText}</Text>;
   }
 
   let canvasStorageHelperNode = null;
-  let canvasStorageHelperText = getCanvasStorageHelperText(canPersistToBackend);
+  let canvasStorageHelperText = getCanvasStorageHelperText(
+    canPersistToBackend,
+    hasSavedCanvasToken
+  );
   if (canvasStorageHelperText) {
     canvasStorageHelperNode = <Text style={[styles.helper, { color: theme.textMuted }]}>{canvasStorageHelperText}</Text>;
   }
@@ -3941,7 +3767,7 @@ export default function CalendarScreen() {
           <TextInput
             value={tokenInput}
             onChangeText={handleTokenInputChange}
-            placeholder="Canvas Access Token"
+            placeholder={hasSavedCanvasToken ? 'Saved on server. Paste new token to replace.' : 'Canvas Access Token'}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
