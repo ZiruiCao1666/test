@@ -1,2 +1,14 @@
-node_modules
+node_modules/
 client.zip
+.env
+.env.*
+!client/.env.example
+!server/.env.example
+.expo/
+client/.expo/
+dist/
+client/dist/
+server/dist/
+build/
+*.log
+.DS_Store
