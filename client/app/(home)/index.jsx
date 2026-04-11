@@ -1988,10 +1988,11 @@ export default function HomeScreen() {
   const hasSavedYesterdayNote = trimmedYesterdayNote.length > 0;
   const checkInResultHeadline = hasSavedYesterdayNote
     ? trimmedYesterdayNote
-    : 'Nothing was saved.';
-  const checkInResultSupportText = hasSavedYesterdayNote
-    ? 'Carry this into today, then leave a short note for tomorrow.'
-    : 'Leave a short note for tomorrow.';
+    : 'No note was saved yesterday.';
+  const checkInResultHintTitle = 'A short note can help tomorrow-you';
+  const checkInResultHintText = hasSavedYesterdayNote
+    ? 'Re-read it once, then leave a fresh note for tomorrow.'
+    : 'Keep momentum without opening a full page.';
 
   let todayNoteErrorNode = null;
   if (todayNoteError) {
@@ -2541,44 +2542,53 @@ export default function HomeScreen() {
       >
         <Pressable style={styles.checkInResultOverlay} onPress={closeCheckInResultModal}>
           <Pressable onPress={() => {}} style={styles.checkInResultCard}>
-            <View style={styles.checkInResultCornerAccent} />
-            <View style={styles.checkInResultBadge}>
-              <Text style={styles.checkInResultBadgeText}>CHECK-IN</Text>
+            <View style={styles.checkInResultHeaderBar}>
+              <View style={styles.checkInResultHeaderPill}>
+                <Text style={styles.checkInResultHeaderPillText}>CHECK-IN</Text>
+              </View>
+              <View style={styles.checkInResultHeaderPill}>
+                <Text style={styles.checkInResultHeaderPillText}>Today completed</Text>
+              </View>
             </View>
-            <Text style={styles.checkInResultTitle}>Yesterday's note</Text>
-            <Text
-              style={styles.checkInResultHeadline}
-              numberOfLines={hasSavedYesterdayNote ? 4 : 2}
-            >
-              {checkInResultHeadline}
-            </Text>
-            <Text style={styles.checkInResultSupportText}>{checkInResultSupportText}</Text>
-            {checkInResultMessage ? (
-              <Text style={styles.checkInResultMetaText}>
-                {checkInResultMessage}
+            <View style={styles.checkInResultBodyWrap}>
+              <Text style={styles.checkInResultTitle}>Yesterday's note</Text>
+              <Text
+                style={styles.checkInResultHeadline}
+                numberOfLines={hasSavedYesterdayNote ? 4 : 2}
+              >
+                {checkInResultHeadline}
               </Text>
-            ) : null}
-            <View style={styles.checkInResultActionsRow}>
-              <Pressable
-                onPress={closeCheckInResultModal}
-                style={({ pressed }) => [
-                  styles.checkInResultSecondaryButton,
-                  getStyleWhen(pressed, { opacity: 0.82 }),
-                ]}
-              >
-                <Text style={styles.checkInResultSecondaryButtonText}>
-                  Close
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={continueAfterCheckInPrompt}
-                style={({ pressed }) => [
-                  styles.checkInResultPrimaryButton,
-                  getStyleWhen(pressed, { opacity: 0.82 }),
-                ]}
-              >
-                <Text style={styles.checkInResultPrimaryButtonText}>Write note</Text>
-              </Pressable>
+              <View style={styles.checkInResultHintCard}>
+                <View style={styles.checkInResultHintIcon}>
+                  <Text style={styles.checkInResultHintIconText}>i</Text>
+                </View>
+                <View style={styles.checkInResultHintContent}>
+                  <Text style={styles.checkInResultHintTitle}>{checkInResultHintTitle}</Text>
+                  <Text style={styles.checkInResultHintText}>{checkInResultHintText}</Text>
+                </View>
+              </View>
+              <View style={styles.checkInResultActionsRow}>
+                <Pressable
+                  onPress={closeCheckInResultModal}
+                  style={({ pressed }) => [
+                    styles.checkInResultSecondaryButton,
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                  ]}
+                >
+                  <Text style={styles.checkInResultSecondaryButtonText}>
+                    Close
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={continueAfterCheckInPrompt}
+                  style={({ pressed }) => [
+                    styles.checkInResultPrimaryButton,
+                    getStyleWhen(pressed, { opacity: 0.82 }),
+                  ]}
+                >
+                  <Text style={styles.checkInResultPrimaryButtonText}>Write note</Text>
+                </Pressable>
+              </View>
             </View>
           </Pressable>
         </Pressable>
@@ -2991,9 +3001,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFDFC',
     borderRadius: 34,
     overflow: 'hidden',
-    paddingHorizontal: 22,
-    paddingTop: 28,
-    paddingBottom: 14,
     shadowColor: '#0F172A',
     shadowOpacity: 0.24,
     shadowRadius: 22,
@@ -3003,56 +3010,90 @@ const styles = StyleSheet.create({
     },
     elevation: 18,
   },
-  checkInResultCornerAccent: {
-    position: 'absolute',
-    top: -40,
-    left: -40,
-    width: 86,
-    height: 86,
-    backgroundColor: '#6A86FF',
-    transform: [{ rotate: '45deg' }],
+  checkInResultHeaderBar: {
+    minHeight: 38,
+    paddingHorizontal: 18,
+    paddingVertical: 6,
+    backgroundColor: '#F2F6FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E6ECFA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  checkInResultBadge: {
-    alignSelf: 'flex-start',
+  checkInResultHeaderPill: {
     borderRadius: 999,
-    paddingHorizontal: 26,
-    paddingVertical: 12,
     backgroundColor: '#E8EEFF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-  checkInResultBadgeText: {
+  checkInResultHeaderPillText: {
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 0.4,
     color: '#5A7BEE',
-    textTransform: 'uppercase',
+  },
+  checkInResultBodyWrap: {
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
   },
   checkInResultTitle: {
-    marginTop: 64,
-    fontSize: 25,
+    fontSize: 24,
     fontWeight: '900',
     color: '#253252',
   },
   checkInResultHeadline: {
-    marginTop: 16,
-    fontSize: 18,
-    lineHeight: 28,
+    marginTop: 12,
+    fontSize: 17,
+    lineHeight: 26,
     fontWeight: '800',
     color: '#2B3654',
   },
-  checkInResultSupportText: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 22,
+  checkInResultHintCard: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#DCE5F7',
+    backgroundColor: '#F7F9FF',
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  checkInResultHintIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E8EEFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  checkInResultHintIconText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#5A7BEE',
+  },
+  checkInResultHintContent: {
+    flex: 1,
+  },
+  checkInResultHintTitle: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '800',
+    color: '#2B3654',
+  },
+  checkInResultHintText: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 17,
     color: '#6D7B9B',
   },
-  checkInResultMetaText: {
-    marginTop: 12,
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#8D98B3',
-  },
   checkInResultActionsRow: {
-    marginTop: 26,
+    marginTop: 20,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
