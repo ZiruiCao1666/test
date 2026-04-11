@@ -4,6 +4,7 @@ import cors from 'cors'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express'
 import { pool } from './db.js'
+import { runDbInit } from './scripts/db-init.js'
 
 const app = express()
 let port = 10000
@@ -37,6 +38,27 @@ if (!databaseUrl) {
 } else if (!databaseUrl.includes('sslmode=')) {
   console.warn('[DB] DATABASE_URL missing sslmode=require. Neon requires SSL.')
 }
+
+function getAutoDbInitOnStart() {
+  const rawValue = process.env.AUTO_DB_INIT_ON_START
+  if (rawValue === undefined || rawValue === null || String(rawValue).trim() === '') {
+    return process.env.NODE_ENV !== 'production'
+  }
+
+  const normalized = String(rawValue).trim().toLowerCase()
+  if (normalized === 'true') {
+    return true
+  }
+  if (normalized === 'false') {
+    return false
+  }
+
+  console.warn('[DB] Invalid AUTO_DB_INIT_ON_START value. Falling back to environment default.')
+  return process.env.NODE_ENV !== 'production'
+}
+
+const autoDbInitOnStart = getAutoDbInitOnStart()
+const dbInitMode = autoDbInitOnStart ? 'auto' : 'manual'
 
 const CHECKIN_POINTS = 5
 const NEW_USER_FIRST_WEEK_REWARDS = [1, 2, 3, 5, 8, 10, 10]
@@ -101,48 +123,6 @@ function normalizeNextDayNote(value) {
   }
 
   return safeNote
-}
-
-async function ensureMakeupCardUserColumn(db) {
-  await db.query(`
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS new_user_bonus_phase_done BOOLEAN NOT NULL DEFAULT FALSE;
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS has_claimed_14_day_makeup_card BOOLEAN NOT NULL DEFAULT FALSE;
-  `)
-}
-
-async function ensureRewardStateSchema(db) {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS app_user_reward_state (
-      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      milestone_draws INT NOT NULL DEFAULT 0,
-      draw_tickets INT NOT NULL DEFAULT 0,
-      reroll_tickets INT NOT NULL DEFAULT 0,
-      next_checkin_multiplier INT NOT NULL DEFAULT 1,
-      next_task_bonus_points INT NOT NULL DEFAULT 0,
-      bonus_checkins_remaining INT NOT NULL DEFAULT 0,
-      bonus_per_checkin INT NOT NULL DEFAULT 0,
-      weekly_custom_bonus_per_task INT NOT NULL DEFAULT 0,
-      weekly_custom_bonus_week_key TEXT NOT NULL DEFAULT '',
-      pending_reward_source TEXT NOT NULL DEFAULT '',
-      pending_reward_code TEXT NOT NULL DEFAULT '',
-      pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb,
-      pending_reward_selected_index INT NOT NULL DEFAULT -1,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    ALTER TABLE app_user_reward_state
-      ADD COLUMN IF NOT EXISTS pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb;
-
-    ALTER TABLE app_user_reward_state
-      ADD COLUMN IF NOT EXISTS pending_reward_selected_index INT NOT NULL DEFAULT -1;
-  `)
 }
 
 function getDateText(value) {
@@ -2365,155 +2345,23 @@ function applyAcceptedDrawReward(rewardState, rewardCode, rewardPayload, today) 
   }
 }
 
-async function initDb() {
-  // Create the core tables the app needs before any route starts using them.
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_users (
-      clerk_user_id TEXT PRIMARY KEY,
-      email TEXT,
-      full_name TEXT,
-      avatar_url TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS points INT NOT NULL DEFAULT 0;
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS makeup_cards INT NOT NULL DEFAULT 0;
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS new_user_bonus_phase_done BOOLEAN NOT NULL DEFAULT FALSE;
-
-    ALTER TABLE app_users
-      ADD COLUMN IF NOT EXISTS has_claimed_14_day_makeup_card BOOLEAN NOT NULL DEFAULT FALSE;
-
-    CREATE TABLE IF NOT EXISTS app_checkins (
-      id BIGSERIAL PRIMARY KEY,
-      clerk_user_id TEXT NOT NULL,
-      checkin_date DATE NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (clerk_user_id, checkin_date)
-    );
-
-    ALTER TABLE app_checkins
-      ADD COLUMN IF NOT EXISTS next_day_note TEXT;
-
-    ALTER TABLE app_checkins
-      ADD COLUMN IF NOT EXISTS next_day_note_updated_at TIMESTAMPTZ;
-
-    CREATE TABLE IF NOT EXISTS app_canvas_credentials (
-      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      canvas_school TEXT NOT NULL DEFAULT '',
-      canvas_token_ciphertext TEXT,
-      canvas_token_iv TEXT,
-      canvas_token_tag TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS app_rewards (
-      id BIGSERIAL PRIMARY KEY,
-      title TEXT NOT NULL,
-      points_cost INT NOT NULL CHECK (points_cost > 0),
-      category TEXT NOT NULL DEFAULT 'coupon',
-      image_url TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_rewards_title_unique
-      ON app_rewards (title);
-
-    CREATE TABLE IF NOT EXISTS app_reward_orders (
-      id BIGSERIAL PRIMARY KEY,
-      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      reward_id BIGINT NOT NULL REFERENCES app_rewards (id),
-      points_cost INT NOT NULL CHECK (points_cost > 0),
-      status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('pending', 'completed')),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_app_reward_orders_user_created_at
-      ON app_reward_orders (clerk_user_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS app_custom_tasks (
-      id BIGSERIAL PRIMARY KEY,
-      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      task_date DATE NOT NULL,
-      timing_mode TEXT NOT NULL DEFAULT 'deadline'
-        CHECK (timing_mode IN ('deadline', 'range')),
-      due_time TIME,
-      start_time TIME,
-      end_time TIME,
-      is_completed BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_app_custom_tasks_user_date
-      ON app_custom_tasks (clerk_user_id, task_date ASC, created_at ASC);
-
-    CREATE TABLE IF NOT EXISTS app_task_reward_events (
-      id BIGSERIAL PRIMARY KEY,
-      clerk_user_id TEXT NOT NULL REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      source_type TEXT NOT NULL CHECK (source_type IN ('custom_task', 'canvas_task')),
-      source_id TEXT NOT NULL,
-      reward_date DATE NOT NULL,
-      points INT NOT NULL CHECK (points > 0),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (clerk_user_id, source_type, source_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_task_reward_daily
-      ON app_task_reward_events (clerk_user_id, reward_date, source_type);
-
-    CREATE TABLE IF NOT EXISTS app_user_reward_state (
-      clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
-      milestone_draws INT NOT NULL DEFAULT 0,
-      draw_tickets INT NOT NULL DEFAULT 0,
-      reroll_tickets INT NOT NULL DEFAULT 0,
-      next_checkin_multiplier INT NOT NULL DEFAULT 1,
-      next_task_bonus_points INT NOT NULL DEFAULT 0,
-      bonus_checkins_remaining INT NOT NULL DEFAULT 0,
-      bonus_per_checkin INT NOT NULL DEFAULT 0,
-      weekly_custom_bonus_per_task INT NOT NULL DEFAULT 0,
-      weekly_custom_bonus_week_key TEXT NOT NULL DEFAULT '',
-      pending_reward_source TEXT NOT NULL DEFAULT '',
-      pending_reward_code TEXT NOT NULL DEFAULT '',
-      pending_reward_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      pending_reward_choices JSONB NOT NULL DEFAULT '[]'::jsonb,
-      pending_reward_selected_index INT NOT NULL DEFAULT -1,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `)
-
-  await pool.query(
-    `
-    INSERT INTO app_rewards (title, points_cost, category, image_url, is_active)
-    VALUES
-      ('Make-up Card', 100, 'makeup_card', '', TRUE),
-      ('Coffee Coupon', 120, 'drinks', '', TRUE),
-      ('Latte Coupon', 160, 'drinks', '', TRUE),
-      ('Discount Coupon', 200, 'coupon', '', TRUE),
-      ('Big Discount Coupon', 260, 'coupon', '', TRUE)
-    ON CONFLICT (title) DO NOTHING;
-    `,
-  )
-}
-
-initDb().catch(function (e) {
-  console.error('[DB] init failed:', e)
-  // On hosted platforms, keep the service alive so /health can still report DB problems.
-})
-
 app.get('/health', async function (_req, res) {
   try {
     await pool.query('SELECT 1')
-    res.json({ ok: true })
+    return res.json({
+      ok: true,
+      dbReachable: true,
+      autoDbInitOnStart,
+      dbInitMode,
+    })
   } catch (e) {
-    res.status(500).json({ ok: false, error: 'DB not reachable' })
+    return res.status(500).json({
+      ok: false,
+      dbReachable: false,
+      autoDbInitOnStart,
+      dbInitMode,
+      error: 'DB not reachable',
+    })
   }
 })
 
@@ -2564,9 +2412,9 @@ function canGrantCustomTaskReward(task, londonToday, londonCurrentTime) {
 }
 
 // Make sure app_users always has one row for the current Clerk user.
-async function ensureUserRow(userId) {
+async function ensureUserRow(userId, db = pool) {
   // Check-ins, rewards, Canvas credentials, and custom tasks all depend on this row.
-  await pool.query(
+  await db.query(
     `
     INSERT INTO app_users (clerk_user_id, last_seen_at)
     VALUES ($1, NOW())
@@ -3355,8 +3203,7 @@ app.put('/tasks/:id', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureUserRow(userId)
-    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
     const safeParams = req.params || {}
     const taskId = Number(safeParams.id)
@@ -3586,8 +3433,7 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureUserRow(userId)
-    await ensureRewardStateSchema(client)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
 
     const safeBody = req.body || {}
@@ -3922,8 +3768,6 @@ app.get('/streak-draw/state', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(pool)
-    await ensureRewardStateSchema(pool)
     await ensureUserRow(userId)
     await ensureRewardStateRow(userId)
 
@@ -3986,9 +3830,7 @@ app.post('/streak-draw/open', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureRewardStateSchema(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
 
     const safeBody = req.body || {}
@@ -4122,9 +3964,7 @@ app.post('/streak-draw/select', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureRewardStateSchema(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
 
     const safeBody = req.body || {}
@@ -4248,9 +4088,7 @@ app.post('/streak-draw/reroll', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureRewardStateSchema(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
 
     const today = await getLondonToday(client)
@@ -4368,9 +4206,7 @@ app.post('/streak-draw/accept', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureRewardStateSchema(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
 
     const today = await getLondonToday(client)
@@ -4575,7 +4411,6 @@ app.get('/makeup-card/status', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(pool)
     await ensureUserRow(userId)
     const today = await getLondonToday()
     const status = await getMakeupCardStatus(pool, userId, today)
@@ -4602,9 +4437,8 @@ app.post('/makeup-card/use', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureUserRow(userId)
-    const today = await getLondonToday()
+    await ensureUserRow(userId, client)
+    const today = await getLondonToday(client)
 
     await client.query('BEGIN')
 
@@ -4734,8 +4568,7 @@ app.post('/rewards/redeem', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
 
     const safeBody = req.body || {}
     const rewardId = Number(safeBody.rewardId)
@@ -4938,11 +4771,9 @@ app.post('/checkins/today', async function (req, res) {
     const { userId } = getAuth(req)
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
-    await ensureMakeupCardUserColumn(client)
-    await ensureRewardStateSchema(client)
-    await ensureUserRow(userId)
+    await ensureUserRow(userId, client)
     await ensureRewardStateRow(userId, client)
-    const today = await getLondonToday()
+    const today = await getLondonToday(client)
 
     await client.query('BEGIN')
 
@@ -5288,6 +5119,19 @@ app.post('/checkins/today', async function (req, res) {
 })
 
 // Render 必须：绑定 0.0.0.0，并监听 PORT
-app.listen(port, '0.0.0.0', function () {
-  console.log('Backend listening on port ' + String(port))
+async function startServer() {
+  if (autoDbInitOnStart) {
+    await runDbInit()
+  } else {
+    console.log('[DB] auto init disabled; expecting schema to be pre-initialized')
+  }
+
+  app.listen(port, '0.0.0.0', function () {
+    console.log('Backend listening on port ' + String(port))
+  })
+}
+
+startServer().catch(function (e) {
+  console.error('[DB] init failed:', e)
+  process.exit(1)
 })

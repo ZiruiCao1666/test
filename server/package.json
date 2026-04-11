@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "db:init": "node scripts/db-init.js"
   },
   "dependencies": {
     "@clerk/express": "^1.7.4",

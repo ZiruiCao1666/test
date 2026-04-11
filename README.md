@@ -18,7 +18,8 @@ Student Motivation is an Expo app with an Express API and a Postgres database. T
 
 - `client/`: Expo app
 - `server/`: Express API server
-- `server/sql/`: SQL reference files
+- `server/sql/`: Bootstrap SQL files (`schema.sql` and `seed.sql`)
+- `server/scripts/`: Backend maintenance scripts such as `db-init.js`
 
 ## Quick Start
 
@@ -65,17 +66,47 @@ Notes:
 - Only `EXPO_PUBLIC_*` variables are available inside Expo app code.
 - Do not put secrets such as `DATABASE_URL` or `CLERK_SECRET_KEY` in `client/.env`.
 
-### 4. Start the backend
+### 4. Configure database init mode
+
+`server/.env` can optionally contain:
+
+```env
+AUTO_DB_INIT_ON_START=
+```
+
+Notes:
+
+- Leave it empty to use the project default.
+- Default behavior is `true` outside production and `false` in production.
+- Set it to `true` or `false` if you want to force one mode.
+
+### 5. Initialize the backend database for the first time
 
 ```bash
 cd server
 npm install
+npm run db:init
+npm run dev
+```
+
+`npm run db:init` is a database bootstrap/init script. It creates missing tables and columns and syncs the built-in reward seed data. It is not a full versioned migration framework and does not repair incompatible existing schema definitions.
+
+### 6. Start the backend for regular development
+
+```bash
+cd server
 npm run dev
 ```
 
 The API runs at `http://localhost:10000` unless `PORT` is overridden.
 
-### 5. Start the Expo app
+Notes:
+
+- `server/sql/schema.sql` contains table and index bootstrap DDL.
+- `server/sql/seed.sql` contains default reward data.
+- In production or deployment pipelines, prefer running `npm run db:init` as a release step instead of relying only on automatic startup init.
+
+### 7. Start the Expo app
 
 ```bash
 cd client
