@@ -11,6 +11,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@clerk/clerk-expo';
 import { apiGet, apiPost } from '../lib/api';
 import { useAppTheme } from '../lib/app-theme';
+import RewardCelebrationModal from './RewardCelebrationModal';
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error) {
@@ -66,15 +67,109 @@ function getSummaryText(streakDays, state) {
   return 'Reach ' + String(nextTarget) + ' days to unlock the next draw.';
 }
 
-function getAcceptMessage(acceptedReward) {
+function getAcceptedRewardCelebration(acceptedReward) {
   const safeReward = acceptedReward || {};
-  const title = String(safeReward.title || '').trim();
+  const code = String(safeReward.code || '').trim();
+  const title = String(safeReward.title || 'Reward accepted').trim() || 'Reward accepted';
+  const description =
+    String(safeReward.description || '').trim() || 'Your streak draw reward is now active.';
   const pointsGranted = Number(safeReward.pointsGranted) || 0;
 
   if (pointsGranted > 0) {
-    return title + '\n+' + String(pointsGranted) + ' points';
+    return {
+      eyebrow: 'Draw reward',
+      accentColor: '#F59E0B',
+      value: '+' + String(pointsGranted),
+      label: 'points',
+      title,
+      message: description,
+      primaryLabel: 'Nice',
+    };
   }
-  return title || 'Reward accepted';
+
+  switch (code) {
+    case 'makeup_card':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#F59E0B',
+        value: '1',
+        label: 'card',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'draw_ticket':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#4F7DFF',
+        value: '1',
+        label: 'ticket',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'reroll_ticket':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#4F7DFF',
+        value: '1',
+        label: 'reroll',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'checkin_x2':
+    case 'checkin_x3':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#F59E0B',
+        value: String(safeReward.payload && safeReward.payload.multiplier ? 'x' + String(safeReward.payload.multiplier) : 'x1'),
+        label: 'check-in',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'next_task_bonus_10':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#4F7DFF',
+        value: '+10',
+        label: 'task',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'next_3_checkins_bonus_5':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#F59E0B',
+        value: '3',
+        label: 'check-ins',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    case 'weekly_custom_bonus_1':
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#4F7DFF',
+        value: '+1',
+        label: 'task',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+    default:
+      return {
+        eyebrow: 'Draw reward',
+        accentColor: '#F59E0B',
+        value: '1',
+        label: 'reward',
+        title,
+        message: description,
+        primaryLabel: 'Nice',
+      };
+  }
 }
 
 function getActiveBuffLabels(state) {
@@ -122,6 +217,7 @@ export default function SevenDayDrawCard(props) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
   const [workingAction, setWorkingAction] = React.useState('');
+  const [acceptedRewardCelebration, setAcceptedRewardCelebration] = React.useState(null);
 
   const getTokenRef = React.useRef(getToken);
 
@@ -265,7 +361,7 @@ export default function SevenDayDrawCard(props) {
         onPointsUpdated(Number(data.totalPoints) || 0);
       }
 
-      Alert.alert('Reward accepted', getAcceptMessage(data.acceptedReward));
+      setAcceptedRewardCelebration(getAcceptedRewardCelebration(data.acceptedReward));
     } catch (acceptError) {
       const message = getErrorMessage(acceptError, 'Failed to accept reward');
       setError(message);
@@ -519,20 +615,39 @@ export default function SevenDayDrawCard(props) {
   }
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: theme.surface,
-          borderColor: theme.border,
-          shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
-        },
-      ]}
-    >
-      <Text style={[styles.eyebrow, { color: theme.textMuted }]}>7-day draw</Text>
-      <Text style={[styles.title, { color: theme.textPrimary }]}>Streak reward</Text>
-      {bodyNode}
-    </View>
+    <>
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: theme.surface,
+            borderColor: theme.border,
+            shadowColor: isDarkTheme ? '#000000' : '#D6C3A7',
+          },
+        ]}
+      >
+        <Text style={[styles.eyebrow, { color: theme.textMuted }]}>7-day draw</Text>
+        <Text style={[styles.title, { color: theme.textPrimary }]}>Streak reward</Text>
+        {bodyNode}
+      </View>
+
+      <RewardCelebrationModal
+        visible={Boolean(acceptedRewardCelebration)}
+        eyebrow={acceptedRewardCelebration ? acceptedRewardCelebration.eyebrow : ''}
+        accentColor={acceptedRewardCelebration ? acceptedRewardCelebration.accentColor : ''}
+        value={acceptedRewardCelebration ? acceptedRewardCelebration.value : ''}
+        label={acceptedRewardCelebration ? acceptedRewardCelebration.label : ''}
+        title={acceptedRewardCelebration ? acceptedRewardCelebration.title : ''}
+        message={acceptedRewardCelebration ? acceptedRewardCelebration.message : ''}
+        primaryLabel={acceptedRewardCelebration ? acceptedRewardCelebration.primaryLabel : 'Nice'}
+        onPrimary={function () {
+          setAcceptedRewardCelebration(null);
+        }}
+        onRequestClose={function () {
+          setAcceptedRewardCelebration(null);
+        }}
+      />
+    </>
   );
 }
 

@@ -22,6 +22,7 @@ import { API_BASE_URL, apiGet, apiPost, apiPut } from '../../lib/api';
 import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 import SevenDayDrawCard from '../../components/SevenDayDrawCard';
+import RewardCelebrationModal from '../../components/RewardCelebrationModal';
 const SUMMARY_CACHE_PREFIX = 'home_summary_v2';
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
@@ -34,8 +35,9 @@ const CHECKIN_NOTE_MAX_LENGTH = 200;
 const CHECKIN_NOTE_TEMPLATES = [
   'Start with the hardest task',
   'Submit on time today',
-  'Stay consistent today',
 ];
+const STREAK_WEEK_BADGES = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const THIRTY_DAY_BADGES = ['6', '12', '18', '24', '30'];
 const DATE_INPUT_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const REVIEW_RANGE_OPTIONS = [
@@ -884,6 +886,56 @@ const getStreakCycleDays = (streakDays) => {
   return remainder;
 };
 
+const buildStreakRewardCelebration = (streakDays) => {
+  const safeDays = Math.max(0, Number(streakDays) || 0);
+  return {
+    eyebrow: 'Streak reward',
+    accentColor: '#F59E0B',
+    value: String(safeDays),
+    label: 'days',
+    title: String(safeDays) + ' day streak!',
+    message:
+      'You unlocked 1 streak draw. Keep checking in every day to build your next streak reward.',
+    badges: STREAK_WEEK_BADGES,
+    primaryLabel: 'Continue',
+  };
+};
+
+const buildThirtyDayCelebration = (streakDays) => {
+  const safeDays = Math.max(0, Number(streakDays) || 0);
+  let title = '30 day streak!';
+  if (safeDays > 30) {
+    title = String(safeDays) + ' day milestone!';
+  }
+  return {
+    eyebrow: 'Milestone unlocked',
+    accentColor: '#F97316',
+    value: String(safeDays),
+    label: 'days',
+    title,
+    message:
+      'You stayed consistent for a full 30-day run. Keep the streak alive and keep going.',
+    badges: THIRTY_DAY_BADGES,
+    primaryLabel: 'Continue',
+  };
+};
+
+const buildHomeRewardCelebrations = (checkInData) => {
+  const safeData = checkInData || {};
+  const celebrations = [];
+  const safeStreakDays = Math.max(0, Number(safeData.streakDays) || 0);
+
+  if (Boolean(safeData.awardedMilestoneDraw) && safeStreakDays > 0) {
+    celebrations.push(buildStreakRewardCelebration(safeStreakDays));
+  }
+
+  if (safeStreakDays > 0 && safeStreakDays % 30 === 0) {
+    celebrations.push(buildThirtyDayCelebration(safeStreakDays));
+  }
+
+  return celebrations;
+};
+
 const getWeeklyProgressHintText = (completedCount, totalCount) => {
   if (totalCount <= 0) {
     return 'No tasks scheduled for this week';
@@ -942,9 +994,14 @@ export default function HomeScreen() {
   const [savingTodayNote, setSavingTodayNote] = React.useState(false);
   const [todayNoteError, setTodayNoteError] = React.useState('');
   const [todayNoteNotice, setTodayNoteNotice] = React.useState('');
+  const [checkInResultVisible, setCheckInResultVisible] = React.useState(false);
+  const [checkInResultMessage, setCheckInResultMessage] = React.useState('');
+  const [rewardCelebrationQueue, setRewardCelebrationQueue] = React.useState([]);
+  const [rewardCelebrationVisible, setRewardCelebrationVisible] = React.useState(false);
+  const [rewardCelebrationIndex, setRewardCelebrationIndex] = React.useState(0);
   const [noteModalVisible, setNoteModalVisible] = React.useState(false);
   const [noteModalTitle, setNoteModalTitle] = React.useState('Note for tomorrow');
-  const [noteModalSubtitle, setNoteModalSubtitle] = React.useState('Write a note for tomorrow.');
+  const [noteModalSubtitle, setNoteModalSubtitle] = React.useState('');
   const [yesterdayNote, setYesterdayNote] = React.useState('');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
@@ -992,6 +1049,13 @@ export default function HomeScreen() {
     }
     return HOME_PLAN_RESET_PREFIX + ':' + userId;
   }, [userId]);
+
+  const activeRewardCelebration = React.useMemo(() => {
+    if (!rewardCelebrationVisible) {
+      return null;
+    }
+    return rewardCelebrationQueue[rewardCelebrationIndex] || null;
+  }, [rewardCelebrationVisible, rewardCelebrationQueue, rewardCelebrationIndex]);
 
   const applySummaryData = React.useCallback((data = {}) => {
     const safeData = data || {};
@@ -1470,6 +1534,49 @@ export default function HomeScreen() {
     ]),
   );
 
+  const openTomorrowNoteModal = React.useCallback(() => {
+    setCheckInResultVisible(false);
+    setNoteModalTitle('Note for tomorrow');
+    setNoteModalSubtitle('');
+    setNoteModalVisible(true);
+  }, []);
+
+  const resetRewardCelebrationFlow = React.useCallback(() => {
+    setRewardCelebrationVisible(false);
+    setRewardCelebrationQueue([]);
+    setRewardCelebrationIndex(0);
+  }, []);
+
+  const continueAfterCheckInPrompt = React.useCallback(() => {
+    setCheckInResultVisible(false);
+    if (rewardCelebrationQueue.length > 0) {
+      setRewardCelebrationIndex(0);
+      setRewardCelebrationVisible(true);
+      return;
+    }
+    openTomorrowNoteModal();
+  }, [rewardCelebrationQueue.length, openTomorrowNoteModal]);
+
+  const continueRewardCelebrationFlow = React.useCallback(() => {
+    if (rewardCelebrationIndex < rewardCelebrationQueue.length - 1) {
+      setRewardCelebrationIndex((current) => current + 1);
+      return;
+    }
+
+    resetRewardCelebrationFlow();
+    openTomorrowNoteModal();
+  }, [
+    rewardCelebrationIndex,
+    rewardCelebrationQueue.length,
+    resetRewardCelebrationFlow,
+    openTomorrowNoteModal,
+  ]);
+
+  const closeCheckInResultModal = React.useCallback(() => {
+    setCheckInResultVisible(false);
+    resetRewardCelebrationFlow();
+  }, [resetRewardCelebrationFlow]);
+
   const onCheckIn = async () => {
     if (checkingIn) {
       return;
@@ -1479,9 +1586,9 @@ export default function HomeScreen() {
       setTodayNoteError('');
       setTodayNoteNotice('');
       setNoteDraft(todayNote);
-      setNoteModalTitle('Note for tomorrow');
-      setNoteModalSubtitle('You can update today\'s note any time.');
-      setNoteModalVisible(true);
+      resetRewardCelebrationFlow();
+      setCheckInResultMessage(getCheckInAlertText(0, false, false));
+      setCheckInResultVisible(true);
       return;
     }
 
@@ -1512,13 +1619,16 @@ export default function HomeScreen() {
       setYesterdayNote(String(data.yesterdayNote || ''));
       setNoteDraft(String(data.todayNote || ''));
       setTodayNoteNotice('');
-      setNoteModalTitle('Checked in today');
-      setNoteModalSubtitle(getCheckInAlertText(
+      const nextCelebrations = buildHomeRewardCelebrations(data);
+      setRewardCelebrationQueue(nextCelebrations);
+      setRewardCelebrationVisible(false);
+      setRewardCelebrationIndex(0);
+      setCheckInResultMessage(getCheckInAlertText(
         Number(data.gainedPoints) || 0,
         Boolean(data.awardedMakeupCard),
         Boolean(data.awardedMilestoneDraw),
       ));
-      setNoteModalVisible(true);
+      setCheckInResultVisible(true);
 
       const gained = Number(data.gainedPoints) || 0;
       const awardedMakeupCard = Boolean(data.awardedMakeupCard);
@@ -2416,6 +2526,94 @@ export default function HomeScreen() {
       </ScrollView>
 
       <Modal
+        visible={checkInResultVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeCheckInResultModal}
+      >
+        <Pressable style={styles.checkInResultOverlay} onPress={closeCheckInResultModal}>
+          <Pressable
+            onPress={() => {}}
+            style={[
+              styles.checkInResultCard,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <Text style={[styles.checkInResultEyebrow, { color: theme.primary }]}>
+              Check-in complete
+            </Text>
+            <Text style={[styles.checkInResultTitle, { color: theme.textPrimary }]}>
+              Yesterday you said
+            </Text>
+            <View
+              style={[
+                styles.checkInResultQuoteCard,
+                {
+                  backgroundColor: theme.surfaceMuted,
+                  borderColor: theme.borderSoft,
+                },
+              ]}
+            >
+              <Text style={[styles.checkInResultQuoteText, { color: theme.textPrimary }]}>
+                {yesterdayNote || 'No reminder was saved yesterday.'}
+              </Text>
+            </View>
+            {checkInResultMessage ? (
+              <Text style={[styles.checkInResultBody, { color: theme.textSecondary }]}>
+                {checkInResultMessage}
+              </Text>
+            ) : null}
+            <View style={styles.checkInResultActionsRow}>
+              <Pressable
+                onPress={closeCheckInResultModal}
+                style={({ pressed }) => [
+                  styles.checkInResultSecondaryButton,
+                  {
+                    backgroundColor: theme.surfaceMuted,
+                    borderColor: theme.borderSoft,
+                  },
+                  getStyleWhen(pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={[styles.checkInResultSecondaryButtonText, { color: theme.textPrimary }]}>
+                  Close
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={continueAfterCheckInPrompt}
+                style={({ pressed }) => [
+                  styles.checkInResultPrimaryButton,
+                  { backgroundColor: theme.primary },
+                  getStyleWhen(pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={[styles.checkInResultPrimaryButtonText, { color: theme.primaryText }]}>
+                  Continue
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <RewardCelebrationModal
+        visible={Boolean(activeRewardCelebration)}
+        eyebrow={activeRewardCelebration ? activeRewardCelebration.eyebrow : ''}
+        accentColor={activeRewardCelebration ? activeRewardCelebration.accentColor : ''}
+        value={activeRewardCelebration ? activeRewardCelebration.value : ''}
+        label={activeRewardCelebration ? activeRewardCelebration.label : ''}
+        title={activeRewardCelebration ? activeRewardCelebration.title : ''}
+        message={activeRewardCelebration ? activeRewardCelebration.message : ''}
+        badges={activeRewardCelebration ? activeRewardCelebration.badges : []}
+        primaryLabel={activeRewardCelebration ? activeRewardCelebration.primaryLabel : 'Continue'}
+        onPrimary={continueRewardCelebrationFlow}
+        onRequestClose={resetRewardCelebrationFlow}
+      />
+
+      <Modal
         visible={noteModalVisible}
         transparent
         animationType="fade"
@@ -2440,9 +2638,11 @@ export default function HomeScreen() {
               <Text style={[styles.noteModalTitle, { color: theme.textPrimary }]}>
                 {noteModalTitle}
               </Text>
-              <Text style={[styles.noteModalSubtitle, { color: theme.textSecondary }]}>
-                {noteModalSubtitle}
-              </Text>
+              {noteModalSubtitle ? (
+                <Text style={[styles.noteModalSubtitle, { color: theme.textSecondary }]}>
+                  {noteModalSubtitle}
+                </Text>
+              ) : null}
 
               {yesterdayNote ? (
                 <View
@@ -2480,6 +2680,8 @@ export default function HomeScreen() {
                 placeholder="Write tomorrow's reminder here"
                 placeholderTextColor={theme.textMuted}
                 multiline
+                scrollEnabled
+                numberOfLines={4}
                 maxLength={CHECKIN_NOTE_MAX_LENGTH}
                 textAlignVertical="top"
                 style={[
@@ -2825,6 +3027,85 @@ const styles = StyleSheet.create({
   noteModalKeyboardWrap: {
     flex: 1,
   },
+  checkInResultOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  checkInResultCard: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 18,
+  },
+  checkInResultEyebrow: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  checkInResultTitle: {
+    marginTop: 8,
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  checkInResultQuoteCard: {
+    marginTop: 16,
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  checkInResultQuoteText: {
+    fontSize: 22,
+    lineHeight: 32,
+    fontWeight: '700',
+  },
+  checkInResultBody: {
+    marginTop: 14,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  checkInResultActionsRow: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  checkInResultSecondaryButton: {
+    minWidth: 96,
+    minHeight: 42,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkInResultSecondaryButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  checkInResultPrimaryButton: {
+    minWidth: 164,
+    minHeight: 42,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkInResultPrimaryButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
   noteModalOverlay: {
     flex: 1,
     justifyContent: 'flex-start',
@@ -2881,7 +3162,8 @@ const styles = StyleSheet.create({
   },
   checkInNoteInput: {
     marginTop: 12,
-    minHeight: 96,
+    height: 96,
+    maxHeight: 96,
     borderWidth: 1,
     borderRadius: 16,
     paddingHorizontal: 12,
@@ -2892,18 +3174,21 @@ const styles = StyleSheet.create({
   noteTemplateRow: {
     marginTop: 12,
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    justifyContent: 'space-between',
   },
   noteTemplateChip: {
+    width: '48%',
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   noteTemplateChipText: {
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
   },
   checkInNoteFooterRow: {
     marginTop: 12,
