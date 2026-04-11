@@ -33,8 +33,10 @@ const HOME_PLAN_DEFER_MS = 400;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKIN_NOTE_MAX_LENGTH = 200;
 const CHECKIN_NOTE_TEMPLATES = [
-  'Start with the hardest task',
-  'Submit on time today',
+  'I must study hard and seriously today.',
+  'Start with the :',
+  "I'll treat myself to a dessert as a reward.",
+  "Don't forget :",
 ];
 const STREAK_WEEK_BADGES = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const THIRTY_DAY_BADGES = ['6', '12', '18', '24', '30'];
@@ -1000,8 +1002,7 @@ export default function HomeScreen() {
   const [rewardCelebrationVisible, setRewardCelebrationVisible] = React.useState(false);
   const [rewardCelebrationIndex, setRewardCelebrationIndex] = React.useState(0);
   const [noteModalVisible, setNoteModalVisible] = React.useState(false);
-  const [noteModalTitle, setNoteModalTitle] = React.useState('Note for tomorrow');
-  const [noteModalSubtitle, setNoteModalSubtitle] = React.useState('');
+  const [noteModalTitle, setNoteModalTitle] = React.useState('Write a note for tomorrow');
   const [yesterdayNote, setYesterdayNote] = React.useState('');
   const [homePlanItems, setHomePlanItems] = React.useState([]);
   const [recentPlanItems, setRecentPlanItems] = React.useState([]);
@@ -1536,8 +1537,7 @@ export default function HomeScreen() {
 
   const openTomorrowNoteModal = React.useCallback(() => {
     setCheckInResultVisible(false);
-    setNoteModalTitle('Note for tomorrow');
-    setNoteModalSubtitle('');
+    setNoteModalTitle('Write a note for tomorrow');
     setNoteModalVisible(true);
   }, []);
 
@@ -1984,6 +1984,14 @@ export default function HomeScreen() {
   }
 
   const hasTodayNoteChanges = noteDraft.trim() !== todayNote.trim();
+  const trimmedYesterdayNote = String(yesterdayNote || '').trim();
+  const hasSavedYesterdayNote = trimmedYesterdayNote.length > 0;
+  const checkInResultHeadline = hasSavedYesterdayNote
+    ? trimmedYesterdayNote
+    : 'Nothing was saved.';
+  const checkInResultSupportText = hasSavedYesterdayNote
+    ? 'Carry this into today, then leave a short note for tomorrow.'
+    : 'Leave a short note for tomorrow.';
 
   let todayNoteErrorNode = null;
   if (todayNoteError) {
@@ -2532,37 +2540,21 @@ export default function HomeScreen() {
         onRequestClose={closeCheckInResultModal}
       >
         <Pressable style={styles.checkInResultOverlay} onPress={closeCheckInResultModal}>
-          <Pressable
-            onPress={() => {}}
-            style={[
-              styles.checkInResultCard,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <Text style={[styles.checkInResultEyebrow, { color: theme.primary }]}>
-              Check-in complete
-            </Text>
-            <Text style={[styles.checkInResultTitle, { color: theme.textPrimary }]}>
-              Yesterday you said
-            </Text>
-            <View
-              style={[
-                styles.checkInResultQuoteCard,
-                {
-                  backgroundColor: theme.surfaceMuted,
-                  borderColor: theme.borderSoft,
-                },
-              ]}
-            >
-              <Text style={[styles.checkInResultQuoteText, { color: theme.textPrimary }]}>
-                {yesterdayNote || 'No reminder was saved yesterday.'}
-              </Text>
+          <Pressable onPress={() => {}} style={styles.checkInResultCard}>
+            <View style={styles.checkInResultCornerAccent} />
+            <View style={styles.checkInResultBadge}>
+              <Text style={styles.checkInResultBadgeText}>CHECK-IN</Text>
             </View>
+            <Text style={styles.checkInResultTitle}>Yesterday's note</Text>
+            <Text
+              style={styles.checkInResultHeadline}
+              numberOfLines={hasSavedYesterdayNote ? 4 : 2}
+            >
+              {checkInResultHeadline}
+            </Text>
+            <Text style={styles.checkInResultSupportText}>{checkInResultSupportText}</Text>
             {checkInResultMessage ? (
-              <Text style={[styles.checkInResultBody, { color: theme.textSecondary }]}>
+              <Text style={styles.checkInResultMetaText}>
                 {checkInResultMessage}
               </Text>
             ) : null}
@@ -2571,14 +2563,10 @@ export default function HomeScreen() {
                 onPress={closeCheckInResultModal}
                 style={({ pressed }) => [
                   styles.checkInResultSecondaryButton,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                    borderColor: theme.borderSoft,
-                  },
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
-                <Text style={[styles.checkInResultSecondaryButtonText, { color: theme.textPrimary }]}>
+                <Text style={styles.checkInResultSecondaryButtonText}>
                   Close
                 </Text>
               </Pressable>
@@ -2586,13 +2574,10 @@ export default function HomeScreen() {
                 onPress={continueAfterCheckInPrompt}
                 style={({ pressed }) => [
                   styles.checkInResultPrimaryButton,
-                  { backgroundColor: theme.primary },
                   getStyleWhen(pressed, { opacity: 0.82 }),
                 ]}
               >
-                <Text style={[styles.checkInResultPrimaryButtonText, { color: theme.primaryText }]}>
-                  Continue
-                </Text>
+                <Text style={styles.checkInResultPrimaryButtonText}>Write note</Text>
               </Pressable>
             </View>
           </Pressable>
@@ -2621,51 +2606,31 @@ export default function HomeScreen() {
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={12}
+          keyboardVerticalOffset={0}
           style={styles.noteModalKeyboardWrap}
         >
-          <Pressable style={styles.noteModalOverlay} onPress={closeTodayNoteModal}>
-            <Pressable
-              onPress={() => {}}
-              style={[
-                styles.noteModalCard,
-                {
-                  backgroundColor: theme.surface,
-                  borderColor: theme.border,
-                },
-              ]}
+          <View style={styles.noteModalOverlay}>
+            <Pressable style={styles.noteModalBackdrop} onPress={closeTodayNoteModal} />
+            <ScrollView
+              style={styles.noteModalScroll}
+              contentContainerStyle={styles.noteModalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
             >
-              <Text style={[styles.noteModalTitle, { color: theme.textPrimary }]}>
-                {noteModalTitle}
-              </Text>
-              {noteModalSubtitle ? (
-                <Text style={[styles.noteModalSubtitle, { color: theme.textSecondary }]}>
-                  {noteModalSubtitle}
-                </Text>
-              ) : null}
+              <Pressable onPress={() => {}} style={styles.noteModalCard}>
+              <View style={styles.noteModalCornerAccent} />
+              <View style={styles.noteModalBadge}>
+                <Text style={styles.noteModalBadgeText}>WRITE NOTE</Text>
+              </View>
+              <Text style={styles.noteModalTitle}>{noteModalTitle}</Text>
 
               {yesterdayNote ? (
-                <View
-                  style={[
-                    styles.noteModalPreviousCard,
-                    {
-                      backgroundColor: theme.surfaceMuted,
-                      borderColor: theme.borderSoft,
-                    },
-                  ]}
-                >
-                  <Text style={[styles.noteModalPreviousLabel, { color: theme.textMuted }]}>
-                    Yesterday you said
-                  </Text>
-                  <Text style={[styles.noteModalPreviousText, { color: theme.textPrimary }]}>
-                    {yesterdayNote}
-                  </Text>
+                <View style={styles.noteModalPreviousCard}>
+                  <Text style={styles.noteModalPreviousLabel}>Yesterday's note</Text>
+                  <Text style={styles.noteModalPreviousText}>{yesterdayNote}</Text>
                 </View>
               ) : null}
-
-              <Text style={[styles.checkInNoteTitle, { color: theme.textPrimary }]}>
-                Write a note for tomorrow
-              </Text>
               <TextInput
                 value={noteDraft}
                 onChangeText={(value) => {
@@ -2678,16 +2643,13 @@ export default function HomeScreen() {
                   }
                 }}
                 placeholder="Write tomorrow's reminder here"
-                placeholderTextColor={theme.textMuted}
+                placeholderTextColor="#9AA5C2"
                 multiline
                 scrollEnabled
                 numberOfLines={4}
                 maxLength={CHECKIN_NOTE_MAX_LENGTH}
                 textAlignVertical="top"
-                style={[
-                  styles.checkInNoteInput,
-                  { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft, color: theme.textPrimary },
-                ]}
+                style={[styles.checkInNoteInput, { color: theme.textPrimary }]}
               />
 
               <View style={styles.noteTemplateRow}>
@@ -2705,16 +2667,10 @@ export default function HomeScreen() {
                     }}
                     style={({ pressed }) => [
                       styles.noteTemplateChip,
-                      {
-                        backgroundColor: theme.surfaceMuted,
-                        borderColor: theme.borderSoft,
-                      },
                       getStyleWhen(pressed, { opacity: 0.82 }),
                     ]}
                   >
-                    <Text style={[styles.noteTemplateChipText, { color: theme.primary }]}>
-                      {template}
-                    </Text>
+                    <Text style={styles.noteTemplateChipText}>{template}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -2732,38 +2688,30 @@ export default function HomeScreen() {
                   onPress={closeTodayNoteModal}
                   style={({ pressed }) => [
                     styles.noteModalSecondaryButton,
-                    {
-                      backgroundColor: theme.surfaceMuted,
-                      borderColor: theme.borderSoft,
-                    },
                     getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
-                  <Text style={[styles.noteModalSecondaryButtonText, { color: theme.textPrimary }]}>
-                    Close
-                  </Text>
+                  <Text style={styles.noteModalSecondaryButtonText}>Close</Text>
                 </Pressable>
                 <Pressable
                   onPress={saveTodayNote}
                   disabled={savingTodayNote || !hasTodayNoteChanges}
                   style={({ pressed }) => [
                     styles.noteModalPrimaryButton,
-                    { backgroundColor: theme.primary },
                     getStyleWhen(savingTodayNote || !hasTodayNoteChanges, { opacity: 0.55 }),
                     getStyleWhen(pressed, { opacity: 0.82 }),
                   ]}
                 >
                   {savingTodayNote ? (
-                    <ActivityIndicator color={theme.primaryText} size="small" />
+                    <ActivityIndicator color="#FFFFFF" size="small" />
                   ) : (
-                    <Text style={[styles.noteModalPrimaryButtonText, { color: theme.primaryText }]}>
-                      Save for tomorrow
-                    </Text>
+                    <Text style={styles.noteModalPrimaryButtonText}>Save for tomorrow</Text>
                   )}
                 </Pressable>
               </View>
-            </Pressable>
-          </Pressable>
+              </Pressable>
+            </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -3032,141 +2980,212 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 32,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: 'rgba(15, 23, 42, 0.58)',
   },
   checkInResultCard: {
     width: '100%',
     maxWidth: 560,
     alignSelf: 'center',
     borderWidth: 1,
-    borderRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 18,
+    borderColor: '#DCE5F7',
+    backgroundColor: '#FFFDFC',
+    borderRadius: 34,
+    overflow: 'hidden',
+    paddingHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 14,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.24,
+    shadowRadius: 22,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 18,
   },
-  checkInResultEyebrow: {
-    fontSize: 12,
-    fontWeight: '800',
+  checkInResultCornerAccent: {
+    position: 'absolute',
+    top: -40,
+    left: -40,
+    width: 86,
+    height: 86,
+    backgroundColor: '#6A86FF',
+    transform: [{ rotate: '45deg' }],
+  },
+  checkInResultBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 26,
+    paddingVertical: 12,
+    backgroundColor: '#E8EEFF',
+  },
+  checkInResultBadgeText: {
+    fontSize: 13,
+    fontWeight: '900',
     letterSpacing: 0.4,
+    color: '#5A7BEE',
     textTransform: 'uppercase',
   },
   checkInResultTitle: {
-    marginTop: 8,
-    fontSize: 24,
+    marginTop: 64,
+    fontSize: 25,
     fontWeight: '900',
+    color: '#253252',
   },
-  checkInResultQuoteCard: {
+  checkInResultHeadline: {
     marginTop: 16,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    fontSize: 18,
+    lineHeight: 28,
+    fontWeight: '800',
+    color: '#2B3654',
   },
-  checkInResultQuoteText: {
-    fontSize: 22,
-    lineHeight: 32,
-    fontWeight: '700',
-  },
-  checkInResultBody: {
-    marginTop: 14,
+  checkInResultSupportText: {
+    marginTop: 8,
     fontSize: 14,
     lineHeight: 22,
+    color: '#6D7B9B',
+  },
+  checkInResultMetaText: {
+    marginTop: 12,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#8D98B3',
   },
   checkInResultActionsRow: {
-    marginTop: 18,
+    marginTop: 26,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
+    gap: 14,
   },
   checkInResultSecondaryButton: {
-    minWidth: 96,
-    minHeight: 42,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    minWidth: 124,
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: '#D4DDF0',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkInResultSecondaryButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
+    color: '#24324E',
   },
   checkInResultPrimaryButton: {
-    minWidth: 164,
-    minHeight: 42,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    flex: 1,
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#5F7EF4',
   },
   checkInResultPrimaryButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
+    color: '#FFFFFF',
   },
   noteModalOverlay: {
     flex: 1,
-    justifyContent: 'flex-start',
-    paddingTop: 88,
+    backgroundColor: 'rgba(15, 23, 42, 0.58)',
+  },
+  noteModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  noteModalScroll: {
+    flex: 1,
+  },
+  noteModalScrollContent: {
+    flexGrow: 1,
+    paddingTop: 28,
     paddingHorizontal: 18,
-    paddingBottom: 24,
-    backgroundColor: 'rgba(15, 23, 42, 0.24)',
+    paddingBottom: 20,
+    justifyContent: 'flex-start',
   },
   noteModalCard: {
     width: '100%',
     maxWidth: 560,
     alignSelf: 'center',
     borderWidth: 1,
-    borderRadius: 28,
-    paddingHorizontal: 18,
-    paddingTop: 20,
+    borderColor: '#DCE5F7',
+    backgroundColor: '#FFFDFC',
+    borderRadius: 34,
+    overflow: 'hidden',
+    paddingHorizontal: 22,
+    paddingTop: 28,
     paddingBottom: 18,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.24,
+    shadowRadius: 22,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 18,
+  },
+  noteModalCornerAccent: {
+    position: 'absolute',
+    top: -40,
+    left: -40,
+    width: 86,
+    height: 86,
+    backgroundColor: '#6A86FF',
+    transform: [{ rotate: '45deg' }],
+  },
+  noteModalBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#E8EEFF',
+  },
+  noteModalBadgeText: {
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    color: '#5A7BEE',
+    textTransform: 'uppercase',
   },
   noteModalTitle: {
-    fontSize: 18,
+    marginTop: 40,
+    fontSize: 22,
     fontWeight: '900',
-  },
-  noteModalSubtitle: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 20,
+    color: '#253252',
   },
   noteModalPreviousCard: {
     marginTop: 16,
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: '#E0E7F3',
+    backgroundColor: '#F7F9FF',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   noteModalPreviousLabel: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
     marginBottom: 6,
     letterSpacing: 0.2,
+    color: '#7B88A8',
   },
   noteModalPreviousText: {
     fontSize: 14,
-    lineHeight: 20,
-  },
-  checkInNoteTitle: {
-    marginTop: 18,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  checkInNoteHint: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 18,
+    lineHeight: 22,
+    color: '#2B3654',
   },
   checkInNoteInput: {
     marginTop: 12,
-    height: 96,
-    maxHeight: 96,
+    height: 88,
+    maxHeight: 88,
     borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 12,
+    borderColor: '#DDE5F3',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
     lineHeight: 20,
@@ -3174,12 +3193,17 @@ const styles = StyleSheet.create({
   noteTemplateRow: {
     marginTop: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
   noteTemplateChip: {
     width: '48%',
     borderWidth: 1,
-    borderRadius: 999,
+    borderColor: '#DCE5F7',
+    backgroundColor: '#F7F9FF',
+    borderRadius: 18,
+    minHeight: 50,
+    marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     alignItems: 'center',
@@ -3187,8 +3211,10 @@ const styles = StyleSheet.create({
   },
   noteTemplateChipText: {
     fontSize: 11,
+    lineHeight: 16,
     fontWeight: '700',
     textAlign: 'center',
+    color: '#5A7BEE',
   },
   checkInNoteFooterRow: {
     marginTop: 12,
@@ -3201,38 +3227,42 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   noteModalActionsRow: {
-    marginTop: 16,
+    marginTop: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
+    gap: 14,
   },
   noteModalSecondaryButton: {
-    minWidth: 96,
-    minHeight: 42,
-    paddingHorizontal: 16,
+    minWidth: 124,
+    minHeight: 48,
+    paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 999,
     borderWidth: 1,
+    borderColor: '#D4DDF0',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   noteModalSecondaryButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
+    color: '#24324E',
   },
   noteModalPrimaryButton: {
-    minWidth: 154,
-    minHeight: 42,
-    paddingHorizontal: 16,
+    flex: 1,
+    minHeight: 48,
+    paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#5F7EF4',
   },
   noteModalPrimaryButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
+    color: '#FFFFFF',
   },
   checkInNoteStatus: {
     marginTop: 10,
