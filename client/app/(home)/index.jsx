@@ -1730,7 +1730,15 @@ export default function HomeScreen() {
       totalUpcomingCount += safeSection.items.length;
     }
   });
-  const heroBadgeText = getHomeHeroBadgeText(dueTodayCount, totalUpcomingCount);
+  let heroStatusTagText = 'NO TASKS DUE TODAY';
+  if (dueTodayCount === 1) {
+    heroStatusTagText = '1 TASK DUE TODAY';
+  } else if (dueTodayCount > 1) {
+    heroStatusTagText = String(dueTodayCount) + ' TASKS DUE TODAY';
+  } else if (totalUpcomingCount > 0) {
+    heroStatusTagText = 'TASKS COMING UP';
+  }
+  const heroSupportText = checkedInToday ? 'Streak protected for today' : 'Check in to keep your streak';
   const weeklyCompletedCount = weeklyProgressSummary.completedCount || 0;
   const weeklyTotalCount = weeklyProgressSummary.totalCount || 0;
   const weeklyProgressWidth = getProgressBarWidth(weeklyCompletedCount, weeklyTotalCount);
@@ -2010,11 +2018,6 @@ export default function HomeScreen() {
   const checkInResultHeadline = hasSavedYesterdayNote
     ? trimmedYesterdayNote
     : 'No note was saved yesterday.';
-  const checkInResultHintTitle = 'A short note can help tomorrow-you';
-  const checkInResultHintText = hasSavedYesterdayNote
-    ? 'Re-read it once, then leave a fresh note for tomorrow.'
-    : 'Keep momentum without opening a full page.';
-
   let todayNoteErrorNode = null;
   if (todayNoteError) {
     todayNoteErrorNode = (
@@ -2048,33 +2051,52 @@ export default function HomeScreen() {
           ]}
         >
           <View style={styles.heroHeaderRow}>
-            <View style={styles.heroTitleWrap}>
-              <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>STUDENT MOTIVATION</Text>
+            <View style={styles.heroHeaderTextBlock}>
+              <Text style={[styles.headerTitle, { color: theme.textSecondary }]}>STUDENT MOTIVATION</Text>
+              <Pressable
+                onPress={jumpToUpcomingTasks}
+                disabled={dueTodayCount <= 0}
+                style={({ pressed }) => [
+                  styles.heroBadge,
+                  {
+                    backgroundColor: isDarkTheme ? 'rgba(96, 126, 244, 0.18)' : '#E8EEFF',
+                    borderColor: isDarkTheme ? 'rgba(128, 155, 255, 0.34)' : '#D3E1FF',
+                  },
+                  getStyleWhen(dueTodayCount <= 0, { opacity: 1 }),
+                  getStyleWhen(dueTodayCount > 0 && pressed, { opacity: 0.82 }),
+                ]}
+              >
+                <Text style={[styles.heroBadgeText, { color: theme.primary }]}>{heroStatusTagText}</Text>
+              </Pressable>
             </View>
             <View style={styles.heroAvatarWrap}>
-              {renderAvatarNode(
-                avatarUrl,
-                avatarInitial,
-                avatarFallbackBackgroundColor,
-                avatarFallbackTextColor
-              )}
+              <View
+                style={[
+                  styles.heroAvatarShell,
+                  {
+                    backgroundColor: isDarkTheme ? 'rgba(255,255,255,0.06)' : '#F7F9FF',
+                    borderColor: isDarkTheme ? 'rgba(255,255,255,0.08)' : '#DCE5F7',
+                  },
+                ]}
+              >
+                {renderAvatarNode(
+                  avatarUrl,
+                  avatarInitial,
+                  avatarFallbackBackgroundColor,
+                  avatarFallbackTextColor
+                )}
+              </View>
             </View>
           </View>
-          <Pressable
-            onPress={jumpToUpcomingTasks}
-            disabled={dueTodayCount <= 0}
-            style={({ pressed }) => [
-              styles.heroBadge,
-              { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft },
-              getStyleWhen(dueTodayCount <= 0, { opacity: 1 }),
-              getStyleWhen(dueTodayCount > 0 && pressed, { opacity: 0.82 }),
-            ]}
-          >
-            <Text style={[styles.heroBadgeText, { color: theme.primary }]}>{heroBadgeText}</Text>
-          </Pressable>
-          <Text style={[styles.greeting, { color: theme.textPrimary }]}>
-            hi <Text style={styles.greetingBold}>{username}</Text>, how are you today?
-          </Text>
+          <View style={styles.heroGreetingBlock}>
+            <Text style={[styles.greeting, { color: theme.textPrimary }]}>
+              Hi, <Text style={styles.greetingBold}>{username}</Text>
+            </Text>
+            <View style={styles.heroSupportRow}>
+              <View style={[styles.heroSupportAccent, { backgroundColor: theme.primary }]} />
+              <Text style={[styles.heroSupportText, { color: theme.textSecondary }]}>{heroSupportText}</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.statsRow}>
@@ -2573,19 +2595,12 @@ export default function HomeScreen() {
             </View>
             <View style={styles.checkInResultBodyWrap}>
               <Text style={styles.checkInResultTitle}>Yesterday's note</Text>
-              <Text
-                style={styles.checkInResultHeadline}
-                numberOfLines={hasSavedYesterdayNote ? 4 : 2}
-              >
-                {checkInResultHeadline}
-              </Text>
               <View style={styles.checkInResultHintCard}>
                 <View style={styles.checkInResultHintIcon}>
-                  <Text style={styles.checkInResultHintIconText}>i</Text>
+                  <Text style={styles.checkInResultHintIconText}>!</Text>
                 </View>
                 <View style={styles.checkInResultHintContent}>
-                  <Text style={styles.checkInResultHintTitle}>{checkInResultHintTitle}</Text>
-                  <Text style={styles.checkInResultHintText}>{checkInResultHintText}</Text>
+                  <Text style={styles.checkInResultHeadline}>{checkInResultHeadline}</Text>
                 </View>
               </View>
               <View style={styles.checkInResultActionsRow}>
@@ -2882,42 +2897,98 @@ const styles = StyleSheet.create({
 
   heroCard: {
     borderWidth: 1,
-    borderRadius: 28,
-    paddingHorizontal: 18,
+    borderRadius: 30,
+    paddingHorizontal: 20,
     paddingTop: 18,
-    paddingBottom: 18,
+    paddingBottom: 16,
     marginBottom: 18,
     shadowOffset: { width: 0, height: 16 },
     shadowOpacity: 0.1,
     shadowRadius: 28,
     elevation: 4,
   },
-  heroHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  heroTitleWrap: { flex: 1, alignItems: 'flex-start', justifyContent: 'center', paddingRight: 12 },
-  heroAvatarWrap: { width: 54, alignItems: 'flex-end', justifyContent: 'center' },
+  heroHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  heroHeaderTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  heroAvatarWrap: {
+    width: 88,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  heroAvatarShell: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#A7B8E8',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
   headerTitle: {
     textAlign: 'left',
-    fontSize: 18,
+    fontSize: 13,
     fontWeight: '800',
     color: '#111827',
-    letterSpacing: 0.8,
+    letterSpacing: 1,
   },
   heroBadge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    marginTop: 12,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
     borderRadius: 999,
     borderWidth: 1,
-    marginBottom: 14,
+    minHeight: 40,
+    paddingLeft: 0,
+    overflow: 'hidden',
   },
-  heroBadgeText: { fontSize: 12, fontWeight: '700' },
+  heroBadgeText: {
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
 
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#f3f4f6' },
+  avatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: '#f3f4f6' },
   avatarFallback: { backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' },
-  avatarFallbackText: { fontSize: 12, fontWeight: '800', color: '#111827' },
+  avatarFallbackText: { fontSize: 18, fontWeight: '800', color: '#111827' },
 
-  greeting: { fontSize: 16, color: '#111827', lineHeight: 24 },
+  heroGreetingBlock: {
+    marginTop: 18,
+    alignItems: 'flex-start',
+  },
+  greeting: { fontSize: 32, color: '#111827', lineHeight: 38, fontWeight: '900' },
   greetingBold: { fontWeight: '800' },
+  heroSupportRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  heroSupportAccent: {
+    width: 44,
+    height: 5,
+    borderRadius: 999,
+  },
+  heroSupportText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
 
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 18 },
   summaryCard: {
@@ -3066,7 +3137,7 @@ const styles = StyleSheet.create({
     color: '#253252',
   },
   checkInResultHeadline: {
-    marginTop: 12,
+    marginTop: 0,
     fontSize: 17,
     lineHeight: 26,
     fontWeight: '800',
@@ -3078,40 +3149,30 @@ const styles = StyleSheet.create({
     borderColor: '#DCE5F7',
     backgroundColor: '#F7F9FF',
     borderRadius: 22,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    alignItems: 'flex-start',
+    gap: 12,
   },
   checkInResultHintIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#E8EEFF',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    marginTop: 2,
   },
   checkInResultHintIconText: {
-    fontSize: 18,
+    fontSize: 24,
+    lineHeight: 24,
     fontWeight: '900',
     color: '#5A7BEE',
   },
   checkInResultHintContent: {
     flex: 1,
-  },
-  checkInResultHintTitle: {
-    fontSize: 13,
-    lineHeight: 20,
-    fontWeight: '800',
-    color: '#2B3654',
-  },
-  checkInResultHintText: {
-    marginTop: 2,
-    fontSize: 11,
-    lineHeight: 17,
-    color: '#6D7B9B',
   },
   checkInResultActionsRow: {
     marginTop: 20,

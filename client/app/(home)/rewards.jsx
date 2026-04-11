@@ -18,18 +18,35 @@ import { getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 import MakeupCardPanel from '../../components/MakeupCardPanel';
 
+const REWARD_PLACEHOLDER_IMAGE = require('../../assets/photos/coffee1.png');
+
 const FALLBACK_CATALOG = [
-  { id: 1, title: 'Coffee Coupon', pointsCost: 120, category: 'drinks', imageUrl: '', isActive: true },
-  { id: 2, title: 'Latte Coupon', pointsCost: 160, category: 'drinks', imageUrl: '', isActive: true },
-  { id: 3, title: 'Discount Coupon', pointsCost: 200, category: 'coupon', imageUrl: '', isActive: true },
-  { id: 4, title: 'Big Discount Coupon', pointsCost: 260, category: 'coupon', imageUrl: '', isActive: true },
+  { id: 1, title: 'Bosta Coffee 25% Off', pointsCost: 120, category: 'coffee', imageUrl: '', isActive: true },
+  { id: 2, title: 'Bosta Coffee 50% Off', pointsCost: 220, category: 'coffee', imageUrl: '', isActive: true },
+  { id: 3, title: 'Free Bosta Coffee', pointsCost: 360, category: 'coffee', imageUrl: '', isActive: true },
+  { id: 4, title: 'School Cafeteria 25% Off', pointsCost: 150, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 5, title: 'School Cafeteria \u00A32 Off \u00A310', pointsCost: 180, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 6, title: 'School Cafeteria \u00A35 Off \u00A320', pointsCost: 340, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 7, title: 'Besco \u00A32 Off \u00A310', pointsCost: 180, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 8, title: 'Besco \u00A35 Off \u00A320', pointsCost: 340, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 9, title: 'Laundry 50% Off', pointsCost: 200, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 10, title: 'Campus Store 25% Off \u00A35', pointsCost: 100, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 11, title: 'Campus Store 25% Off \u00A310', pointsCost: 190, category: 'daily_life', imageUrl: '', isActive: true },
+  { id: 12, title: '\u00A33 Gift Voucher', pointsCost: 280, category: 'gift_voucher', imageUrl: '', isActive: true },
+  { id: 13, title: '\u00A35 Gift Voucher', pointsCost: 420, category: 'gift_voucher', imageUrl: '', isActive: true },
+  { id: 14, title: 'Make-up Card', pointsCost: 300, category: 'special', imageUrl: '', isActive: true },
+  { id: 15, title: 'Extra Draw Ticket', pointsCost: 100, category: 'special', imageUrl: '', isActive: true },
+  { id: 16, title: 'Reroll Ticket', pointsCost: 60, category: 'special', imageUrl: '', isActive: true },
 ];
 
 const CATEGORY_LABELS = {
-  drinks: 'Drinks',
-  coupon: 'Discount Coupons',
-  makeup_card: 'Protection',
+  coffee: 'Coffee',
+  daily_life: 'Daily Life',
+  gift_voucher: 'Gift Vouchers',
+  special: 'Special',
 };
+
+const CATEGORY_ORDER = ['coffee', 'daily_life', 'gift_voucher', 'special'];
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error) {
@@ -103,15 +120,8 @@ function renderAvatarNode(avatarUrl, avatarInitial) {
   );
 }
 
-function renderRewardImage(item) {
-  if (item.imageUrl) {
-    return <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />;
-  }
-  return (
-    <View style={styles.cardImageFallback}>
-      <Text style={styles.cardImageHint}>{CATEGORY_LABELS[item.category] || 'Reward'}</Text>
-    </View>
-  );
+function renderRewardImage() {
+  return <Image source={REWARD_PLACEHOLDER_IMAGE} style={styles.cardImage} resizeMode="cover" />;
 }
 
 function normalizeCatalog(items) {
@@ -138,7 +148,7 @@ function normalizeCatalog(items) {
       }
       let category = safeRaw.category;
       if (category === null || category === undefined || category === '') {
-        category = 'coupon';
+        category = 'special';
       }
       let imageUrl = safeRaw.imageUrl;
       if (imageUrl === null || imageUrl === undefined || imageUrl === '') {
@@ -178,7 +188,7 @@ function normalizeCatalog(items) {
 
 function groupByCategory(items) {
   return items.reduce((acc, item) => {
-    const key = item.category || 'coupon';
+    const key = item.category || 'special';
     if (!acc[key]) acc[key] = [];
     acc[key].push(item);
     return acc;
@@ -333,7 +343,16 @@ export default function RewardsScreen() {
   };
 
   const sections = groupByCategory(catalog);
-  const sectionKeys = Object.keys(sections);
+  const sectionKeys = Object.keys(sections).sort((left, right) => {
+    const leftIndex = CATEGORY_ORDER.indexOf(left);
+    const rightIndex = CATEGORY_ORDER.indexOf(right);
+    const safeLeftIndex = leftIndex === -1 ? CATEGORY_ORDER.length : leftIndex;
+    const safeRightIndex = rightIndex === -1 ? CATEGORY_ORDER.length : rightIndex;
+    if (safeLeftIndex !== safeRightIndex) {
+      return safeLeftIndex - safeRightIndex;
+    }
+    return String(left).localeCompare(String(right));
+  });
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>

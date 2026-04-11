@@ -69,6 +69,8 @@ const CANVAS_TASK_REWARD_POINTS = 10
 const CANVAS_TASK_DAILY_REWARD_LIMIT = 1
 const MAKEUP_CARD_REWARD_TITLE = 'Make-up Card'
 const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
+const EXTRA_DRAW_TICKET_REWARD_TITLE = 'Extra Draw Ticket'
+const REROLL_TICKET_REWARD_TITLE = 'Reroll Ticket'
 const DRAW_SOURCE_MILESTONE = 'milestone'
 const DRAW_SOURCE_TICKET = 'ticket'
 const DRAW_REWARD_POINTS_10 = 'points_10'
@@ -226,6 +228,22 @@ function isMakeupCardReward(reward) {
     return true
   }
   return false
+}
+
+function isExtraDrawTicketReward(reward) {
+  let safeReward = {}
+  if (reward) {
+    safeReward = reward
+  }
+  return safeReward.title === EXTRA_DRAW_TICKET_REWARD_TITLE
+}
+
+function isRerollTicketReward(reward) {
+  let safeReward = {}
+  if (reward) {
+    safeReward = reward
+  }
+  return safeReward.title === REROLL_TICKET_REWARD_TITLE
 }
 
 function trimTaskTime(value) {
@@ -4592,6 +4610,7 @@ app.post('/rewards/redeem', async function (req, res) {
     if (!userId) return res.status(401).json({ error: 'Unauthenticated' })
 
     await ensureUserRow(userId, client)
+    await ensureRewardStateRow(userId, client)
 
     const safeBody = req.body || {}
     const rewardId = Number(safeBody.rewardId)
@@ -4623,6 +4642,8 @@ app.post('/rewards/redeem', async function (req, res) {
     }
 
     const makeupCardReward = isMakeupCardReward(reward)
+    const extraDrawTicketReward = isExtraDrawTicketReward(reward)
+    const rerollTicketReward = isRerollTicketReward(reward)
 
     const pointsResult = await client.query(
       `
@@ -4674,6 +4695,26 @@ app.post('/rewards/redeem', async function (req, res) {
       )
     }
 
+    let updatedRewardState = null
+    if (extraDrawTicketReward || rerollTicketReward) {
+      updatedRewardState = await client.query(
+        `
+        UPDATE app_user_reward_state
+        SET
+          draw_tickets = draw_tickets + $2,
+          reroll_tickets = reroll_tickets + $3,
+          updated_at = NOW()
+        WHERE clerk_user_id = $1
+        RETURNING draw_tickets, reroll_tickets
+        `,
+        [
+          userId,
+          extraDrawTicketReward ? 1 : 0,
+          rerollTicketReward ? 1 : 0,
+        ],
+      )
+    }
+
     const orderResult = await client.query(
       `
       INSERT INTO app_reward_orders (clerk_user_id, reward_id, points_cost, status, created_at)
@@ -4688,6 +4729,8 @@ app.post('/rewards/redeem', async function (req, res) {
     const order = orderResult.rows[0]
     let remainingPoints = 0
     let makeupCards = 0
+    let drawTickets = 0
+    let rerollTickets = 0
     if (
       updatedUser.rows &&
       updatedUser.rows.length > 0 &&
@@ -4698,11 +4741,26 @@ app.post('/rewards/redeem', async function (req, res) {
         makeupCards = Number(updatedUser.rows[0].makeup_cards) || 0
       }
     }
+    if (
+      updatedRewardState &&
+      updatedRewardState.rows &&
+      updatedRewardState.rows.length > 0 &&
+      updatedRewardState.rows[0]
+    ) {
+      if (updatedRewardState.rows[0].draw_tickets != null) {
+        drawTickets = Number(updatedRewardState.rows[0].draw_tickets) || 0
+      }
+      if (updatedRewardState.rows[0].reroll_tickets != null) {
+        rerollTickets = Number(updatedRewardState.rows[0].reroll_tickets) || 0
+      }
+    }
 
     return res.json({
       ok: true,
       remainingPoints,
       makeupCards,
+      drawTickets,
+      rerollTickets,
       order: {
         id: order.id,
         rewardId: reward.id,
