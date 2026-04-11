@@ -1067,11 +1067,13 @@ export default function HomeScreen() {
     }
 
     const nextTodayNote = String(safeData.todayNote || '');
+    const nextYesterdayNote = String(safeData.yesterdayNote || '');
 
     setTotalSignedDays(nextTotal);
     setStreakDays(nextStreak);
     setCheckedInToday(Boolean(safeData.checkedInToday));
     setPoints(Number(safeData.points) || 0);
+    setYesterdayNote(nextYesterdayNote);
     setTodayNote(nextTodayNote);
     setNoteDraft(nextTodayNote);
     setSummaryReady(true);
@@ -1089,6 +1091,7 @@ export default function HomeScreen() {
         streakDays: undefined,
         checkedInToday: Boolean(safeData.checkedInToday),
         points: Number(safeData.points) || 0,
+        yesterdayNote: String(safeData.yesterdayNote || ''),
         todayNote: String(safeData.todayNote || ''),
         updatedAt: Date.now(),
       };
@@ -1583,9 +1586,27 @@ export default function HomeScreen() {
     }
 
     if (checkedInToday) {
+      let latestTodayNote = todayNote;
+      try {
+        if (API_BASE_URL && authLoaded && isSignedIn) {
+          const token = await getSessionToken();
+          if (token) {
+            const latestStatus = await apiGet('/checkins/status', token, {
+              timeoutMs: 15000,
+              fallbackMessage: 'Failed to load summary',
+            });
+            applySummaryData(latestStatus);
+            persistSummaryToCache(latestStatus);
+            latestTodayNote = String(latestStatus.todayNote || '');
+          }
+        }
+      } catch (_e) {
+        // Keep the current local state if the lightweight refresh fails.
+      }
+
       setTodayNoteError('');
       setTodayNoteNotice('');
-      setNoteDraft(todayNote);
+      setNoteDraft(latestTodayNote);
       resetRewardCelebrationFlow();
       setCheckInResultMessage(getCheckInAlertText(0, false, false));
       setCheckInResultVisible(true);

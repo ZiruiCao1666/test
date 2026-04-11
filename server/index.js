@@ -3663,6 +3663,7 @@ app.get('/checkins/status', async function (req, res) {
 
     await ensureUserRow(userId)
     const today = await getLondonToday()
+    const yesterday = getDateTextWithOffset(today, -1)
 
     const todayCheckin = await pool.query(
       `
@@ -3672,6 +3673,16 @@ app.get('/checkins/status', async function (req, res) {
       LIMIT 1
       `,
       [userId, today],
+    )
+
+    const yesterdayCheckin = await pool.query(
+      `
+      SELECT next_day_note
+      FROM app_checkins
+      WHERE clerk_user_id=$1 AND checkin_date=$2
+      LIMIT 1
+      `,
+      [userId, yesterday],
     )
 
     const total = await pool.query(
@@ -3696,6 +3707,7 @@ app.get('/checkins/status', async function (req, res) {
 
     let checkedInToday = false
     let todayNote = ''
+    let yesterdayNote = ''
     if (todayCheckin.rows && todayCheckin.rows.length > 0) {
       checkedInToday = true
       if (
@@ -3707,6 +3719,16 @@ app.get('/checkins/status', async function (req, res) {
       }
     }
 
+    if (
+      yesterdayCheckin.rows &&
+      yesterdayCheckin.rows.length > 0 &&
+      yesterdayCheckin.rows[0] &&
+      yesterdayCheckin.rows[0].next_day_note !== null &&
+      yesterdayCheckin.rows[0].next_day_note !== undefined
+    ) {
+      yesterdayNote = String(yesterdayCheckin.rows[0].next_day_note)
+    }
+
     return res.json({
       ok: true,
       today,
@@ -3714,6 +3736,7 @@ app.get('/checkins/status', async function (req, res) {
       totalDays: total.rows[0].total_days,
       streakDays: await getStreakDays(pool, userId, today),
       points: currentPoints,
+      yesterdayNote,
       todayNote,
     })
   } catch (e) {
@@ -5048,6 +5071,25 @@ app.post('/checkins/today', async function (req, res) {
         currentNoteResult.rows[0].next_day_note !== undefined
       ) {
         todayNote = String(currentNoteResult.rows[0].next_day_note)
+      }
+
+      const yesterdayNoteResult = await client.query(
+        `
+        SELECT next_day_note
+        FROM app_checkins
+        WHERE clerk_user_id = $1 AND checkin_date = ($2::date - INTERVAL '1 day')::date
+        LIMIT 1
+        `,
+        [userId, today],
+      )
+      if (
+        yesterdayNoteResult.rows &&
+        yesterdayNoteResult.rows.length > 0 &&
+        yesterdayNoteResult.rows[0] &&
+        yesterdayNoteResult.rows[0].next_day_note !== null &&
+        yesterdayNoteResult.rows[0].next_day_note !== undefined
+      ) {
+        yesterdayNote = String(yesterdayNoteResult.rows[0].next_day_note)
       }
 
       const rewardStateResult = await client.query(
