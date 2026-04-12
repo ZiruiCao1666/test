@@ -2670,13 +2670,6 @@ export default function HomeScreen() {
                 <Text style={styles.noteModalBadgeText}>WRITE NOTE</Text>
               </View>
               <Text style={styles.noteModalTitle}>{noteModalTitle}</Text>
-
-              {yesterdayNote ? (
-                <View style={styles.noteModalPreviousCard}>
-                  <Text style={styles.noteModalPreviousLabel}>Yesterday's note</Text>
-                  <Text style={styles.noteModalPreviousText}>{yesterdayNote}</Text>
-                </View>
-              ) : null}
               <TextInput
                 value={noteDraft}
                 onChangeText={(value) => {
@@ -3224,7 +3217,7 @@ const styles = StyleSheet.create({
   },
   noteModalScrollContent: {
     flexGrow: 1,
-    paddingTop: 28,
+    paddingTop: 58,
     paddingHorizontal: 18,
     paddingBottom: 20,
     justifyContent: 'flex-start',
@@ -3278,27 +3271,6 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '900',
     color: '#253252',
-  },
-  noteModalPreviousCard: {
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: '#E0E7F3',
-    backgroundColor: '#F7F9FF',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  noteModalPreviousLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 6,
-    letterSpacing: 0.2,
-    color: '#7B88A8',
-  },
-  noteModalPreviousText: {
-    fontSize: 14,
-    lineHeight: 22,
-    color: '#2B3654',
   },
   checkInNoteInput: {
     marginTop: 12,
