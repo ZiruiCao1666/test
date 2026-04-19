@@ -1,0 +1,338 @@
+﻿
+Section 4 – Design / 第4章 设计
+
+4.1 Software Design / 4.1 软件设计
+
+English
+The system was designed as a mobile-first study support application built with Expo React Native on the client side, Clerk for authentication, an Express backend for business logic, Neon PostgreSQL for application data, and Canvas as the external academic data source. This separation was deliberate. Canvas was treated as a read-oriented academic source for courses, planner items, submissions, grades, and teacher feedback, while the application’s own motivational state, such as points, streaks, make-up cards, reward events, draw-card state, and user-authored reflective notes, was stored in the app’s own backend and database. This kept academic source data and gamification state clearly separated.
+
+中文
+系统被设计为一个以移动端为核心的学习支持应用，前端使用 Expo React Native，认证使用 Clerk，后端业务逻辑使用 Express，应用数据使用 Neon PostgreSQL，Canvas 作为外部学术数据源。这样的分层是有意为之的。Canvas 被定位为以读取为主的 academic source，用于课程、planner items、submissions、grades 和 teacher feedback；而应用自身的 motivation state，例如 points、streaks、make-up cards、reward events、draw-card state，以及用户写给明天的 reflective notes，都保存在应用自己的 backend 和 database 中。这样可以把 academic source data 和 gamification state 清晰分开。
+
+English
+This architectural decision was consistent with official platform boundaries. The Canvas Planner resource supports date-bounded planner retrieval through start_date and end_date and also supports complete_items and incomplete_items filters, making it appropriate for academic task visibility rather than for storing custom app rewards or streak state. The Canvas Submissions resource exposes fields such as submitted_at, score, grade, and submission comments, which made it suitable for validating completed assignment state and displaying teacher feedback. On the client side, Expo Router uses file-based routing, meaning that screen files belong in the app directory while reusable UI modules should be implemented as components. Clerk’s official useAuth() and Express getAuth() flow also aligned well with the project’s token-based mobile-to-backend communication pattern. Neon was used as standard Postgres infrastructure behind the Express server, which was appropriate for storing transactional application state securely on the server side instead of in the mobile client.
+
+中文
+这一架构决策也符合官方文档所体现的平台边界。Canvas Planner resource 支持通过 start_date 和 end_date 做日期范围检索，也支持 complete_items 和 incomplete_items 过滤，因此非常适合 academic task visibility，而不适合保存自定义 reward 或 streak state。Canvas Submissions resource 提供 submitted_at、score、grade 和 submission comments 等字段，因此适合用于验证 assignment completion 并展示 teacher feedback。在客户端，Expo Router 采用 file-based routing，这意味着 screen files 应放在 app 目录下，而可复用 UI 模块应放在 components 中。Clerk 官方的 useAuth() 与 Express getAuth() 也与本项目的 token-based mobile-to-backend 通信模式高度一致。Neon 则作为 Express 后面的标准 Postgres 基础设施，用于安全地在 server side 保存 transactional application state，而不是保存在 mobile client 中。
+
+English
+The design aimed to satisfy four practical project goals at the same time: first, to reduce friction around daily engagement through a simple check-in interaction; second, to improve planning visibility by combining Canvas tasks and manual tasks within the same dashboard; third, to provide bounded gamified reinforcement without turning the app into a purely reward-driven system; and fourth, to keep implementation complexity low enough for an undergraduate project by favoring a small number of clear data structures and route responsibilities.
+
+中文
+该设计同时试图满足四个现实项目目标：第一，通过简单的 check-in interaction 降低每日进入学习状态的 friction；第二，通过将 Canvas tasks 与 manual tasks 放在同一个 dashboard 中来提升 planning visibility；第三，在不把应用做成纯 reward-driven system 的前提下提供有边界的 gamified reinforcement；第四，通过控制数据结构和 route responsibility 的数量，保持实现复杂度在 undergraduate project 可以掌控的范围内。
+
+4.2 Interaction and Feature Design / 4.2 交互与功能设计
+
+4.2.1 Home dashboard and weekly structure / 4.2.1 首页仪表板与周结构
+
+English
+The home screen was designed as a compact dashboard with one primary daily action and several supporting views. The check-in circle was placed at the centre because it served as the lowest-friction daily action in the system. Around it, the home screen displayed current streak, total points, upcoming tasks, weekly progress, and review content. The intention was not to create a general-purpose productivity dashboard, but to build a focused motivational surface that supports three short questions for the user: what should I do now, how am I doing this week, and what have I recently completed.
+
+中文
+首页被设计为一个紧凑的 dashboard，包含一个主要的 daily action 和若干辅助视图。check-in circle 被放在中心位置，因为它是整个系统中 friction 最低的 daily action。在它周围，首页展示 current streak、total points、upcoming tasks、weekly progress 和 review 内容。设计目标并不是做一个通用的 productivity dashboard，而是构建一个聚焦的 motivational surface，帮助用户快速回答三个问题：我现在该做什么，我这周做得怎么样，我最近完成了什么。
+
+English
+A significant design revision concerned weekly progress. Earlier versions used a rolling seven-day window, but this did not match the user-facing label “Weekly progress”. Through later refinement, the logic was changed to a natural week model from Monday to Sunday. This was a design correction rather than only a technical change. A rolling window is useful for retrospective analytics, but a natural week boundary is easier for students to interpret in day-to-day planning. As a result, the weekly progress bar became more aligned with the student mental model of “this week” rather than “the last seven days”.
+
+中文
+一个重要的设计修正发生在 weekly progress 上。早期版本采用 rolling seven-day window，但这与界面标签“Weekly progress”并不一致。经过后续 refinement，逻辑被改成 Monday to Sunday 的 natural week model。这不是单纯的 technical change，而是 design correction。rolling window 更适合 retrospective analytics，但 natural week boundary 更符合学生在日常 planning 中对“this week”的理解。因此，weekly progress bar 最终更准确地对应了学生对“本周”的认知，而不是“过去七天”。
+
+4.2.2 Check-in, streak and recovery design / 4.2.2 签到、连续记录与恢复机制设计
+
+English
+The daily check-in flow was designed as a deliberately low-cost entry behaviour. The objective was not to claim that check-in itself constitutes meaningful learning, but to use it as an initiation mechanism that draws attention back into the wider study-support system. Once the user enters through check-in, other parts of the home screen provide the next step: upcoming tasks, rewards, weekly progress, and review.
+
+中文
+每日 check-in 流程被设计为一种刻意低成本的 entry behaviour。其目标并不是宣称 check-in 本身就代表 meaningful learning，而是把它作为一种 initiation mechanism，让用户重新把注意力带回整个 study-support system。一旦用户通过 check-in 进入应用，首页上的其他部分就会提供下一步：upcoming tasks、rewards、weekly progress 和 review。
+
+English
+The streak system also required an important refinement. A historical version effectively measured the latest block of consecutive check-ins in the database, even if the user had already missed yesterday. This caused ambiguity because the number looked like a current streak even when it was no longer active. The design was revised so that streak means current active continuity: if the user checked in today, the streak ends today; if the user has not checked in today but did check in yesterday, the streak ends yesterday; if yesterday was missed and not repaired, the current streak becomes zero. This makes the streak semantically stricter and more understandable.
+
+中文
+streak system 也经历了一次重要 refinement。早期版本实际上衡量的是数据库中最近一段连续签到的 block，即使用户昨天已经漏签，界面上仍可能显示一个非零数字。这造成了语义歧义，因为用户会把它理解成 current streak。后续设计将 streak 改为 current active continuity：如果用户今天已签到，则 streak 以今天为结尾；如果今天未签到但昨天已签到，则以昨天为结尾；如果昨天已漏签且没有修复，则 current streak 直接归零。这样 streak 的语义更严格，也更容易理解。
+
+English
+To reduce all-or-nothing frustration, a make-up card mechanism was introduced in a limited form. Instead of eliminating the cost of failure completely, it permits a controlled repair of yesterday’s missed check-in. This preserves the motivational value of continuity while reducing the discouragement caused by a single interruption. The make-up card therefore acts as bounded fault tolerance rather than unlimited forgiveness.
+
+中文
+为了减少 all-or-nothing frustration，系统还引入了有限形式的 make-up card 机制。它并不是完全取消 failure 的代价，而是允许对昨天漏掉的一次签到进行受控修复。这样既保留了 continuity 的 motivational value，又减轻了单次中断所带来的 discouragement。因此，make-up card 更像是一种 bounded fault tolerance，而不是 unlimited forgiveness。
+
+4.2.3 Reflective note for tomorrow / 4.2.3 “给明天留言”的反思性设计
+
+English
+One of the most distinctive interaction decisions in the project was the “note for tomorrow” feature attached to check-in. The design goal was not simply to add another text field, but to transform check-in from a purely mechanical point-earning action into a small reflective ritual. The system allows the user, after a successful check-in, to leave a short note for the next day. On the following day, the note is shown only after the next successful check-in.
+
+中文
+本项目中最有辨识度的交互决策之一，就是附着在 check-in 流程上的“note for tomorrow”功能。它的设计目标并不是简单增加一个 text field，而是把 check-in 从纯粹机械的 point-earning action，转变为一个小型 reflective ritual。系统允许用户在 successful check-in 之后给第二天留下一句简短的话，并在第二天再次 successful check-in 之后再把这句留言展示出来。
+
+English
+This sequence was chosen very deliberately. The note is not shown as a forced popup when the app opens, because that would interfere with the home screen’s central structure and create unnecessary interruption. Instead, the note is integrated into the check-in action itself. This preserves the centrality of the main circle while adding a lightweight reflective layer. The interaction also permits reopening and editing the note by tapping the check-in area again after today’s check-in, which keeps the feature flexible without turning it into a separate note-taking subsystem.
+
+中文
+这个顺序是经过刻意设计的。留言不会在应用一打开时就以 forced popup 的方式出现，因为那会破坏首页以 check-in 为核心的结构，也会制造不必要的 interruption。相反，note 被整合进 check-in 动作本身。这样既保留了主圆形入口的中心地位，又增加了一层轻量的 reflective layer。交互上还允许用户在当天已签到后再次点击 check-in area 来重新打开并编辑今日留言，从而在保持灵活性的同时，不把它变成一个独立的 note-taking subsystem。
+
+English
+From a UI perspective, the note feature was implemented with a lightweight modal interaction placed in the upper portion of the screen, supported by KeyboardAvoidingView and TextInput. This decision balanced visibility, context retention, and input usability. The user still sees part of the home screen behind the modal, but the message editor is not pushed into an awkward lower position when the keyboard opens.
+
+中文
+从 UI 角度看，这个 note feature 被实现为一个轻量 modal interaction，位置放在 screen 的上部，并结合 KeyboardAvoidingView 与 TextInput。这样做是在 visibility、context retention 和 input usability 之间取得平衡。用户仍然能看到 modal 背后的部分 home screen，但在 keyboard 弹出时，输入区不会被挤压到 awkward 的屏幕下方。
+4.2.4 Task reward design / 4.2.4 任务奖励机制设计
+
+English
+The task reward model was designed asymmetrically. Custom tasks are user-generated and therefore easier to exploit, so they were rewarded with +1 point and capped at two rewarded completions per day. Canvas assignment rewards were set higher at +10 but capped at one rewarded claim per day. This asymmetry reflects an intentional distinction between self-created tasks and institutionally sourced academic tasks.
+
+中文
+任务奖励模型采用了不对称设计。Custom tasks 是 user-generated，因此更容易被滥用，所以其奖励被设为 +1 point，并限制为每天最多两次 rewarded completions。Canvas assignment rewards 则被设为更高的 +10，但限制为每天最多一次 rewarded claim。这种不对称是有意为之，用来区分 self-created tasks 和 institutionally sourced academic tasks。
+
+English
+The reward model also required a rule boundary around deadlines. A custom task is rewarded only if it is completed before its deadline expires. Earlier logic versions incorrectly rewarded the wrong date condition, so the rule was refined to reflect the intended meaning of task completion. In the final design, a custom task does not earn points if the deadline has already passed. This preserves the interpretation that the reward represents timely completion rather than merely checking off an overdue item.
+
+中文
+奖励模型还需要围绕 deadline 设置边界。Custom task 只有在 deadline 未过时完成，才会获得奖励。早期逻辑版本曾在日期条件上写反，因此规则后来被修正为更符合“task completion”真实含义的形式。在最终设计中，如果 deadline 已经过期，则 custom task 不再获得 points。这保留了一个更合理的解释：reward 代表 timely completion，而不是单纯把 overdue item 勾选完成。
+
+English
+To prevent duplicate or accidental granting, reward events were recorded separately rather than embedded in volatile user counters. This provided a clearer audit trail for why points had changed, made daily caps easier to enforce, and prevented the same custom task or Canvas assignment from receiving the same reward more than once.
+
+中文
+为了防止 duplicate 或 accidental granting，reward events 被单独记录，而不是简单嵌入到易失的 user counters 中。这样做使 points 变化的原因更容易追踪，也让 daily caps 的 enforcement 更清楚，并防止同一个 custom task 或 Canvas assignment 被重复发放同一奖励。
+
+4.2.5 Seven-day draw-card reward design / 4.2.5 七日抽卡奖励设计
+
+English
+The seven-day draw-card system was introduced as a milestone reward layer on top of streak continuity. Every seven-day milestone unlocks a reward opportunity. Rather than assigning a fixed reward, the system presents three hidden cards and requires the user to choose one. The reward remains invisible until after selection, and once one card is selected the system reveals both the chosen and unchosen rewards. This creates anticipation and perceived agency while keeping the mechanism technically lightweight.
+
+中文
+七日抽卡系统被设计为建立在 streak continuity 之上的一个 milestone reward layer。每达到一个七天里程碑，就解锁一次 reward opportunity。系统没有使用固定奖励，而是随机生成三张隐藏卡片，由用户自己选择其中一张。奖励在选择前不可见，选择后系统会同时揭示选中的卡和未选中的卡。这样既制造了 anticipation，也带来了 perceived agency，同时又保持了技术实现的轻量。
+
+English
+Reward types were deliberately limited to a small set: direct points, extra draw tickets, reroll tickets, make-up cards, next-check-in multipliers, next-task bonuses, repeated check-in bonuses, and this-week custom-task bonuses. One earlier candidate, a duplicate-compensation multiplier, was removed because it increased rule complexity without enough user value. This removal was important in keeping the reward system understandable and implementable.
+
+中文
+奖励类型被刻意限制在一个较小的集合中：direct points、extra draw tickets、reroll tickets、make-up cards、next-check-in multipliers、next-task bonuses、repeated check-in bonuses，以及 this-week custom-task bonuses。一个早期候选奖励——duplicate-compensation multiplier——被移除，因为它增加了规则复杂度，却没有提供足够的 user value。这个删除对于保持奖励系统的可理解性和可实现性非常重要。
+
+English
+The draw-card feature also illustrates a broader design principle in the project: rewarding continuity should increase interest, but should not dominate the academic purpose of the system. For that reason, reward state is bounded, server-side, and attached to existing study actions rather than introduced as a separate game world.
+
+中文
+抽卡功能还体现了本项目中的一个更广义设计原则：对 continuity 的奖励可以增加兴趣，但不应该压倒系统的 academic purpose。因此，reward state 被设计为有边界、保存在 server side，并且附着在已有的学习动作之上，而不是引入一个独立的“游戏世界”。
+
+Section 5 – Implementation and Testing / 第5章 实现与测试
+
+5.1 Implementation / 5.1 实现
+
+5.1.1 Authentication and user synchronisation / 5.1.1 认证与用户同步
+
+English
+Authentication was implemented with Clerk. On the mobile client, authentication state and session token retrieval were handled through useAuth(). The Expo client sent bearer tokens to the backend, and backend routes used getAuth(req) to identify the current user and protect authenticated APIs. This design reduced the need to implement a custom password system and also aligned better with a mobile application architecture in which the app communicates with its own backend rather than directly with the database or an external academic service.
+
+中文
+认证使用 Clerk 实现。在 mobile client 端，authentication state 与 session token retrieval 通过 useAuth() 完成。Expo client 将 bearer token 发送到 backend，而 backend route 则使用 getAuth(req) 来识别当前用户并保护 authenticated APIs。这样的设计避免了自行实现 custom password system，也更符合 mobile application architecture：应用通过自己的 backend 与数据库及 external academic service 通信，而不是直接连接它们。
+
+English
+A separate user synchronisation layer ensured that an authenticated app session had a corresponding application user record and that points, reward state, and task state remained scoped to a single Clerk user identity. This reduced the risk of duplicated user rows or inconsistent state after repeated app launches.
+
+中文
+系统中还存在单独的 user synchronisation layer，用于确保 authenticated app session 在应用数据库中有对应的 user record，并保证 points、reward state 和 task state 都绑定到唯一的 Clerk user identity。这样降低了 repeated app launches 后出现 duplicated user rows 或 inconsistent state 的风险。
+
+5.1.2 Check-in, streak, and reflective note workflow / 5.1.2 签到、连续记录与明日留言流程
+
+English
+The check-in workflow was implemented around the app_checkins table. Each check-in record stores the user, the date, and additional note metadata for the “tomorrow note” feature. The backend check-in status route returns whether the user has checked in today, the total number of check-ins, the current streak, the total point balance, and the current day’s note if one has already been written. The check-in action route inserts the current date if it has not already been inserted and then computes reward outcomes and reminder state.
+
+中文
+check-in workflow 围绕 app_checkins table 实现。每条 check-in record 保存用户、日期，以及“tomorrow note”功能所需的 note metadata。backend 的 check-in status route 会返回用户今天是否已签到、total number of check-ins、current streak、total point balance，以及若当天已经写过则返回 current day’s note。check-in action route 则在当日未签到时插入当前日期记录，并在此基础上计算 reward outcomes 和 reminder state。
+
+English
+The “note for tomorrow” feature was implemented by storing next_day_note and next_day_note_updated_at on the current day’s check-in record. This decision kept the data model simple: the message written today belongs naturally to today’s check-in and becomes tomorrow’s message when tomorrow’s check-in is completed. A separate PUT route updates today’s note without creating a second message entity. On the mobile side, this route is called only after check-in, or when the user reopens the check-in modal later the same day.
+
+中文
+“note for tomorrow” 功能通过在当天 check-in record 上保存 next_day_note 和 next_day_note_updated_at 来实现。这个决策使 data model 保持简单：今天写下的消息天然属于今天的签到记录，而到了明天，它就成为 tomorrow’s message，并在明天签到完成后被读取。系统没有新建第二张 message 表，而是通过单独的 PUT route 来更新 today’s note。移动端只会在签到之后，或者用户当天再次打开签到弹窗时调用这条 route。
+
+English
+The streak algorithm was also tightened during implementation. Instead of simply counting the most recent historical block of consecutive dates, the final logic computes the active streak relative to today and yesterday. This ensured that a missed yesterday produces a current streak of zero unless the gap has been repaired.
+
+中文
+在实现过程中，streak algorithm 也被进一步收紧。最终版本不再只是简单计算最近一段连续日期 block，而是相对 today 和 yesterday 计算 active streak。这样一来，只要昨天漏签且没有修复，current streak 就会被正确显示为零。
+5.1.3 Manual tasks, task rewards, and ordering logic / 5.1.3 手动任务、任务奖励与排序逻辑
+
+English
+Manual task management supports both deadline-based and time-range tasks. Each task stores timing information, completion state, and update metadata. Task completion is updated through a dedicated route rather than through optimistic-only client state. This allows the backend to decide whether the completion event qualifies for reward points and whether a reward cap has been reached.
+
+中文
+手动任务管理支持 deadline-based task 与 time-range task。每条任务保存 timing information、completion state 和 update metadata。任务完成状态通过专门的 route 更新，而不是只依赖 optimistic-only client state。这样 backend 就可以判断该 completion event 是否符合 reward 条件，以及是否已经达到当日奖励上限。
+
+English
+The custom-task reward rule became more precise over time. The final rule grants +1 point only when a task is changed from incomplete to complete for the first time, when the task has not already earned a reward, when the per-day limit has not been reached, and when the task is not already overdue. This means that the reward reflects timely action rather than retrospective clean-up.
+
+中文
+custom-task reward rule 随着开发逐渐变得更精确。最终规则规定：只有当任务第一次从 incomplete 变成 complete、该任务尚未获得过奖励、当日奖励上限尚未达到、并且任务尚未 overdue 时，才会给予 +1 point。也就是说，这个 reward 代表 timely action，而不是事后补做的 retrospective clean-up。
+
+English
+Task ordering was also iteratively refined. The final ordering groups active unfinished tasks first and sorts them by nearest deadline, pushes long-overdue tasks further down, and moves older completed tasks to the end. This ordering design reflects the planning intention of the app: the interface should push the most actionable tasks upward and reduce clutter from stale completions.
+
+中文
+task ordering 也经过了迭代 refinement。最终排序会先展示 active unfinished tasks，并按 nearest deadline 排序；将 long-overdue tasks 下移；把更早之前完成的 task 移到末尾。这样的排序反映了应用的 planning intention：界面应该把最值得当前采取行动的任务推到上方，同时减少 stale completions 对视野的干扰。
+
+5.1.4 Canvas integration and academic feedback / 5.1.4 Canvas 集成与学术反馈
+
+English
+Canvas integration was implemented through two distinct but related resource types. Planner items were used to surface upcoming and completed academic tasks in a date-bounded manner. Submissions were used for stronger verification and richer feedback fields. This separation mirrored the strengths of the official APIs: Planner for task visibility and date-range listing; Submissions for evidence of completion, grading details, and teacher comments.
+
+中文
+Canvas integration 通过两类相关但不同的 resource 实现。Planner items 用于在日期范围内展示 upcoming 和 completed academic tasks；Submissions 则用于更严格的 completion verification 和更丰富的 feedback fields。这样的分工对应了官方 API 的优势：Planner 负责 task visibility 和 date-range listing；Submissions 负责 completion evidence、grading details 和 teacher comments。
+
+English
+On the home screen, completed Canvas tasks can expose teacher feedback through a modal view that shows score, submission time, grade, and teacher comments. This avoided forcing the user back into Canvas for every feedback check, while still preserving an Open task action that returns the user to the original Canvas page when needed. This was a useful compromise between local visibility and source-platform continuity.
+
+中文
+在首页中，已完成的 Canvas tasks 可以通过 modal view 展示 teacher feedback，包括 score、submission time、grade 和 teacher comments。这样避免了用户每次查看反馈都必须返回 Canvas，同时仍然保留了 Open task 操作，以便在需要时回到原始 Canvas 页面。这是在 local visibility 与 source-platform continuity 之间取得的一个有用折中。
+
+English
+Canvas reward claims were implemented as explicit actions rather than automatic background grants. The system requires an intentional claim action and verifies the relevant assignment state server-side. This reduced the risk that repeated page loads, retries, or cache refreshes would accidentally grant points more than once.
+
+中文
+Canvas reward claim 被实现为 explicit action，而不是 automatic background grant。系统要求用户主动点击 claim，并在 server side 验证 assignment state。这样可以降低 repeated page loads、retries 或 cache refreshes 导致 accidental duplicate rewards 的风险。
+
+5.1.5 Reward layers: make-up cards, milestone draws, and future-use bonuses / 5.1.5 奖励层：补签卡、里程碑抽卡与未来增益奖励
+
+English
+The reward system has multiple layers. First, check-in grants points and contributes to streak continuity. Second, long-horizon continuity can unlock additional make-up support or draw-card opportunities. Third, draw-card rewards can either grant immediate value, such as points, or future-use value, such as a next-check-in multiplier or next-task bonus. In implementation terms, this required separating direct rewards from stored reward state.
+
+中文
+reward system 由多个层次组成。第一层，check-in 会提供 points，并推动 streak continuity。第二层，较长周期的 continuity 会解锁额外的 make-up support 或 draw-card opportunities。第三层，draw-card rewards 既可能提供 immediate value，例如 points，也可能提供 future-use value，例如 next-check-in multiplier 或 next-task bonus。从实现角度看，这要求把 direct rewards 与 stored reward state 分开处理。
+
+English
+Milestone draws and stored reward effects were placed in server-side reward state so that they persist across sessions and devices and remain consistent with point and task logic. The mobile component is responsible for presenting the draw UI and user choice, but the backend remains the source of truth for whether a draw is available, whether a reroll may be used, and how accepted rewards alter future check-ins or task completions.
+
+中文
+milestone draws 与 stored reward effects 被放在 server-side reward state 中，这样它们可以跨 session 和 device 持久存在，并与 point 和 task logic 保持一致。移动端组件负责展示 draw UI 和 user choice，但 backend 才是 source of truth，用于决定 draw 是否可用、reroll 是否允许、以及被接受的 reward 如何改变未来的 check-ins 或 task completions。
+
+5.2 Testing / 5.2 测试
+
+English
+Testing in the project was mainly scenario-based and integration-oriented rather than based on a fully automated test suite. This was appropriate for the scope of the project because many important behaviours depended on interactions across multiple layers, including the mobile client, authentication, backend logic, Neon state, and Canvas data. Syntax validation and targeted route checks were used to catch basic implementation errors, but the most informative tests were functional user scenarios.
+
+中文
+本项目的 testing 主要是 scenario-based 和 integration-oriented，而不是建立在完整 automated test suite 之上。这样的选择与项目范围是匹配的，因为许多关键行为都依赖多个层次之间的交互，包括 mobile client、authentication、backend logic、Neon state 和 Canvas data。syntax validation 与 targeted route checks 用于捕捉基础实现错误，但最有信息量的测试来自 functional user scenarios。
+
+English
+The following scenarios were especially important: successful first check-in of the day; repeated check-in on the same day; missed-day streak drop; make-up repair of yesterday; writing, editing, and re-reading tomorrow notes; manual task completion before and after deadline; daily reward cap enforcement; viewing weekly progress after changing tasks; claiming a Canvas task reward; viewing Canvas teacher feedback; and selecting and accepting one reward from a set of hidden milestone draw cards.
+
+中文
+以下场景尤其重要：当日第一次 successful check-in；同一天 repeated check-in；missed-day streak drop；对 yesterday 的 make-up repair；编写、编辑以及第二天重新读取 tomorrow notes；deadline 前后完成 manual task；daily reward cap enforcement；修改任务后查看 weekly progress；claim Canvas task reward；查看 Canvas teacher feedback；以及在一组三张隐藏 milestone draw cards 中选择并接受一个 reward。
+
+English
+During development, several defects were found through this scenario-based process. For example, weekly progress initially used a rolling window rather than Monday-to-Sunday logic; streak initially reflected the latest historical block rather than current continuity; a custom-task reward condition was once inverted; and a backend weekly-plan revision caused an internal server error until the date-window logic was corrected. Recording and correcting these defects was part of the development process rather than evidence of failure. It showed that the system’s behaviour was being refined against actual use cases rather than assumed correctness.
+
+中文
+在开发过程中，多个 defect 正是通过这种 scenario-based process 被发现的。例如，weekly progress 最初使用 rolling window，而不是 Monday-to-Sunday logic；streak 最初反映的是 latest historical block，而不是 current continuity；custom-task reward condition 一度写反；某次 backend weekly-plan revision 还曾在 date-window logic 出错时导致 internal server error。记录并纠正这些 defects 是 development process 的组成部分，而不是失败的证据。它说明系统行为是在真实 use cases 下不断 refinement，而不是被预设为天然正确。
+
+5.3 Traceability between requirements, design, and implementation / 5.3 需求、设计与实现之间的可追踪性
+
+English
+A useful implementation principle throughout the project was traceability. Each important feature could be traced from requirement to design to route and interface behaviour. For example, the requirement to support low-friction daily engagement maps to the central home check-in circle; the requirement to support planning visibility maps to weekly progress and upcoming tasks; the requirement to support bounded gamification maps to points, reward caps, and milestone draws; and the requirement to support reflective continuity maps to the tomorrow-note feature.
+
+中文
+本项目中的一个重要 implementation principle 是 traceability。每个关键功能都可以从 requirement 一路追踪到 design，再追踪到 route 和 interface behaviour。例如，支持 low-friction daily engagement 的 requirement 对应首页中央的 check-in circle；支持 planning visibility 的 requirement 对应 weekly progress 与 upcoming tasks；支持 bounded gamification 的 requirement 对应 points、reward caps 和 milestone draws；支持 reflective continuity 的 requirement 则对应 tomorrow-note feature。
+Section 6 – Evaluation / 第6章 评估
+
+6.1 Evaluation against project aims / 6.1 相对于项目目标的评估
+
+English
+The project set out to investigate whether a mobile application could support student motivation and planning by combining low-friction daily actions, lightweight gamification, and Canvas-linked academic visibility. The resulting system partially achieved this aim in a credible and demonstrable way. It does not solve motivation in a complete psychological sense, but it does provide a structured environment in which motivation-supporting signals, planning cues, and continuity mechanisms are integrated into daily study behaviour.
+
+中文
+本项目的目标是研究：一个移动应用是否可以通过结合 low-friction daily actions、lightweight gamification 和 Canvas-linked academic visibility 来支持 student motivation 与 planning。最终系统以一种可信且可演示的方式部分实现了这一目标。它并不能在完整的心理学意义上“解决 motivation”，但它确实提供了一个结构化环境，在其中 motivation-supporting signals、planning cues 和 continuity mechanisms 被整合进日常学习行为之中。
+
+English
+The check-in flow and reflective note feature support the start of action and the continuity of engagement. Upcoming tasks, weekly progress, and review support planning and monitoring. Canvas integration improves task visibility, source fidelity, and access to grading-related information. Reward structures such as points, make-up cards, capped task rewards, and milestone draw opportunities provide bounded extrinsic reinforcement while remaining tied to actual study-relevant actions.
+
+中文
+check-in flow 和 reflective note feature 支持“开始行动”与 engagement continuity。upcoming tasks、weekly progress 与 review 支持 planning 和 monitoring。Canvas integration 提升了 task visibility、source fidelity，以及对 grading-related information 的访问。points、make-up cards、capped task rewards 和 milestone draw opportunities 等 reward structures 则提供了 bounded extrinsic reinforcement，同时仍然与 study-relevant actions 绑定在一起。
+
+6.2 Strengths of the final design / 6.2 最终设计的优势
+
+English
+One strength of the final design is that it combines motivational mechanics with academically meaningful data rather than leaving gamification detached from real study activity. Many general habit apps provide streaks and rewards without academic context, but this project links those mechanics to deadlines, course tasks, submitted assignments, feedback, and self-defined study tasks. This helps the app function as a study-support system rather than a generic reward machine.
+
+中文
+最终设计的一个优势在于：它把 motivational mechanics 与 academically meaningful data 结合起来，而不是让 gamification 脱离真实学习活动单独存在。许多一般性的 habit apps 提供 streaks 和 rewards，却缺乏 academic context；而本项目把这些机制与 deadlines、course tasks、submitted assignments、feedback，以及 self-defined study tasks 绑定起来。这使应用更像一个 study-support system，而不是 generic reward machine。
+
+English
+A second strength is the iterative correction of semantic mismatches. The project did not simply freeze early logic. Instead, several user-facing inconsistencies were identified and revised, including the meaning of streak, the meaning of weekly progress, the timing of tomorrow-note prompts, the task reward deadline rule, and the three-card hidden selection interaction. These refinements improved coherence between what the interface says and what the system actually calculates.
+
+中文
+第二个优势是对 semantic mismatches 的迭代修正。项目并没有把早期逻辑固定不变，而是在开发过程中识别并修正了多个 user-facing inconsistency，包括 streak 的意义、weekly progress 的意义、tomorrow-note prompt 的出现时机、task reward 的 deadline rule，以及三选一 hidden card interaction。这些 refinements 提高了界面表达与系统实际计算之间的一致性。
+
+English
+A third strength is that the system respects data-source boundaries. Canvas remains the external academic authority for coursework, submissions, and feedback, while the app’s own backend retains ownership of motivational state. This separation makes the system conceptually cleaner and more secure.
+
+中文
+第三个优势是系统尊重 data-source boundaries。Canvas 仍然是 coursework、submissions 和 feedback 的 external academic authority，而应用自身的 backend 负责 motivational state。这样的分离让系统在概念上更清晰，也更安全。
+
+6.3 Limitations / 6.3 局限性
+
+English
+Despite these strengths, the project has clear limitations. Evaluation was primarily based on implementation reasoning, functional testing, and small-scale scenario validation rather than a large, long-term user study. This means that claims about sustained motivational impact should be treated cautiously. The system demonstrates plausibility and design coherence, but not large-scale behavioural proof.
+
+中文
+尽管如此，项目仍然存在明显局限。evaluation 主要基于 implementation reasoning、functional testing 和 small-scale scenario validation，而不是大规模、长期的 user study。因此，关于 sustained motivational impact 的结论必须谨慎。系统展示了 plausibility 与 design coherence，但并不等于已经获得 large-scale behavioural proof。
+
+English
+Another limitation is that some gamification balances remain heuristic. Point values, caps, and reward probabilities were selected to be reasonable and bounded, but they were not derived from a longitudinal controlled study. Future balancing work could reveal that some incentives are too weak, too strong, or differently effective for different kinds of students.
+
+中文
+另一个局限是部分 gamification balance 仍然具有 heuristic 性质。point values、caps 和 reward probabilities 都被设定为“合理且有边界”，但它们并不是来自 longitudinal controlled study。未来的 balancing work 可能会发现，有些 incentive 对不同类型的学生而言过弱、过强，或者效果差异很大。
+
+English
+A further limitation is dependence on external platform stability. Canvas integration depends on token validity, API availability, and academic platform conventions. While the app can restructure and present Canvas information more helpfully, it cannot fully control the reliability or semantics of the external system.
+
+中文
+还有一个局限是对 external platform stability 的依赖。Canvas integration 依赖 token validity、API availability，以及 academic platform conventions。应用虽然可以更有帮助地重组与展示 Canvas 信息，但无法完全控制 external system 的 reliability 或语义边界。
+
+6.4 Reflection on the implemented solution / 6.4 对已实现方案的反思
+
+English
+Overall, the implemented solution works best when interpreted as a bounded motivational support tool rather than a complete learning management environment. It does not replace Canvas, and it does not replace students’ own self-regulation, but it can reduce friction around seeing work, starting work, maintaining continuity, and receiving lightweight feedback. This is an appropriate role for a mobile app of this scope.
+
+中文
+总体来看，已实现方案最适合被理解为一个 bounded motivational support tool，而不是完整的 learning management environment。它不会取代 Canvas，也不会取代学生自身的 self-regulation，但它确实能够降低“看见任务、开始任务、维持连续性、获得轻反馈”这几个环节中的 friction。对于当前范围的移动应用来说，这是一个合理的定位。
+
+Section 7 – Conclusion / 第7章 结论
+
+English
+This project developed and refined a cross-platform student motivation application that combines daily check-in, reflective note writing, points and rewards, manual task support, Canvas-linked task visibility, teacher feedback access, bounded task rewards, make-up cards, and milestone draw mechanics. The final system shows that it is feasible to combine low-friction habit entry, study planning support, and restrained gamification within a single mobile application architecture.
+
+中文
+本项目开发并迭代完善了一个跨平台的 student motivation application，结合了 daily check-in、reflective note writing、points and rewards、manual task support、Canvas-linked task visibility、teacher feedback access、bounded task rewards、make-up cards，以及 milestone draw mechanics。最终系统表明：在单一移动应用架构中，将 low-friction habit entry、study planning support 与 restrained gamification 结合起来是可行的。
+
+English
+The project’s central research direction was whether a mobile student motivation app could support university students in engaging with study more positively and consistently by combining lightweight gamified incentives with clearer academic task visibility and bounded Canvas integration. The answer suggested by the implemented prototype is yes, but with an important qualification. The app is most effective not when it replaces academic systems or attempts to force motivation, but when it reduces friction, clarifies the next action, and provides bounded progress signals attached to meaningful study behaviour.
+
+中文
+本项目的核心研究方向是：一个移动 student motivation app 是否可以通过 lightweight gamified incentives、clearer academic task visibility 与 bounded Canvas integration，帮助大学生更积极且更持续地参与学习。已实现 prototype 所给出的答案倾向于是“可以”，但有一个重要前提：应用最有效的时候，并不是它试图取代 academic systems 或“强迫”产生 motivation，而是它在减少 friction、明确 next action，并把有边界的 progress signals 绑定到 meaningful study behaviour 上的时候。
+
+English
+Future work should include a more formal user study, deeper evaluation of motivational outcomes over time, better personalisation of reward balances, richer notification and reminder logic, and additional robustness work around external integration and offline behaviour. These developments would help move the project from a strong functional prototype toward a more mature and research-validated application.
+
+中文
+future work 应包括更正式的 user study、对 motivational outcomes 的长期评估、更个性化的 reward balance、更加丰富的 notification 与 reminder logic，以及围绕 external integration 和 offline behaviour 的进一步 robustness work。这些发展将有助于项目从一个功能较强的 prototype，进一步迈向更成熟且更具 research validation 的 application。
+Implementation References Used in Design Reasoning / 设计论证中使用的官方实现依据
+
+English
+The design and implementation choices in these sections were grounded in official documentation as follows: Canvas Planner was used as the basis for date-bounded task retrieval and complete_items / incomplete_items filtering; Canvas Submissions was used as the basis for submitted_at, score, grade, and teacher comment retrieval; Expo Router documentation informed the file-based routing and the separation between app routes and reusable components; Expo / React Native documentation for Modal, TextInput, and KeyboardAvoidingView informed the note-writing interaction design; Clerk documentation for useAuth() and Express getAuth() informed authenticated client-server communication; and Neon documentation informed the decision to keep application state in a standard server-side Postgres layer.
+
+中文
+以上章节中的设计与实现选择，参考了以下官方文档：Canvas Planner 用于支持 date-bounded task retrieval 以及 complete_items / incomplete_items filtering；Canvas Submissions 用于 submitted_at、score、grade 和 teacher comment retrieval；Expo Router 文档用于指导 file-based routing 以及 app routes 与 reusable components 的分离；Expo / React Native 中关于 Modal、TextInput 和 KeyboardAvoidingView 的文档用于指导 note-writing interaction design；Clerk 中关于 useAuth() 和 Express getAuth() 的文档用于指导 authenticated client-server communication；Neon 文档则支持将 application state 保存在标准的 server-side Postgres layer 中，而不是保存在客户端。
+
+Official source links / 官方来源链接
+1. Canvas Planner API: https://developerdocs.instructure.com/services/canvas/resources/planner
+2. Canvas Submissions API: https://developerdocs.instructure.com/services/canvas/resources/submissions
+3. Expo Router Introduction: https://docs.expo.dev/router/introduction/
+4. Expo SecureStore: https://docs.expo.dev/versions/latest/sdk/securestore/
+5. React Native Modal: https://reactnative.dev/docs/modal
+6. React Native TextInput: https://reactnative.dev/docs/textinput
+7. React Native KeyboardAvoidingView: https://reactnative.dev/docs/keyboardavoidingview
+8. Clerk Expo useAuth(): https://clerk.com/docs/expo/reference/hooks/use-auth
+9. Clerk Express getAuth(): https://clerk.com/docs/reference/express/get-auth
+10. Neon connect securely: https://neon.com/docs/connect/connect-securely
