@@ -95,9 +95,12 @@ function getRefreshText(loading) {
   return 'refresh';
 }
 
-function getRedeemButtonText(disabled) {
-  if (disabled) {
+function getRedeemButtonText(redeeming, canRedeemByBackend) {
+  if (redeeming) {
     return 'redeeming...';
+  }
+  if (!canRedeemByBackend) {
+    return 'backend only';
   }
   return 'redeem';
 }
@@ -216,6 +219,7 @@ export default function RewardsScreen() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
   const [redeemingId, setRedeemingId] = React.useState(null);
+  const canRedeemByBackend = Boolean(API_BASE_URL && authLoaded && isSignedIn);
 
   const loadRewards = React.useCallback(async () => {
     if (!authLoaded || !isSignedIn) {
@@ -239,7 +243,7 @@ export default function RewardsScreen() {
 
       if (!API_BASE_URL) {
         setCatalog(FALLBACK_CATALOG);
-        setError('Missing EXPO_PUBLIC_API_URL, using local rewards list.');
+        setError('Missing EXPO_PUBLIC_API_URL. Rewards redemption is disabled until backend is configured.');
         return;
       }
 
@@ -287,8 +291,16 @@ export default function RewardsScreen() {
     }, [loadRewards]),
   );
 
-  const onRedeem = async (item) => {
+  const onRedeem = React.useCallback(async (item) => {
     if (redeemingId) {
+      return;
+    }
+
+    if (!canRedeemByBackend) {
+      Alert.alert(
+        'Backend required',
+        'Rewards redemption uses server-side Neon records only. Configure EXPO_PUBLIC_API_URL and sign in.',
+      );
       return;
     }
 
@@ -299,12 +311,6 @@ export default function RewardsScreen() {
 
     try {
       setRedeemingId(item.id);
-
-      if (!API_BASE_URL) {
-        setPoints((prev) => Math.max(0, prev - item.pointsCost));
-        Alert.alert('Redeemed', String(item.title) + ' redeemed (local mode).');
-        return;
-      }
 
       const getTokenFromRef = getTokenRef.current;
       let token = '';
@@ -322,8 +328,6 @@ export default function RewardsScreen() {
 
       if (data.remainingPoints !== undefined) {
         setPoints(Number(data.remainingPoints) || 0);
-      } else {
-        setPoints((prev) => Math.max(0, prev - item.pointsCost));
       }
 
       Alert.alert('Redeemed', String(item.title) + ' redeemed successfully.');
@@ -340,7 +344,7 @@ export default function RewardsScreen() {
     } finally {
       setRedeemingId(null);
     }
-  };
+  }, [redeemingId, points, canRedeemByBackend, loadRewards]);
 
   const sections = groupByCategory(catalog);
   const sectionKeys = Object.keys(sections).sort((left, right) => {
@@ -444,7 +448,8 @@ export default function RewardsScreen() {
             </Text>
             <View style={styles.grid}>
               {sections[key].map((item) => {
-                const disabled = redeemingId === item.id;
+                const redeeming = redeemingId === item.id;
+                const disabled = redeeming || !canRedeemByBackend;
                 return (
                   <View
                     key={String(item.id)}
@@ -485,7 +490,7 @@ export default function RewardsScreen() {
                         ]}
                       >
                         <Text style={[styles.redeemText, { color: theme.primaryText }]}>
-                          {getRedeemButtonText(disabled)}
+                          {getRedeemButtonText(redeeming, canRedeemByBackend)}
                         </Text>
                       </Pressable>
                     </View>

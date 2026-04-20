@@ -2271,7 +2271,8 @@ export default function CalendarScreen() {
   const calendarFeed = useMemo(() => {
     // Merge Canvas items and custom tasks into one timeline for day/week/month views.
     const merged = [];
-    const seen = new Set();
+    const seenByStableId = new Set();
+    const seenByFallbackFingerprint = new Set();
 
     const pushItem = (item) => {
       const safeItem = item || {};
@@ -2279,19 +2280,34 @@ export default function CalendarScreen() {
       if (!date) {
         return;
       }
-      const dedupeKey = [
-        String(safeItem.htmlUrl || ''),
-        String(safeItem.title || ''),
-        String(safeItem.course || ''),
-        date.toISOString(),
-      ].join('|');
-      if (seen.has(dedupeKey)) {
-        return;
+      const normalizedDateIso = date.toISOString();
+      const source = String(safeItem.source || '').trim();
+      const id = String(safeItem.id || '').trim();
+      const stableDedupeKey = source + '|' + id;
+
+      if (source && id) {
+        if (seenByStableId.has(stableDedupeKey)) {
+          return;
+        }
+        seenByStableId.add(stableDedupeKey);
+      } else {
+        const fallbackDedupeKey = [
+          String(safeItem.htmlUrl || ''),
+          String(safeItem.title || ''),
+          String(safeItem.course || ''),
+          normalizedDateIso,
+          source,
+          String(safeItem.type || ''),
+        ].join('|');
+        if (seenByFallbackFingerprint.has(fallbackDedupeKey)) {
+          return;
+        }
+        seenByFallbackFingerprint.add(fallbackDedupeKey);
       }
-      seen.add(dedupeKey);
+
       merged.push({
         ...safeItem,
-        date: date.toISOString(),
+        date: normalizedDateIso,
       });
     };
 
