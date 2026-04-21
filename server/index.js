@@ -86,6 +86,7 @@ const DRAW_REWARD_NEXT_TASK_10 = 'next_task_bonus_10'
 const DRAW_REWARD_NEXT_3_CHECKINS_5 = 'next_3_checkins_bonus_5'
 const DRAW_REWARD_WEEKLY_CUSTOM_1 = 'weekly_custom_bonus_1'
 const DRAW_REWARD_REROLL_TICKET = 'reroll_ticket'
+const THIRTY_DAY_STREAK_POOL_THRESHOLD = 30
 const STREAK_DRAW_REWARD_POOL = [
   { code: DRAW_REWARD_POINTS_10, weight: 25.42 },
   { code: DRAW_REWARD_POINTS_20, weight: 19.07 },
@@ -100,6 +101,20 @@ const STREAK_DRAW_REWARD_POOL = [
   { code: DRAW_REWARD_REROLL_TICKET, weight: 2.12 },
   { code: DRAW_REWARD_POINTS_50, weight: 0.5 },
   { code: DRAW_REWARD_POINTS_100, weight: 0.05 },
+]
+const STREAK_DRAW_REWARD_POOL_30_DAY = [
+  { code: DRAW_REWARD_POINTS_20, weight: 20 },
+  { code: DRAW_REWARD_POINTS_30, weight: 15 },
+  { code: DRAW_REWARD_POINTS_50, weight: 1 },
+  { code: DRAW_REWARD_POINTS_100, weight: 0.5 },
+  { code: DRAW_REWARD_DRAW_TICKET, weight: 12 },
+  { code: DRAW_REWARD_MAKEUP_CARD, weight: 5 },
+  { code: DRAW_REWARD_CHECKIN_X2, weight: 13 },
+  { code: DRAW_REWARD_CHECKIN_X3, weight: 8 },
+  { code: DRAW_REWARD_NEXT_TASK_10, weight: 10 },
+  { code: DRAW_REWARD_NEXT_3_CHECKINS_5, weight: 7 },
+  { code: DRAW_REWARD_WEEKLY_CUSTOM_1, weight: 3.5 },
+  { code: DRAW_REWARD_REROLL_TICKET, weight: 5 },
 ]
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
 const CANVAS_IV_BYTES = 12
@@ -2043,14 +2058,17 @@ function buildDrawRewardPayload(code) {
   }
 }
 
-function rollStreakDrawReward() {
+function rollStreakDrawReward(pool = STREAK_DRAW_REWARD_POOL) {
+  const safePool =
+    Array.isArray(pool) && pool.length > 0 ? pool : STREAK_DRAW_REWARD_POOL
+
   let totalWeight = 0
-  STREAK_DRAW_REWARD_POOL.forEach(function (item) {
+  safePool.forEach(function (item) {
     totalWeight += item.weight
   })
 
   let roll = Math.random() * totalWeight
-  for (const item of STREAK_DRAW_REWARD_POOL) {
+  for (const item of safePool) {
     roll -= item.weight
     if (roll < 0) {
       return {
@@ -2060,21 +2078,21 @@ function rollStreakDrawReward() {
     }
   }
 
-  const fallback = STREAK_DRAW_REWARD_POOL[0]
+  const fallback = safePool[0]
   return {
     code: fallback.code,
     payload: buildDrawRewardPayload(fallback.code),
   }
 }
 
-function rollStreakDrawChoices(count = 3) {
+function rollStreakDrawChoices(count = 3, pool = STREAK_DRAW_REWARD_POOL) {
   const choices = []
   const usedCodes = new Set()
   let guard = 0
 
   while (choices.length < count && guard < 100) {
     guard += 1
-    const rolledReward = rollStreakDrawReward()
+    const rolledReward = rollStreakDrawReward(pool)
     if (usedCodes.has(rolledReward.code)) {
       continue
     }
@@ -2084,6 +2102,18 @@ function rollStreakDrawChoices(count = 3) {
   }
 
   return choices
+}
+
+function getStreakDrawPoolByContext(source, streakDays) {
+  if (source !== DRAW_SOURCE_MILESTONE) {
+    return STREAK_DRAW_REWARD_POOL
+  }
+
+  const safeStreakDays = Number(streakDays) || 0
+  if (safeStreakDays >= THIRTY_DAY_STREAK_POOL_THRESHOLD) {
+    return STREAK_DRAW_REWARD_POOL_30_DAY
+  }
+  return STREAK_DRAW_REWARD_POOL
 }
 
 function parsePendingRewardPayload(value) {
@@ -3960,7 +3990,12 @@ app.post('/streak-draw/open', async function (req, res) {
       return res.status(409).json({ error: 'No extra draw ticket is available.' })
     }
 
-    const rolledChoices = rollStreakDrawChoices(3)
+    let currentStreakDays = 0
+    if (source === DRAW_SOURCE_MILESTONE) {
+      currentStreakDays = await getStreakDays(client, userId, today)
+    }
+    const drawPool = getStreakDrawPoolByContext(source, currentStreakDays)
+    const rolledChoices = rollStreakDrawChoices(3, drawPool)
     const nextMilestoneDraws =
       source === DRAW_SOURCE_MILESTONE ? rewardState.milestoneDraws - 1 : rewardState.milestoneDraws
     const nextDrawTickets =
