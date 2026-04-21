@@ -1,7 +1,9 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import path from 'node:path'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { clerkMiddleware, getAuth, clerkClient } from '@clerk/express'
 import { pool } from './db.js'
 import { runDbInit } from './scripts/db-init.js'
@@ -12,6 +14,9 @@ const parsedPort = Number(process.env.PORT)
 if (Number.isFinite(parsedPort) && parsedPort > 0) {
   port = parsedPort
 }
+const currentFilePath = fileURLToPath(import.meta.url)
+const currentDir = path.dirname(currentFilePath)
+const photosDir = path.join(currentDir, '..', 'photos')
 
 // 允许前端带 Authorization: Bearer <token> 调用后端。
 
@@ -24,6 +29,7 @@ app.use(
   }),
 )
 app.use(express.json())
+app.use('/photos', express.static(photosDir))
 
 // 参考 Clerk Express 官方文档：https://clerk.com/docs/reference/express/clerk-middleware
 // 官网示例是先 app.use(clerkMiddleware())，之后再在路由里用 getAuth(req) 读取登录态。

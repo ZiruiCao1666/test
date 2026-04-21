@@ -123,7 +123,32 @@ function renderAvatarNode(avatarUrl, avatarInitial) {
   );
 }
 
-function renderRewardImage() {
+function resolveRewardImageUrl(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+  if (value.startsWith('data:')) {
+    return value;
+  }
+  if (!API_BASE_URL) {
+    return value;
+  }
+  if (value.startsWith('/')) {
+    return API_BASE_URL + value;
+  }
+  return API_BASE_URL + '/' + value;
+}
+
+function renderRewardImage(item) {
+  const safeItem = item || {};
+  const imageUrl = String(safeItem.imageUrl || '').trim();
+  if (imageUrl) {
+    return <Image source={{ uri: imageUrl }} style={styles.cardImage} resizeMode="cover" />;
+  }
   return <Image source={REWARD_PLACEHOLDER_IMAGE} style={styles.cardImage} resizeMode="cover" />;
 }
 
@@ -160,6 +185,7 @@ function normalizeCatalog(items) {
       if (imageUrl === null || imageUrl === undefined) {
         imageUrl = '';
       }
+      imageUrl = resolveRewardImageUrl(imageUrl);
       let isActive = safeRaw.isActive;
       if (isActive === null || isActive === undefined) {
         isActive = safeRaw.is_active;
