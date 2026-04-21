@@ -18,7 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { getCustomDisplayNameFromUser, getDisplayNameFromUser } from '../../lib/user-display';
 import { useAppTheme } from '../../lib/app-theme';
 
-const MAX_NAME_LENGTH = 40;
+const MAX_NAME_LENGTH = 14;
 
 export default function MyProfileScreen() {
   const { signOut } = useClerk();
@@ -62,7 +62,7 @@ export default function MyProfileScreen() {
     }
 
     if (nextName.length > MAX_NAME_LENGTH) {
-      Alert.alert('Name too long', 'Please keep your name within 40 characters.');
+      Alert.alert('Name too long', 'Please keep your name within 14 characters.');
       return;
     }
 

@@ -76,6 +76,8 @@ const DRAW_SOURCE_TICKET = 'ticket'
 const DRAW_REWARD_POINTS_10 = 'points_10'
 const DRAW_REWARD_POINTS_20 = 'points_20'
 const DRAW_REWARD_POINTS_30 = 'points_30'
+const DRAW_REWARD_POINTS_50 = 'points_50'
+const DRAW_REWARD_POINTS_100 = 'points_100'
 const DRAW_REWARD_DRAW_TICKET = 'draw_ticket'
 const DRAW_REWARD_MAKEUP_CARD = 'makeup_card'
 const DRAW_REWARD_CHECKIN_X2 = 'checkin_x2'
@@ -85,17 +87,19 @@ const DRAW_REWARD_NEXT_3_CHECKINS_5 = 'next_3_checkins_bonus_5'
 const DRAW_REWARD_WEEKLY_CUSTOM_1 = 'weekly_custom_bonus_1'
 const DRAW_REWARD_REROLL_TICKET = 'reroll_ticket'
 const STREAK_DRAW_REWARD_POOL = [
-  { code: DRAW_REWARD_POINTS_10, weight: 24 },
-  { code: DRAW_REWARD_POINTS_20, weight: 18 },
-  { code: DRAW_REWARD_POINTS_30, weight: 8 },
-  { code: DRAW_REWARD_DRAW_TICKET, weight: 10 },
-  { code: DRAW_REWARD_MAKEUP_CARD, weight: 8 },
-  { code: DRAW_REWARD_CHECKIN_X2, weight: 10 },
-  { code: DRAW_REWARD_CHECKIN_X3, weight: 4 },
-  { code: DRAW_REWARD_NEXT_TASK_10, weight: 8 },
-  { code: DRAW_REWARD_NEXT_3_CHECKINS_5, weight: 6 },
-  { code: DRAW_REWARD_WEEKLY_CUSTOM_1, weight: 2 },
-  { code: DRAW_REWARD_REROLL_TICKET, weight: 2 },
+  { code: DRAW_REWARD_POINTS_10, weight: 25.42 },
+  { code: DRAW_REWARD_POINTS_20, weight: 19.07 },
+  { code: DRAW_REWARD_POINTS_30, weight: 8.47 },
+  { code: DRAW_REWARD_DRAW_TICKET, weight: 10.59 },
+  { code: DRAW_REWARD_MAKEUP_CARD, weight: 2 },
+  { code: DRAW_REWARD_CHECKIN_X2, weight: 10.59 },
+  { code: DRAW_REWARD_CHECKIN_X3, weight: 4.24 },
+  { code: DRAW_REWARD_NEXT_TASK_10, weight: 8.47 },
+  { code: DRAW_REWARD_NEXT_3_CHECKINS_5, weight: 6.36 },
+  { code: DRAW_REWARD_WEEKLY_CUSTOM_1, weight: 2.12 },
+  { code: DRAW_REWARD_REROLL_TICKET, weight: 2.12 },
+  { code: DRAW_REWARD_POINTS_50, weight: 0.5 },
+  { code: DRAW_REWARD_POINTS_100, weight: 0.05 },
 ]
 const CANVAS_ENCRYPTION_ALGO = 'aes-256-gcm'
 const CANVAS_IV_BYTES = 12
@@ -1943,6 +1947,18 @@ function getDrawRewardDefinition(code) {
         title: '+30 points',
         description: 'Add 30 points right now.',
       }
+    case DRAW_REWARD_POINTS_50:
+      return {
+        code,
+        title: '+50 points',
+        description: 'Add 50 points right now.',
+      }
+    case DRAW_REWARD_POINTS_100:
+      return {
+        code,
+        title: '+100 points',
+        description: 'Add 100 points right now.',
+      }
     case DRAW_REWARD_DRAW_TICKET:
       return {
         code,
@@ -2008,6 +2024,10 @@ function buildDrawRewardPayload(code) {
       return { points: 20 }
     case DRAW_REWARD_POINTS_30:
       return { points: 30 }
+    case DRAW_REWARD_POINTS_50:
+      return { points: 50 }
+    case DRAW_REWARD_POINTS_100:
+      return { points: 100 }
     case DRAW_REWARD_CHECKIN_X2:
       return { multiplier: 2 }
     case DRAW_REWARD_CHECKIN_X3:
@@ -2308,6 +2328,8 @@ function applyAcceptedDrawReward(rewardState, rewardCode, rewardPayload, today) 
     case DRAW_REWARD_POINTS_10:
     case DRAW_REWARD_POINTS_20:
     case DRAW_REWARD_POINTS_30:
+    case DRAW_REWARD_POINTS_50:
+    case DRAW_REWARD_POINTS_100:
       grantedPoints = Number(rewardPayload.points) || 0
       break
     case DRAW_REWARD_DRAW_TICKET:

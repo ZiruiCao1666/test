@@ -6,12 +6,18 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@clerk/clerk-expo';
 import { useFocusEffect } from '@react-navigation/native';
 import { API_BASE_URL, apiGet } from '../../lib/api';
 import { useAppTheme } from '../../lib/app-theme';
+
+const REWARD_PLACEHOLDER_IMAGE = require('../../assets/photos/coffee1.png');
+const DEFAULT_OFFICIAL_SITE_LABEL = "www.student motivation app's net.com";
+const DEFAULT_OFFICIAL_SITE_URL = 'https://www.studentmotivationappsnet.com';
 
 function getErrorMessage(error, fallbackMessage) {
   if (error instanceof Error && error.message) {
@@ -45,14 +51,117 @@ function getRefreshText(loading) {
   return 'refresh';
 }
 
-function formatDate(dateValue) {
-  if (!dateValue) return '--';
-  const d = new Date(dateValue);
-  if (Number.isNaN(d.getTime())) return '--';
-  return d.toLocaleString();
+function toSafeText(value, fallback = '') {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return fallback;
+  }
+  return text;
+}
+
+function formatDate(value) {
+  const text = toSafeText(value, '');
+  if (!text) {
+    return '--';
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return '--';
+  }
+  return date.toLocaleString();
+}
+
+function buildMerchantName(order) {
+  const safeOrder = order || {};
+  const category = toSafeText(safeOrder.category, '').toLowerCase();
+  if (category === 'coffee') {
+    return 'Bosta Coffee Partner';
+  }
+  if (category === 'daily_life') {
+    return 'Campus Daily Life Partner';
+  }
+  if (category === 'gift_voucher') {
+    return 'Gift Voucher Partner';
+  }
+  if (category === 'special') {
+    return 'Student Motivation App';
+  }
+  return 'Student Motivation Partner';
+}
+
+function normalizeOrder(raw) {
+  const safeRaw = raw || {};
+  return {
+    id: toSafeText(safeRaw.id, 'order-' + String(Math.random())),
+    rewardId: toSafeText(safeRaw.rewardId || safeRaw.reward_id, ''),
+    title: toSafeText(safeRaw.title, 'reward'),
+    category: toSafeText(safeRaw.category, 'special'),
+    imageUrl: toSafeText(safeRaw.imageUrl || safeRaw.image_url, ''),
+    pointsCost: Number(safeRaw.pointsCost || safeRaw.points_cost) || 0,
+    status: toSafeText(safeRaw.status, 'completed'),
+    createdAt: toSafeText(safeRaw.createdAt || safeRaw.created_at, ''),
+    expiresAt: toSafeText(safeRaw.expiresAt || safeRaw.expires_at, ''),
+    merchant: buildMerchantName(safeRaw),
+    officialSiteLabel: DEFAULT_OFFICIAL_SITE_LABEL,
+    officialSiteUrl: DEFAULT_OFFICIAL_SITE_URL,
+    redemptionCode: '',
+  };
+}
+
+function getStatusMeta(order) {
+  const safeOrder = order || {};
+  const status = toSafeText(safeOrder.status, '').toLowerCase();
+
+  const expiresAt = toSafeText(safeOrder.expiresAt, '');
+  if (expiresAt) {
+    const expiresTs = new Date(expiresAt).getTime();
+    if (!Number.isNaN(expiresTs) && expiresTs < Date.now()) {
+      return { label: 'Expired', tone: 'expired' };
+    }
+  }
+
+  if (status === 'used') {
+    return { label: 'Used', tone: 'used' };
+  }
+  if (status === 'added_to_wallet' || status === 'wallet') {
+    return { label: 'Added to wallet', tone: 'wallet' };
+  }
+  if (status === 'pending') {
+    return { label: 'Active', tone: 'active' };
+  }
+  return { label: 'Active', tone: 'active' };
+}
+
+function getStatusBadgeColors(theme, tone) {
+  if (tone === 'used') {
+    return {
+      backgroundColor: theme.secondaryBg,
+      textColor: theme.secondaryText,
+    };
+  }
+  if (tone === 'expired') {
+    return {
+      backgroundColor: theme.surfaceDanger,
+      textColor: theme.dangerText,
+    };
+  }
+  if (tone === 'wallet') {
+    return {
+      backgroundColor: theme.surfaceMuted,
+      textColor: theme.primary,
+    };
+  }
+  return {
+    backgroundColor: theme.surfaceMuted,
+    textColor: theme.primary,
+  };
 }
 
 export default function OrdersScreen() {
+  const router = useRouter();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const { theme } = useAppTheme();
   const getTokenRef = React.useRef(getToken);
@@ -72,7 +181,6 @@ export default function OrdersScreen() {
     }
 
     try {
-      // Orders are account data, so every request stays behind the current Clerk session token.
       setLoading(true);
       setError(null);
 
@@ -80,10 +188,10 @@ export default function OrdersScreen() {
         throw new Error('Missing EXPO_PUBLIC_API_URL');
       }
 
-      const getToken = getTokenRef.current;
+      const tokenGetter = getTokenRef.current;
       let token = '';
-      if (typeof getToken === 'function') {
-        token = await getToken();
+      if (typeof tokenGetter === 'function') {
+        token = await tokenGetter();
       }
       if (!token) {
         throw new Error('No session token');
@@ -94,11 +202,11 @@ export default function OrdersScreen() {
         fallbackMessage: 'Failed to load orders',
       });
 
+      let items = [];
       if (Array.isArray(data.items)) {
-        setOrders(data.items);
-      } else {
-        setOrders([]);
+        items = data.items.map(normalizeOrder);
       }
+      setOrders(items);
     } catch (e) {
       if (isAbortError(e)) {
         setError('Request timeout. Please retry.');
@@ -117,6 +225,28 @@ export default function OrdersScreen() {
     }, [loadOrders]),
   );
 
+  const openOrderDetail = React.useCallback((item) => {
+    const safeItem = item || {};
+    router.push({
+      pathname: '/order-detail',
+      params: {
+        id: toSafeText(safeItem.id, ''),
+        rewardId: toSafeText(safeItem.rewardId, ''),
+        title: toSafeText(safeItem.title, 'reward'),
+        category: toSafeText(safeItem.category, 'special'),
+        imageUrl: toSafeText(safeItem.imageUrl, ''),
+        pointsCost: String(Number(safeItem.pointsCost) || 0),
+        status: toSafeText(safeItem.status, 'completed'),
+        createdAt: toSafeText(safeItem.createdAt, ''),
+        expiresAt: toSafeText(safeItem.expiresAt, ''),
+        merchant: toSafeText(safeItem.merchant, ''),
+        officialSiteLabel: toSafeText(safeItem.officialSiteLabel, DEFAULT_OFFICIAL_SITE_LABEL),
+        officialSiteUrl: toSafeText(safeItem.officialSiteUrl, DEFAULT_OFFICIAL_SITE_URL),
+        redemptionCode: toSafeText(safeItem.redemptionCode, ''),
+      },
+    });
+  }, [router]);
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.screenBg }]}>
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -134,7 +264,7 @@ export default function OrdersScreen() {
               <Text style={[styles.headerEyebrow, { color: theme.textSecondary }]}>Orders</Text>
               <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>My Redemptions</Text>
               <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>
-                Review the rewards you have already redeemed.
+                Tap a card to open full reward pass details.
               </Text>
             </View>
 
@@ -165,41 +295,60 @@ export default function OrdersScreen() {
           <Text style={styles.emptyText}>No redemption records yet.</Text>
         ))}
 
-        {orders.map((item) => (
-          <View
-            key={String(item.id)}
-            style={[
-              styles.card,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View style={styles.cardTop}>
-              <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>{item.title || 'reward'}</Text>
-              <View
-                style={[
-                  styles.statusBadge,
-                  {
-                    backgroundColor: theme.surfaceMuted,
-                  },
-                ]}
-              >
-                <Text style={[styles.statusText, { color: theme.textSecondary }]}>
-                  {item.status || 'completed'}
-                </Text>
-              </View>
-            </View>
+        {orders.map((item) => {
+          const statusMeta = getStatusMeta(item);
+          const statusColors = getStatusBadgeColors(theme, statusMeta.tone);
+          return (
+            <Pressable
+              key={String(item.id)}
+              onPress={() => openOrderDetail(item)}
+              style={({ pressed }) => [
+                styles.card,
+                {
+                  backgroundColor: theme.surface,
+                  borderColor: theme.border,
+                },
+                getStyleWhen(pressed, { opacity: 0.8 }),
+              ]}
+            >
+              <View style={styles.cardTop}>
+                <View style={styles.cardImageSlot}>
+                  {item.imageUrl ? (
+                    <Image source={{ uri: item.imageUrl }} style={styles.cardImage} resizeMode="cover" />
+                  ) : (
+                    <Image source={REWARD_PLACEHOLDER_IMAGE} style={styles.cardImage} resizeMode="cover" />
+                  )}
+                </View>
 
-            <View style={styles.metaGroup}>
-              <Text style={[styles.metaText, { color: theme.textSecondary }]}>
-                {Number(item.pointsCost) || 0} points
-              </Text>
-              <Text style={[styles.metaText, { color: theme.textSecondary }]}>{formatDate(item.createdAt)}</Text>
-            </View>
-          </View>
-        ))}
+                <View style={styles.cardMain}>
+                  <View style={styles.cardTitleRow}>
+                    <Text style={[styles.cardTitle, { color: theme.textPrimary }]}>{item.title}</Text>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: statusColors.backgroundColor },
+                      ]}
+                    >
+                      <Text style={[styles.statusText, { color: statusColors.textColor }]}>
+                        {statusMeta.label}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.metaText, { color: theme.textSecondary }]}>
+                    Redeemed at: {formatDate(item.createdAt)}
+                  </Text>
+                  <Text style={[styles.metaText, { color: theme.textSecondary }]}>
+                    Points spent: {Number(item.pointsCost) || 0}
+                  </Text>
+                  <Text style={[styles.openHintText, { color: theme.primary }]}>
+                    Open reward pass details
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          );
+        })}
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -282,7 +431,7 @@ const styles = StyleSheet.create({
     borderColor: '#ebe6dc',
     borderRadius: 18,
     backgroundColor: '#fffdf9',
-    padding: 14,
+    padding: 12,
     marginBottom: 12,
     shadowColor: '#111827',
     shadowOpacity: 0.04,
@@ -292,34 +441,52 @@ const styles = StyleSheet.create({
   },
   cardTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: 12,
+  },
+  cardImageSlot: {
+    width: 76,
+    height: 76,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f3f4f6',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cardMain: {
+    flex: 1,
+    gap: 4,
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   cardTitle: {
+    flex: 1,
     fontSize: 14,
     fontWeight: '800',
     color: '#111827',
-    flex: 1,
-    marginRight: 8,
   },
   statusBadge: {
-    backgroundColor: '#f3f4f6',
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
   statusText: {
-    color: '#374151',
     fontSize: 11,
     fontWeight: '700',
-    textTransform: 'lowercase',
-  },
-  metaGroup: {
-    gap: 4,
   },
   metaText: {
-    color: '#6b7280',
     fontSize: 12,
+    color: '#6b7280',
+  },
+  openHintText: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

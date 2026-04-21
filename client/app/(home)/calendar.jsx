@@ -28,27 +28,27 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const HOME_PLAN_CACHE_PREFIX = 'home_plan_v2';
 const HOME_PLAN_RESET_PREFIX = 'home_plan_reset_v1';
 
-const normalizeBaseUrl = (value) => {
-  const trimmed = value.trim();
-  if (!trimmed) {
+const normalizeSchoolShortName = (value) => {
+  let safeValue = String(value || '').trim().toLowerCase();
+  if (!safeValue) {
     return '';
   }
-  let withProtocol = trimmed;
-  if (!/^https?:\/\//i.test(trimmed)) {
-    withProtocol = 'https://' + trimmed;
-  }
-  return withProtocol.replace(/\/+$/, '');
+  safeValue = safeValue.replace(/^https?:\/\//i, '');
+  safeValue = safeValue.replace(/\/.*$/, '');
+  safeValue = safeValue.replace(/\.instructure\.com$/i, '');
+  return safeValue.trim();
+};
+
+const isValidSchoolShortName = (value) => {
+  return /^[a-z0-9-]+$/.test(String(value || '').trim());
 };
 
 const buildBaseUrl = (value) => {
-  const trimmed = value.trim();
-  if (!trimmed) {
+  const shortName = normalizeSchoolShortName(value);
+  if (!shortName || !isValidSchoolShortName(shortName)) {
     return '';
   }
-  if (trimmed.includes('.') || /^https?:\/\//i.test(trimmed)) {
-    return normalizeBaseUrl(trimmed);
-  }
-  return 'https://' + trimmed + '.instructure.com';
+  return 'https://' + shortName + '.instructure.com';
 };
 
 const formatDateTime = (isoString) => {
@@ -259,29 +259,6 @@ const getCanvasConnectButtonText = (isConnected, hasSavedCanvasToken) => {
     return 'Resync Canvas';
   }
   return 'Connect Canvas';
-};
-
-const getCanvasStorageHelperText = (canPersistToBackend, hasSavedCanvasToken) => {
-  if (!canPersistToBackend) {
-    return 'Canvas sync needs a signed-in account and EXPO_PUBLIC_API_URL.';
-  }
-  if (hasSavedCanvasToken) {
-    return 'Your Canvas school and token are stored on the server. This device only keeps local cache and drafts.';
-  }
-  return 'Canvas credentials are checked and stored on the server after you connect.';
-};
-
-const getCanvasTokenStatusText = (hasTokenInput, canPersistToBackend, hasSavedCanvasToken) => {
-  if (!canPersistToBackend) {
-    return 'Sign in first before connecting Canvas.';
-  }
-  if (hasTokenInput) {
-    return 'This pasted token will be used for the next connect or replace.';
-  }
-  if (hasSavedCanvasToken) {
-    return 'A token is already saved on the server. Leave this blank to resync, or paste a new one to replace it.';
-  }
-  return 'Paste a Canvas access token to connect.';
 };
 
 const getPreviewEyebrowText = (isConnected) => {
@@ -1354,7 +1331,6 @@ export default function CalendarScreen() {
       }
     }
   }
-  const hasTokenInput = Boolean(String(tokenInput || '').trim());
   const monthYearOptions = useMemo(() => {
     let centerYear = new Date().getFullYear();
     if (monthYearDraft) {
@@ -1417,7 +1393,7 @@ export default function CalendarScreen() {
 
   const handleSchoolInputChange = (value) => {
     credentialDraftTouchedRef.current = true;
-    setSchoolInput(value);
+    setSchoolInput(normalizeSchoolShortName(value));
   };
 
   const handleTokenInputChange = (value) => {
@@ -1553,7 +1529,7 @@ export default function CalendarScreen() {
         if (!mounted) {
           return;
         }
-        const nextSchool = String(data.school || '').trim();
+        const nextSchool = normalizeSchoolShortName(data.school || '');
         const nextHasSavedToken = Boolean(data.hasSavedToken || data.connected);
         if (!credentialDraftTouchedRef.current) {
           setSchoolInput(nextSchool);
@@ -1575,7 +1551,7 @@ export default function CalendarScreen() {
           if (!mounted) {
             return;
           }
-          const syncedSchool = String(snapshotData.school || nextSchool).trim();
+          const syncedSchool = normalizeSchoolShortName(snapshotData.school || nextSchool);
           if (!credentialDraftTouchedRef.current) {
             setSchoolInput(syncedSchool);
           }
@@ -1782,7 +1758,7 @@ export default function CalendarScreen() {
   const handleSavedCanvasTokenCleared = async (nextSchool) => {
     await clearHomePlanCacheForCurrentUser();
     clearSyncedCanvasState(new Date());
-    setSchoolInput(String(nextSchool || '').trim());
+    setSchoolInput(normalizeSchoolShortName(nextSchool));
     setTokenInput('');
     setSavedCanvasSchool('');
     setHasSavedCanvasToken(false);
@@ -1847,7 +1823,7 @@ export default function CalendarScreen() {
     const data = await apiGet('/canvas/snapshot', sessionToken, {
       fallbackMessage: (status) => 'Failed to sync Canvas (HTTP ' + String(status) + ')',
     });
-    const nextSchool = String(data.school || schoolInput || '').trim();
+    const nextSchool = normalizeSchoolShortName(data.school || schoolInput || '');
 
     if (!credentialDraftTouchedRef.current) {
       setSchoolInput(nextSchool);
@@ -1932,14 +1908,14 @@ export default function CalendarScreen() {
   };
 
   const handleConnect = async () => {
-    const nextSchool = schoolInput.trim();
+    const nextSchool = normalizeSchoolShortName(schoolInput);
     const nextToken = tokenInput.trim();
     if (!canPersistToBackend || !API_BASE_URL) {
       setError('Canvas sync requires a signed-in account and EXPO_PUBLIC_API_URL.');
       return;
     }
     if (!buildBaseUrl(nextSchool)) {
-      setError('Please fill in school name first.');
+      setError('Use a Canvas school short name (letters, numbers, and hyphen only).');
       return;
     }
     if (!nextToken && !hasSavedCanvasToken) {
@@ -2776,25 +2752,6 @@ export default function CalendarScreen() {
   let cardErrorNode = null;
   if (error) {
     cardErrorNode = <Text style={[styles.error, errorTextStyle]}>{error}</Text>;
-  }
-
-  let tokenStatusNode = null;
-  let canvasTokenStatusText = getCanvasTokenStatusText(
-    hasTokenInput,
-    canPersistToBackend,
-    hasSavedCanvasToken
-  );
-  if (canvasTokenStatusText) {
-    tokenStatusNode = <Text style={[styles.helperMuted, { color: theme.textMuted }]}>{canvasTokenStatusText}</Text>;
-  }
-
-  let canvasStorageHelperNode = null;
-  let canvasStorageHelperText = getCanvasStorageHelperText(
-    canPersistToBackend,
-    hasSavedCanvasToken
-  );
-  if (canvasStorageHelperText) {
-    canvasStorageHelperNode = <Text style={[styles.helper, { color: theme.textMuted }]}>{canvasStorageHelperText}</Text>;
   }
 
   let profileOverviewNode = <Text style={[styles.empty, emptyTextStyle]}>No profile synced yet.</Text>;
@@ -3755,10 +3712,7 @@ export default function CalendarScreen() {
         <View style={styles.header}>
           <Text style={[styles.title, { color: theme.textPrimary }]}>Calendar + Grades</Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            Enter a school short name for standard Canvas sites, or a full Canvas host for custom domains.
-            {' '}
-            <Text style={[styles.subtitleStrong, { color: theme.textPrimary }]}>Example: ox or canvas.hull.ac.uk</Text>
-            .
+            Enter a school short name for standard Canvas sites.
           </Text>
         </View>
 
@@ -3767,7 +3721,7 @@ export default function CalendarScreen() {
           <TextInput
             value={schoolInput}
             onChangeText={handleSchoolInputChange}
-            placeholder="Example: ox / canvas.hull.ac.uk"
+            placeholder="Example: ox"
             autoCapitalize="none"
             autoCorrect={false}
             placeholderTextColor={theme.textMuted}
@@ -3783,7 +3737,7 @@ export default function CalendarScreen() {
           <TextInput
             value={tokenInput}
             onChangeText={handleTokenInputChange}
-            placeholder={hasSavedCanvasToken ? 'Saved on server. Paste new token to replace.' : 'Canvas Access Token'}
+            placeholder="Canvas Access Token"
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
@@ -3816,8 +3770,6 @@ export default function CalendarScreen() {
             </Pressable>
           </View>
 
-          {canvasStorageHelperNode}
-          {tokenStatusNode}
           {cardErrorNode}
           {lastSyncNode}
         </View>
@@ -4107,7 +4059,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ghostBtnText: { color: '#111827', fontWeight: '700', fontSize: 13 },
-  helper: { marginTop: 10, fontSize: 11, color: '#9ca3af' },
   error: { marginTop: 8, fontSize: 12, color: '#ef4444' },
   sync: { marginTop: 8, fontSize: 11, color: '#6b7280' },
 

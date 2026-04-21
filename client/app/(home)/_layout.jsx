@@ -42,6 +42,7 @@ export default function HomeLayout() {
 
       {/* Expo 官方：href: null 可隐藏 tab 但保留路由 */}
       <Tabs.Screen name="orders" options={{ href: null }} />
+      <Tabs.Screen name="order-detail" options={{ href: null }} />
     </Tabs>
   );
 }
