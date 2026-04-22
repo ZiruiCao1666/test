@@ -62,6 +62,26 @@ function toSafeText(value, fallback = '') {
   return text;
 }
 
+function resolveRewardImageUrl(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+  if (value.startsWith('data:')) {
+    return value;
+  }
+  if (!API_BASE_URL) {
+    return value;
+  }
+  if (value.startsWith('/')) {
+    return API_BASE_URL + value;
+  }
+  return API_BASE_URL + '/' + value;
+}
+
 function formatDate(value) {
   const text = toSafeText(value, '');
   if (!text) {
@@ -94,12 +114,13 @@ function buildMerchantName(order) {
 
 function normalizeOrder(raw) {
   const safeRaw = raw || {};
+  const imageUrl = resolveRewardImageUrl(toSafeText(safeRaw.imageUrl || safeRaw.image_url, ''));
   return {
     id: toSafeText(safeRaw.id, 'order-' + String(Math.random())),
     rewardId: toSafeText(safeRaw.rewardId || safeRaw.reward_id, ''),
     title: toSafeText(safeRaw.title, 'reward'),
     category: toSafeText(safeRaw.category, 'special'),
-    imageUrl: toSafeText(safeRaw.imageUrl || safeRaw.image_url, ''),
+    imageUrl,
     pointsCost: Number(safeRaw.pointsCost || safeRaw.points_cost) || 0,
     status: toSafeText(safeRaw.status, 'completed'),
     createdAt: toSafeText(safeRaw.createdAt || safeRaw.created_at, ''),

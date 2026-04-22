@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { useAppTheme } from '../../lib/app-theme';
+import { API_BASE_URL } from '../../lib/api';
 
 const REWARD_PLACEHOLDER_IMAGE = require('../../assets/photos/coffee1.png');
 const DEFAULT_OFFICIAL_SITE_LABEL = "www.student motivation app's net.com";
@@ -39,6 +40,26 @@ function getParamText(value, fallback = '') {
     return fallback;
   }
   return text;
+}
+
+function resolveRewardImageUrl(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+  if (value.startsWith('data:')) {
+    return value;
+  }
+  if (!API_BASE_URL) {
+    return value;
+  }
+  if (value.startsWith('/')) {
+    return API_BASE_URL + value;
+  }
+  return API_BASE_URL + '/' + value;
 }
 
 function formatDate(value) {
@@ -125,7 +146,7 @@ export default function OrderDetailScreen() {
   const title = getParamText(params.title, 'Reward');
   const status = getParamText(params.status, 'completed');
   const category = getParamText(params.category, 'special');
-  const imageUrl = getParamText(params.imageUrl, '');
+  const imageUrl = resolveRewardImageUrl(getParamText(params.imageUrl, ''));
   const pointsCost = Number(getParamText(params.pointsCost, '0')) || 0;
   const redeemedAt = getParamText(params.createdAt, '');
   const expiresAt = getParamText(params.expiresAt, '');
