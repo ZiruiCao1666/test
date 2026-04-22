@@ -1585,14 +1585,9 @@ export default function CalendarScreen() {
             setLoading(false);
           }
         }
-      } catch (loadError) {
+      } catch (_loadError) {
         if (mounted) {
-          setError(
-            'Failed to load saved Canvas state from backend: ' + getErrorMessage(
-              loadError,
-              'Unknown backend error'
-            )
-          );
+          setError('Failed to load');
         }
       }
     })();
@@ -3740,7 +3735,6 @@ export default function CalendarScreen() {
             placeholder="Canvas Access Token"
             autoCapitalize="none"
             autoCorrect={false}
-            secureTextEntry
             placeholderTextColor={theme.textMuted}
             style={[styles.input, { backgroundColor: theme.surfaceMuted, borderColor: theme.border, color: theme.textPrimary }]}
           />
