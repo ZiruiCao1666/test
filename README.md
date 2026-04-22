@@ -103,6 +103,12 @@ Run:
 - npm install
 - npm run start
 
+Web development preview:
+- npx expo start --web
+
+Web static export:
+- npx expo export --platform web
+
 ## Real Device Note
 
 If you run Expo on a real phone, localhost usually points to the phone itself, not your computer.
