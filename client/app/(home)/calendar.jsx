@@ -245,11 +245,11 @@ const getTaskRewardPopupMessage = (rewardResult) => {
   }
 
   return (
-    '完成每日任务 ' +
+    'Daily task rewards: ' +
     String(dailyCountAfterGrant) +
     '/' +
     String(dailyLimit) +
-    '\n积分 +' +
+    '\nPoints +' +
     String(gainedPoints)
   );
 };
