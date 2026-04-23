@@ -1553,6 +1553,7 @@ export default function HomeScreen() {
 
   const continueAfterCheckInPrompt = React.useCallback(() => {
     setCheckInResultVisible(false);
+    setNoteModalVisible(false);
     if (rewardCelebrationQueue.length > 0) {
       setRewardCelebrationIndex(0);
       setRewardCelebrationVisible(true);
@@ -2025,6 +2026,7 @@ export default function HomeScreen() {
   const checkInResultHeadline = hasSavedYesterdayNote
     ? trimmedYesterdayNote
     : 'No note was saved yesterday.';
+  const noteModalActuallyVisible = noteModalVisible && !checkInResultVisible && !Boolean(activeRewardCelebration);
   let todayNoteErrorNode = null;
   if (todayNoteError) {
     todayNoteErrorNode = (
@@ -2648,11 +2650,11 @@ export default function HomeScreen() {
         badges={activeRewardCelebration ? activeRewardCelebration.badges : []}
         primaryLabel={activeRewardCelebration ? activeRewardCelebration.primaryLabel : 'Continue'}
         onPrimary={continueRewardCelebrationFlow}
-        onRequestClose={resetRewardCelebrationFlow}
+        onRequestClose={continueRewardCelebrationFlow}
       />
 
       <Modal
-        visible={noteModalVisible}
+        visible={noteModalActuallyVisible}
         transparent
         animationType="fade"
         onRequestClose={closeTodayNoteModal}
