@@ -78,6 +78,7 @@ const MAKEUP_CARD_REWARD_CATEGORY = 'makeup_card'
 const EXTRA_DRAW_TICKET_REWARD_TITLE = 'Extra Draw Ticket'
 const REROLL_TICKET_REWARD_TITLE = 'Reroll Ticket'
 const DRAW_SOURCE_MILESTONE = 'milestone'
+const DRAW_SOURCE_THIRTY_DAY = 'thirty_day'
 const DRAW_SOURCE_TICKET = 'ticket'
 const DRAW_REWARD_POINTS_10 = 'points_10'
 const DRAW_REWARD_POINTS_20 = 'points_20'
@@ -92,7 +93,7 @@ const DRAW_REWARD_NEXT_TASK_10 = 'next_task_bonus_10'
 const DRAW_REWARD_NEXT_3_CHECKINS_5 = 'next_3_checkins_bonus_5'
 const DRAW_REWARD_WEEKLY_CUSTOM_1 = 'weekly_custom_bonus_1'
 const DRAW_REWARD_REROLL_TICKET = 'reroll_ticket'
-const THIRTY_DAY_STREAK_POOL_THRESHOLD = 30
+const THIRTY_DAY_STREAK_DRAW_CYCLE = 30
 const STREAK_DRAW_REWARD_POOL = [
   { code: DRAW_REWARD_POINTS_10, weight: 25.42 },
   { code: DRAW_REWARD_POINTS_20, weight: 19.07 },
@@ -2110,13 +2111,8 @@ function rollStreakDrawChoices(count = 3, pool = STREAK_DRAW_REWARD_POOL) {
   return choices
 }
 
-function getStreakDrawPoolByContext(source, streakDays) {
-  if (source !== DRAW_SOURCE_MILESTONE) {
-    return STREAK_DRAW_REWARD_POOL
-  }
-
-  const safeStreakDays = Number(streakDays) || 0
-  if (safeStreakDays >= THIRTY_DAY_STREAK_POOL_THRESHOLD) {
+function getStreakDrawPoolByContext(source) {
+  if (source === DRAW_SOURCE_THIRTY_DAY) {
     return STREAK_DRAW_REWARD_POOL_30_DAY
   }
   return STREAK_DRAW_REWARD_POOL
@@ -2271,6 +2267,7 @@ function mapRewardStateRow(row, today, makeupCards = 0) {
 
   return {
     milestoneDraws: Number(safeRow.milestone_draws) || 0,
+    thirtyDayDraws: Number(safeRow.thirty_day_draws) || 0,
     drawTickets: Number(safeRow.draw_tickets) || 0,
     rerollTickets: Number(safeRow.reroll_tickets) || 0,
     nextCheckinMultiplier: Math.max(1, Number(safeRow.next_checkin_multiplier) || 1),
@@ -3385,6 +3382,7 @@ app.put('/tasks/:id', async function (req, res) {
             `
             SELECT
               milestone_draws,
+              thirty_day_draws,
               draw_tickets,
               reroll_tickets,
               next_checkin_multiplier,
@@ -3584,6 +3582,7 @@ app.post('/task-rewards/canvas/claim', async function (req, res) {
         `
         SELECT
           milestone_draws,
+          thirty_day_draws,
           draw_tickets,
           reroll_tickets,
           next_checkin_multiplier,
@@ -3883,6 +3882,7 @@ app.get('/streak-draw/state', async function (req, res) {
       `
       SELECT
         milestone_draws,
+        thirty_day_draws,
         draw_tickets,
         reroll_tickets,
         next_checkin_multiplier,
@@ -3921,7 +3921,7 @@ app.get('/streak-draw/state', async function (req, res) {
 
 /**
  * POST /streak-draw/open
- * Spend one milestone draw or one draw ticket to generate a pending reward.
+ * Spend one milestone draw, one 30-day draw, or one draw ticket to generate a pending reward.
  */
 app.post('/streak-draw/open', async function (req, res) {
   const client = await pool.connect()
@@ -3934,7 +3934,11 @@ app.post('/streak-draw/open', async function (req, res) {
 
     const safeBody = req.body || {}
     const source = String(safeBody.source || '').trim()
-    if (source !== DRAW_SOURCE_MILESTONE && source !== DRAW_SOURCE_TICKET) {
+    if (
+      source !== DRAW_SOURCE_MILESTONE &&
+      source !== DRAW_SOURCE_THIRTY_DAY &&
+      source !== DRAW_SOURCE_TICKET
+    ) {
       return res.status(400).json({ error: 'Invalid draw source' })
     }
 
@@ -3946,6 +3950,7 @@ app.post('/streak-draw/open', async function (req, res) {
       `
       SELECT
         milestone_draws,
+        thirty_day_draws,
         draw_tickets,
         reroll_tickets,
         next_checkin_multiplier,
@@ -3995,15 +4000,17 @@ app.post('/streak-draw/open', async function (req, res) {
       await client.query('ROLLBACK')
       return res.status(409).json({ error: 'No extra draw ticket is available.' })
     }
-
-    let currentStreakDays = 0
-    if (source === DRAW_SOURCE_MILESTONE) {
-      currentStreakDays = await getStreakDays(client, userId, today)
+    if (source === DRAW_SOURCE_THIRTY_DAY && rewardState.thirtyDayDraws <= 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'No 30-day draw is available.' })
     }
-    const drawPool = getStreakDrawPoolByContext(source, currentStreakDays)
+
+    const drawPool = getStreakDrawPoolByContext(source)
     const rolledChoices = rollStreakDrawChoices(3, drawPool)
     const nextMilestoneDraws =
       source === DRAW_SOURCE_MILESTONE ? rewardState.milestoneDraws - 1 : rewardState.milestoneDraws
+    const nextThirtyDayDraws =
+      source === DRAW_SOURCE_THIRTY_DAY ? rewardState.thirtyDayDraws - 1 : rewardState.thirtyDayDraws
     const nextDrawTickets =
       source === DRAW_SOURCE_TICKET ? rewardState.drawTickets - 1 : rewardState.drawTickets
 
@@ -4012,11 +4019,12 @@ app.post('/streak-draw/open', async function (req, res) {
       UPDATE app_user_reward_state
       SET
         milestone_draws = $2,
-        draw_tickets = $3,
-        pending_reward_source = $4,
+        thirty_day_draws = $3,
+        draw_tickets = $4,
+        pending_reward_source = $5,
         pending_reward_code = '',
         pending_reward_payload = '{}'::jsonb,
-        pending_reward_choices = $5::jsonb,
+        pending_reward_choices = $6::jsonb,
         pending_reward_selected_index = -1,
         updated_at = NOW()
       WHERE clerk_user_id = $1
@@ -4024,6 +4032,7 @@ app.post('/streak-draw/open', async function (req, res) {
       [
         userId,
         nextMilestoneDraws,
+        nextThirtyDayDraws,
         nextDrawTickets,
         source,
         JSON.stringify(rolledChoices),
@@ -4037,6 +4046,7 @@ app.post('/streak-draw/open', async function (req, res) {
       state: {
         ...rewardState,
         milestoneDraws: nextMilestoneDraws,
+        thirtyDayDraws: nextThirtyDayDraws,
         drawTickets: nextDrawTickets,
         pendingRewardSource: source,
         pendingRewardChoices: rolledChoices,
@@ -4085,6 +4095,7 @@ app.post('/streak-draw/select', async function (req, res) {
       `
       SELECT
         milestone_draws,
+        thirty_day_draws,
         draw_tickets,
         reroll_tickets,
         next_checkin_multiplier,
@@ -4203,6 +4214,7 @@ app.post('/streak-draw/reroll', async function (req, res) {
       `
       SELECT
         milestone_draws,
+        thirty_day_draws,
         draw_tickets,
         reroll_tickets,
         next_checkin_multiplier,
@@ -4321,6 +4333,7 @@ app.post('/streak-draw/accept', async function (req, res) {
       `
       SELECT
         milestone_draws,
+        thirty_day_draws,
         draw_tickets,
         reroll_tickets,
         next_checkin_multiplier,
@@ -4397,14 +4410,15 @@ app.post('/streak-draw/accept', async function (req, res) {
       UPDATE app_user_reward_state
       SET
         milestone_draws = $2,
-        draw_tickets = $3,
-        reroll_tickets = $4,
-        next_checkin_multiplier = $5,
-        next_task_bonus_points = $6,
-        bonus_checkins_remaining = $7,
-        bonus_per_checkin = $8,
-        weekly_custom_bonus_per_task = $9,
-        weekly_custom_bonus_week_key = $10,
+        thirty_day_draws = $3,
+        draw_tickets = $4,
+        reroll_tickets = $5,
+        next_checkin_multiplier = $6,
+        next_task_bonus_points = $7,
+        bonus_checkins_remaining = $8,
+        bonus_per_checkin = $9,
+        weekly_custom_bonus_per_task = $10,
+        weekly_custom_bonus_week_key = $11,
         pending_reward_source = '',
         pending_reward_code = '',
         pending_reward_payload = '{}'::jsonb,
@@ -4416,6 +4430,7 @@ app.post('/streak-draw/accept', async function (req, res) {
       [
         userId,
         nextRewardState.milestoneDraws,
+        nextRewardState.thirtyDayDraws,
         nextRewardState.drawTickets,
         nextRewardState.rerollTickets,
         nextRewardState.nextCheckinMultiplier,
@@ -4943,6 +4958,8 @@ app.post('/checkins/today', async function (req, res) {
     let makeupCards = 0
     let awardedMilestoneDraw = false
     let milestoneDraws = 0
+    let awardedThirtyDayDraw = false
+    let thirtyDayDraws = 0
 
     // Only the first check-in for the current day should grant points.
     if (didInsert) {
@@ -4979,6 +4996,7 @@ app.post('/checkins/today', async function (req, res) {
         `
         SELECT
           milestone_draws,
+          thirty_day_draws,
           draw_tickets,
           reroll_tickets,
           next_checkin_multiplier,
@@ -5063,6 +5081,12 @@ app.post('/checkins/today', async function (req, res) {
         awardedMilestoneDraw = true
       }
 
+      let nextThirtyDayDraws = checkinBonusResult.nextState.thirtyDayDraws
+      if (streakDays > 0 && streakDays % THIRTY_DAY_STREAK_DRAW_CYCLE === 0) {
+        nextThirtyDayDraws += 1
+        awardedThirtyDayDraw = true
+      }
+
       const yesterdayNoteResult = await client.query(
         `
         SELECT next_day_note
@@ -5114,28 +5138,30 @@ app.post('/checkins/today', async function (req, res) {
 
       await client.query(
         `
-        UPDATE app_user_reward_state
-        SET
-          milestone_draws = $2,
-          draw_tickets = $3,
-          reroll_tickets = $4,
-          next_checkin_multiplier = $5,
-          next_task_bonus_points = $6,
-          bonus_checkins_remaining = $7,
-          bonus_per_checkin = $8,
-          weekly_custom_bonus_per_task = $9,
-          weekly_custom_bonus_week_key = $10,
-          pending_reward_source = $11,
-          pending_reward_code = $12,
-          pending_reward_payload = $13::jsonb,
-          pending_reward_choices = $14::jsonb,
-          pending_reward_selected_index = $15,
-          updated_at = NOW()
-        WHERE clerk_user_id = $1
+      UPDATE app_user_reward_state
+      SET
+        milestone_draws = $2,
+        thirty_day_draws = $3,
+        draw_tickets = $4,
+        reroll_tickets = $5,
+        next_checkin_multiplier = $6,
+        next_task_bonus_points = $7,
+        bonus_checkins_remaining = $8,
+        bonus_per_checkin = $9,
+        weekly_custom_bonus_per_task = $10,
+        weekly_custom_bonus_week_key = $11,
+        pending_reward_source = $12,
+        pending_reward_code = $13,
+        pending_reward_payload = $14::jsonb,
+        pending_reward_choices = $15::jsonb,
+        pending_reward_selected_index = $16,
+        updated_at = NOW()
+      WHERE clerk_user_id = $1
         `,
         [
           userId,
           nextMilestoneDraws,
+          nextThirtyDayDraws,
           checkinBonusResult.nextState.drawTickets,
           checkinBonusResult.nextState.rerollTickets,
           checkinBonusResult.nextState.nextCheckinMultiplier,
@@ -5159,6 +5185,7 @@ app.post('/checkins/today', async function (req, res) {
       )
 
       milestoneDraws = nextMilestoneDraws
+      thirtyDayDraws = nextThirtyDayDraws
     } else {
       streakDays = await getStreakDays(client, userId, today)
 
@@ -5215,7 +5242,7 @@ app.post('/checkins/today', async function (req, res) {
 
       const rewardStateResult = await client.query(
         `
-        SELECT milestone_draws
+        SELECT milestone_draws, thirty_day_draws
         FROM app_user_reward_state
         WHERE clerk_user_id = $1
         `,
@@ -5223,6 +5250,7 @@ app.post('/checkins/today', async function (req, res) {
       )
       if (rewardStateResult.rows && rewardStateResult.rows.length > 0 && rewardStateResult.rows[0]) {
         milestoneDraws = Number(rewardStateResult.rows[0].milestone_draws) || 0
+        thirtyDayDraws = Number(rewardStateResult.rows[0].thirty_day_draws) || 0
       }
     }
 
@@ -5268,7 +5296,9 @@ app.post('/checkins/today', async function (req, res) {
       makeupCards,
       awardedMakeupCard,
       awardedMilestoneDraw,
+      awardedThirtyDayDraw,
       milestoneDraws,
+      thirtyDayDraws,
       yesterdayNote,
       todayNote,
     })

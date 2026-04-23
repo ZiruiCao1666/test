@@ -40,13 +40,30 @@ function getSummaryText(streakDays, state) {
   }
 
   const milestoneDraws = Number(safeState.milestoneDraws) || 0;
+  const thirtyDayDraws = Number(safeState.thirtyDayDraws) || 0;
   const drawTickets = Number(safeState.drawTickets) || 0;
+
+  if (milestoneDraws > 0 && thirtyDayDraws > 0) {
+    return (
+      String(milestoneDraws) +
+      ' milestone draw(s) and ' +
+      String(thirtyDayDraws) +
+      ' 30-day draw(s) are ready.'
+    );
+  }
 
   if (milestoneDraws > 0) {
     if (milestoneDraws === 1) {
-      return '1 streak draw is ready.';
+      return '1 milestone draw is ready.';
     }
-    return String(milestoneDraws) + ' streak draws are ready.';
+    return String(milestoneDraws) + ' milestone draws are ready.';
+  }
+
+  if (thirtyDayDraws > 0) {
+    if (thirtyDayDraws === 1) {
+      return '1 30-day draw is ready.';
+    }
+    return String(thirtyDayDraws) + ' 30-day draws are ready.';
   }
 
   if (drawTickets > 0) {
@@ -64,7 +81,17 @@ function getSummaryText(streakDays, state) {
   if (safeStreakDays >= 7) {
     nextTarget = (Math.floor(safeStreakDays / 7) + 1) * 7;
   }
-  return 'Reach ' + String(nextTarget) + ' days to unlock the next draw.';
+  let nextThirtyDayTarget = 30;
+  if (safeStreakDays >= 30) {
+    nextThirtyDayTarget = (Math.floor(safeStreakDays / 30) + 1) * 30;
+  }
+  return (
+    'Reach ' +
+    String(nextTarget) +
+    ' days for the next milestone draw and ' +
+    String(nextThirtyDayTarget) +
+    ' days for the next 30-day draw.'
+  );
 }
 
 function getAcceptedRewardCelebration(acceptedReward) {
@@ -291,7 +318,13 @@ export default function SevenDayDrawCard(props) {
     }
 
     try {
-      setWorkingAction(source === 'ticket' ? 'ticket' : 'milestone');
+      if (source === 'ticket') {
+        setWorkingAction('ticket');
+      } else if (source === 'thirty_day') {
+        setWorkingAction('thirty_day');
+      } else {
+        setWorkingAction('milestone');
+      }
       setError('');
       const data = await callAction(
         '/streak-draw/open',
@@ -414,6 +447,7 @@ export default function SevenDayDrawCard(props) {
     );
   } else {
     const milestoneDraws = Number(state.milestoneDraws) || 0;
+    const thirtyDayDraws = Number(state.thirtyDayDraws) || 0;
     const drawTickets = Number(state.drawTickets) || 0;
     const rerollTickets = Number(state.rerollTickets) || 0;
     const makeupCards = Number(state.makeupCards) || 0;
@@ -429,6 +463,10 @@ export default function SevenDayDrawCard(props) {
           <View style={[styles.inventoryChip, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
             <Text style={[styles.inventoryValue, { color: theme.textPrimary }]}>{milestoneDraws}</Text>
             <Text style={[styles.inventoryLabel, { color: theme.textSecondary }]}>Milestone</Text>
+          </View>
+          <View style={[styles.inventoryChip, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
+            <Text style={[styles.inventoryValue, { color: theme.textPrimary }]}>{thirtyDayDraws}</Text>
+            <Text style={[styles.inventoryLabel, { color: theme.textSecondary }]}>30-day</Text>
           </View>
           <View style={[styles.inventoryChip, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderSoft }]}>
             <Text style={[styles.inventoryValue, { color: theme.textPrimary }]}>{drawTickets}</Text>
@@ -564,7 +602,24 @@ export default function SevenDayDrawCard(props) {
               ]}
             >
               <Text style={[styles.primaryButtonText, { color: theme.primaryText }]}>
-                {workingAction === 'milestone' ? 'Drawing...' : 'Draw reward'}
+                {workingAction === 'milestone' ? 'Drawing...' : 'Draw milestone'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={function () {
+                openDraw('thirty_day');
+              }}
+              disabled={workingAction !== '' || thirtyDayDraws <= 0}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                { backgroundColor: theme.secondaryBg, borderColor: theme.secondaryBorder },
+                getStyleWhen(pressed, { opacity: 0.82 }),
+                getStyleWhen(workingAction !== '' || thirtyDayDraws <= 0, { opacity: 0.6 }),
+              ]}
+            >
+              <Text style={[styles.secondaryButtonText, { color: theme.secondaryText }]}>
+                {workingAction === 'thirty_day' ? 'Drawing...' : 'Draw 30-day'}
               </Text>
             </Pressable>
 
@@ -626,7 +681,7 @@ export default function SevenDayDrawCard(props) {
           },
         ]}
       >
-        <Text style={[styles.eyebrow, { color: theme.textMuted }]}>7-day draw</Text>
+        <Text style={[styles.eyebrow, { color: theme.textMuted }]}>Streak draw</Text>
         <Text style={[styles.title, { color: theme.textPrimary }]}>Streak reward</Text>
         {bodyNode}
       </View>

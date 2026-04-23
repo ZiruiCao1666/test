@@ -110,6 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_task_reward_daily
 CREATE TABLE IF NOT EXISTS app_user_reward_state (
   clerk_user_id TEXT PRIMARY KEY REFERENCES app_users (clerk_user_id) ON DELETE CASCADE,
   milestone_draws INT NOT NULL DEFAULT 0,
+  thirty_day_draws INT NOT NULL DEFAULT 0,
   draw_tickets INT NOT NULL DEFAULT 0,
   reroll_tickets INT NOT NULL DEFAULT 0,
   next_checkin_multiplier INT NOT NULL DEFAULT 1,
@@ -131,3 +132,6 @@ ALTER TABLE app_user_reward_state
 
 ALTER TABLE app_user_reward_state
   ADD COLUMN IF NOT EXISTS pending_reward_selected_index INT NOT NULL DEFAULT -1;
+
+ALTER TABLE app_user_reward_state
+  ADD COLUMN IF NOT EXISTS thirty_day_draws INT NOT NULL DEFAULT 0;
