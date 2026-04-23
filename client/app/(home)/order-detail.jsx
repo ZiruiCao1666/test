@@ -159,6 +159,10 @@ export default function OrderDetailScreen() {
   const statusColors = getStatusColors(theme, statusMeta.tone);
   const hasRedemptionCode = Boolean(redemptionCode);
 
+  const goBackToOrders = React.useCallback(() => {
+    router.replace('/orders');
+  }, [router]);
+
   const openOfficialSite = React.useCallback(async () => {
     const url = getParamText(officialSiteUrl, DEFAULT_OFFICIAL_SITE_URL);
     try {
@@ -173,7 +177,7 @@ export default function OrderDetailScreen() {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <View style={styles.topRow}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={goBackToOrders}
             style={({ pressed }) => [
               styles.backBtn,
               {
