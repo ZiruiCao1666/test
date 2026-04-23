@@ -11,6 +11,7 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -1705,6 +1706,9 @@ export default function HomeScreen() {
         todayNote: nextTodayNote,
       });
 
+      Keyboard.dismiss();
+      setCheckInResultVisible(false);
+      resetRewardCelebrationFlow();
       setNoteModalVisible(false);
     } catch (error) {
       setTodayNoteError(getErrorMessage(error, 'Failed to save tomorrow note'));
@@ -1714,11 +1718,14 @@ export default function HomeScreen() {
   };
 
   const closeTodayNoteModal = React.useCallback(() => {
+    Keyboard.dismiss();
+    setCheckInResultVisible(false);
+    resetRewardCelebrationFlow();
     setNoteModalVisible(false);
     setTodayNoteError('');
     setTodayNoteNotice('');
     setNoteDraft(todayNote);
-  }, [todayNote]);
+  }, [todayNote, resetRewardCelebrationFlow]);
 
   const lastingDays = Math.max(0, Number(streakDays) || 0);
   const groupedHomePlan = React.useMemo(() => groupPlanItems(homePlanItems), [homePlanItems]);
@@ -2651,7 +2658,7 @@ export default function HomeScreen() {
         onRequestClose={closeTodayNoteModal}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
           style={styles.noteModalKeyboardWrap}
         >
